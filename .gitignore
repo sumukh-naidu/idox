@@ -1,0 +1,37 @@
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Generated output
+pdf_out/
+render/
+*.docx
+*.log
+bench_results.json
+
+# Extracted / intermediate markdown
+extracted.md
+eod.md
+inv.md
+freetest.md
+mixed.md
+sample.md
+sample_scanned.md
+scansmpl.md
+simple.md
+text2.md
+
+# Real documents - contain actual data, keep local only
+real_form_1040.pdf
+real_business_doc.pdf
+End-of-Day_Report___Day_7.pdf
+
+# OS
+.DS_Store

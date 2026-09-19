@@ -205,16 +205,24 @@ def _size_scale(pages):
     scale relative to whatever that turns out to be.
     """
     base = {"small": 0.8, "normal": 1.0, "large": 1.6}
-    counts = Counter(
-        getattr(b, "size", "normal")
-        for page in pages for b in page.blocks
-        if not isinstance(b, TableBlock)
-    )
+
+    # Weighted by CHARACTERS, not by block count. The body of a document is
+    # whatever carries the most text, which is the same rule the digital path
+    # uses to find the body font size. Counting blocks instead let a page with
+    # one long paragraph and three short headings decide that headings were
+    # the body -- on one scan that made 'large' the anchor and collapsed the
+    # actual body text to 0.5x, rendering it at 5.5pt.
+    counts = Counter()
+    for page in pages:
+        for b in page.blocks:
+            if isinstance(b, TableBlock):
+                continue
+            counts[getattr(b, "size", "normal")] += len(b.text)
+
     if not counts:
         return base
 
-    dominant = counts.most_common(1)[0][0]
-    anchor = base[dominant]
+    anchor = base[counts.most_common(1)[0][0]]
     return {k: v / anchor for k, v in base.items()}
 
 
@@ -233,6 +241,13 @@ def _apply_look(para, block, layout, is_heading=False, scale=None):
     scale = scale or {"large": 1.6, "normal": 1.0, "small": 0.8}
     factor = scale.get(getattr(block, "size", "normal"), 1.0)
 
+    # A floor and ceiling, because the labels are the model's judgement and it
+    # can be badly skewed. Whatever it reports, body text must stay readable
+    # and a heading must not become a billboard: one scan produced 5.5pt
+    # paragraphs before this existed. 8pt is small print; nothing legitimate
+    # in a document needs to be smaller.
+    point = max(8.0, min(body * factor, body * 2.2))
+
     for run in para.runs:
         if getattr(block, "bold", False):
             run.bold = True
@@ -240,7 +255,7 @@ def _apply_look(para, block, layout, is_heading=False, scale=None):
         # model saw something other than ordinary body text.
         if factor != 1.0 or not is_heading:
             if run.font.size is None or factor != 1.0:
-                run.font.size = Pt(round(body * factor, 1))
+                run.font.size = Pt(round(point, 1))
 
 
 def _add_images(doc, images, layout, problems, where):

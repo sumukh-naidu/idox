@@ -552,6 +552,72 @@ def ungrounded_text_blocks(page: Page, source_text: str) -> List[int]:
     return out
 
 
+def ungrounded_table_blocks(page: Page, source_text: str) -> List[int]:
+    """Indices of tables whose cells are ALL absent from the PDF's text layer.
+
+    The model does not only read words out of pictures -- it reads structure.
+    On a page whose only graphic was a bar chart, it read the axis labels and
+    bar values and reported them as a 2x5 table:
+
+        header: ['Jan','Feb','Mar','Apr','May']
+        rows:   [['120','150','135','180','210']]
+
+    None of those characters exist in the document's text. The page has a
+    chart, not a table, and the chart is separately embedded as an image -- so
+    the document ended up with the picture AND a table of the picture's
+    contents.
+
+    Two details this needs to get right:
+
+    WHOLE WORDS, NOT SUBSTRINGS. The first version used substring matching and
+    dropped nothing, because the page's prose says "in January to 47% in May"
+    and "between March and April" -- so the cells Jan, Mar, Apr and May all
+    "matched" as fragments of longer words. Cells are compared against the
+    source's word set instead.
+
+    A THRESHOLD, NOT ALL. Requiring every cell to be ungrounded is too strict
+    for the same reason: one cell reading "May" legitimately appears in the
+    prose. 80% separates the cases cleanly -- the chart table scores 90%
+    ungrounded, while a real 49-cell table with one misread scores 2%.
+
+    ungrounded_text_blocks() excludes tables for a good reason: a table with
+    one bad cell is real data with a defect, and deleting it would lose 48
+    correct cells to fix one wrong one. The threshold preserves that -- this
+    only fires on a table that was invented wholesale.
+
+    Only meaningful on digital pages: a scanned page has no text layer, so
+    nothing can be ungrounded against it and this returns [].
+    """
+    source = normalize(source_text)
+    if not source:
+        return []
+    words = set(source.split())
+    squashed = squash(source_text)
+
+    out = []
+    for i, block in enumerate(page.blocks):
+        if not isinstance(block, TableBlock):
+            continue
+        cells = [c for c in list(block.header)
+                 + [c for row in block.rows for c in row] if c.strip()]
+        if not cells:
+            continue
+
+        def grounded(cell: str) -> bool:
+            parts = normalize(cell).split()
+            if parts and all(p in words for p in parts):
+                return True
+            # Longer strings are distinctive enough that a substring match is
+            # safe; short ones are what produced the false positives.
+            n = normalize(cell)
+            return len(n) > 8 and (n in source or squash(cell) in squashed)
+
+        ungrounded = sum(1 for c in cells if not grounded(c))
+        if ungrounded / len(cells) >= 0.8:
+            out.append(i)
+    return out
+
+
 def check_grounding(page: Page, source_text: str):
     """Does every string the model produced really appear in the PDF?
 

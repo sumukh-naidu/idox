@@ -51,10 +51,12 @@ from blocks import (
     check_structure,
     extract_page,
     normalize,
+    ungrounded_table_blocks,
     ungrounded_text_blocks,
 )
 import ocr
 from to_docx import build_docx, verify_docx, verify_images
+from to_xlsx import build_xlsx, verify_xlsx
 
 RENDER_DIR = "render"
 IMAGE_DIR = os.path.join(RENDER_DIR, "images")
@@ -389,6 +391,132 @@ def repair_table_rows(page, pdf_page):
     return Page(analysis=page.analysis, blocks=blocks), repairs
 
 
+def measure_block_look(page, pdf_page):
+    """Replace the model's guesses about appearance with MEASUREMENTS.
+
+    align/size/bold exist for scanned pages, where there is no text layer and a
+    model looking at the picture is the only thing that can see that a
+    letterhead is centred. On a DIGITAL page that is the wrong source: the text
+    layer records the exact font size and x-position of every line.
+
+    Asking anyway caused a real regression. On a 3-page document whose body
+    text is 12pt, the model labelled most blocks 'small', which made 'small'
+    the size normaliser's anchor and pushed everything else up -- 31 runs
+    rendered at 24pt and three source pages became six.
+
+    Three guards keep the scanned path untouched:
+      - the caller only invokes this when the page has a text layer
+      - no lines found returns 0 and changes nothing
+      - a block whose text cannot be located keeps the model's values, so
+        nothing ever ends up with no formatting at all
+
+    Returns the number of blocks corrected.
+    """
+    lines = []
+    sizes = {}
+    for raw in pdf_page.get_text("dict")["blocks"]:
+        if raw["type"] != 0:
+            continue
+        for line in raw["lines"]:
+            text = "".join(s["text"] for s in line["spans"]).strip()
+            if not text:
+                continue
+            size = max((s["size"] for s in line["spans"]), default=10)
+            bold = any("bold" in s.get("font", "").lower()
+                       for s in line["spans"])
+            lines.append((normalize(text), size, line["bbox"], bold))
+            sizes[round(size, 1)] = sizes.get(round(size, 1), 0) + len(text)
+
+    if not lines:
+        return 0
+
+    body = max(sizes, key=sizes.get)          # the dominant size IS the body
+    page_mid = pdf_page.rect.width / 2
+    fixed = 0
+
+    for block in page.blocks:
+        if isinstance(block, TableBlock) or not block.text.strip():
+            continue
+
+        # Match on the opening of the block: a paragraph spans several lines,
+        # and its first line carries the size and position that matter.
+        head = normalize(block.text)[:20]
+        if len(head) < 6:
+            continue
+        match = next((l for l in lines if l[0].startswith(head)), None)
+        if match is None:
+            match = next((l for l in lines if head in l[0]), None)
+        if match is None:
+            continue
+
+        _, size, bbox, bold = match
+        block.size = ("large" if size >= body * 1.15
+                      else "small" if size <= body * 0.85 else "normal")
+        block.bold = bold
+
+        centre = (bbox[0] + bbox[2]) / 2
+        left_gap, right_gap = bbox[0], pdf_page.rect.width - bbox[2]
+        if abs(centre - page_mid) < 24 and left_gap > 40 and right_gap > 40:
+            block.align = "center"
+        elif left_gap > right_gap * 3 and left_gap > 100:
+            block.align = "right"
+        else:
+            block.align = "left"
+        fixed += 1
+
+    return fixed
+
+
+# Standard page sizes in inches, for recognising a mislabelled page box.
+STANDARD_PAGES = {
+    "Letter": (8.5, 11.0),
+    "Legal": (8.5, 14.0),
+    "A4": (8.27, 11.69),
+    "A3": (11.69, 16.54),
+    "A5": (5.83, 8.27),
+    "Tabloid": (11.0, 17.0),
+}
+
+
+def _sane_page_rect(pdf_page):
+    """The page's real size, correcting a box that was declared in pixels.
+
+    Some scanners write the page box using the image's PIXEL dimensions as if
+    they were points. A 200 dpi scan of a Letter page then declares itself
+    1700 x 2200 pt, which is 23.6 x 30.6 inches -- and the Word document comes
+    out nearly four times too big, with content stranded in the top third of an
+    enormous page.
+
+    The aspect ratio gives it away without guessing at the dpi: 1700/2200 is
+    0.7727, and Letter is 8.5/11 = 0.7727 exactly. So an implausibly large page
+    whose proportions match a standard size is reported at that standard size.
+
+    A page under 17 inches is left alone, so correctly-declared documents --
+    including genuinely large ones like A3 and Tabloid -- are untouched.
+    """
+    rect = pdf_page.rect
+    w_in, h_in = rect.width / 72.0, rect.height / 72.0
+
+    if max(w_in, h_in) <= 17.5:
+        return rect
+
+    ratio = w_in / h_in if h_in else 1
+    best, best_err = None, 0.02          # within 2% counts as a match
+    for name, (sw, sh) in STANDARD_PAGES.items():
+        for cand_w, cand_h in ((sw, sh), (sh, sw)):      # portrait or landscape
+            err = abs(ratio - cand_w / cand_h) / (cand_w / cand_h)
+            if err < best_err:
+                best, best_err = (name, cand_w, cand_h), err
+
+    if best is None:
+        return rect
+
+    name, cw, ch = best
+    print(f"           page box declared {w_in:.1f}x{h_in:.1f}in -- "
+          f"proportions match {name}, using {cw}x{ch}in")
+    return pymupdf.Rect(0, 0, cw * 72, ch * 72)
+
+
 def measure_layout(pdf_page) -> dict:
     """Read the source page's geometry so Word can be made to match it.
 
@@ -397,13 +525,19 @@ def measure_layout(pdf_page) -> dict:
     The body font size is the one the most characters use, which ignores
     headings and footnotes.
     """
-    rect = pdf_page.rect
+    rect = _sane_page_rect(pdf_page)
+
+    # Text coordinates are in the page's ORIGINAL space. If the box was
+    # corrected above, everything measured from those coordinates has to be
+    # scaled by the same factor or the margins land in the wrong units.
+    scale = rect.width / pdf_page.rect.width if pdf_page.rect.width else 1.0
+
     blocks = [b for b in pdf_page.get_text("blocks") if b[4].strip()]
 
     if blocks:
-        left = min(b[0] for b in blocks)
-        right = rect.width - max(b[2] for b in blocks)
-        top = min(b[1] for b in blocks)
+        left = min(b[0] for b in blocks) * scale
+        right = (pdf_page.rect.width - max(b[2] for b in blocks)) * scale
+        top = min(b[1] for b in blocks) * scale
     else:
         left = right = top = 72.0
 
@@ -519,6 +653,10 @@ parser.add_argument("--dpi", type=int, default=125,
 parser.add_argument("--out", default="extracted.md", help="clean Markdown output file")
 parser.add_argument("--docx", metavar="FILE.docx",
                     help="also write a Word document (Tier 3, no model involved)")
+parser.add_argument("--xlsx", metavar="FILE.xlsx",
+                    help="also write an Excel file (Tier 3, no model involved). "
+                         "Every page goes into one sheet, tables as grids and "
+                         "prose in column A, all values kept as text.")
 parser.add_argument("--no-ocr", action="store_true",
                     help="skip OCR verification on scanned pages, leaving "
                          "checks 2 and 4 reporting N/A as before")
@@ -814,15 +952,40 @@ for pno in targets:
         # an ungrounded block on a page with no pictures is a misread to
         # report, not something to quietly delete.
         bogus = ungrounded_text_blocks(page, source_text)
-        if bogus:
-            for i in bogus:
-                print(f"       - dropping block[{i}] "
-                      f"{page.blocks[i].text[:40]!r} -- not in the PDF's text, "
-                      f"read from the image")
+        for i in bogus:
+            print(f"       - dropping block[{i}] "
+                  f"{page.blocks[i].text[:40]!r} -- not in the PDF's text, "
+                  f"read from the image")
+
+        # The same thing happens with structure, not just words. A bar chart
+        # was read as a 2x5 table of its own axis labels and values, none of
+        # which appear in the document -- the page has a chart, and the chart
+        # is already being embedded as an image. Only tables whose cells are
+        # ENTIRELY ungrounded qualify; one bad cell among 49 good ones is a
+        # misread to report, not a table to delete.
+        bogus_tables = ungrounded_table_blocks(page, source_text)
+        for i in bogus_tables:
+            t = page.blocks[i]
+            print(f"       - dropping block[{i}] table "
+                  f"{len(t.rows)}x{t.n_cols} {t.header[:4]} -- no cell appears "
+                  f"in the PDF's text, read from the image")
+
+        drop = set(bogus) | set(bogus_tables)
+        if drop:
             page = Page(
                 analysis=page.analysis,
-                blocks=[b for i, b in enumerate(page.blocks) if i not in bogus],
+                blocks=[b for i, b in enumerate(page.blocks) if i not in drop],
             )
+
+    # --- appearance: measured where possible, asked for only where not -----
+    # The model reports align/size/bold on every page, but on a digital page
+    # the text layer knows them exactly. Measuring overrides the guesses; on a
+    # scanned page this is skipped entirely and the model's values stand.
+    if not is_scanned:
+        fixed = measure_block_look(page, pdf_page)
+        if fixed:
+            print(f"\n  layout: appearance of {fixed} block(s) measured from "
+                  f"the text layer, replacing the model's estimates")
 
     extracted_pages.append(page)
     page_image_sets.append(page_images)
@@ -893,6 +1056,24 @@ if args.docx and extracted_pages:
               f"against the PDF)")
         for p in img_problems:
             print(f"    - {p}")
+    if missing:
+        shown = ", ".join(missing[:8])
+        more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        print(f"    missing: {shown}{more}")
+
+# --- Tier 3: the Excel file ---------------------------------------------
+# Same Page objects, same checks, a different writer. Deterministic: nothing
+# here asks the model anything.
+if args.xlsx and extracted_pages:
+    xl_problems = build_xlsx(extracted_pages, args.xlsx,
+                             image_sets=page_image_sets)
+    print(f"Excel file written to {args.xlsx}  "
+          f"(one sheet, all pages, values kept as text)")
+    for p in xl_problems:
+        print(f"    - {p}")
+
+    coverage, missing = verify_xlsx(args.xlsx, "\n".join(source_texts))
+    print(f"  content check: {coverage:.0%} of the PDF's words are in the .xlsx")
     if missing:
         shown = ", ".join(missing[:8])
         more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""

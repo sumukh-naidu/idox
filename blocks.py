@@ -179,6 +179,33 @@ class TextBlock(BaseModel):
     )
 
 
+class TextBlockNoLook(BaseModel):
+    """TextBlock without align/size/bold -- for pages where measuring beats asking.
+
+    On a DIGITAL page (see measure_block_look() in test_pdf.py) the text layer
+    gives the real font size and x-position of every line, so asking the model
+    to guess align/size/bold there is pure waste: real generation time (these
+    three fields measured ~17 tokens/block, field names plus values, tokenized
+    directly against the running server) spent on values that get overwritten
+    unconditionally, before the page is ever written out. This schema is used
+    ONLY when the caller already knows -- before the model is even called --
+    that those three fields will be measured afterward, never read from here.
+
+    Same field ORDER logic as TextBlock: not applicable, since there is nothing
+    left after text to reorder.
+    """
+    kind: Literal["heading", "paragraph", "caption", "list", "image"] = Field(
+        description="What structural kind of non-table block this is."
+    )
+    text: str = Field(
+        description=(
+            "Full text of the block, exactly as printed. Use REAL line breaks "
+            "for lines that are separate on the page, such as the lines of an "
+            "address. Never write the two characters backslash-n."
+        ),
+    )
+
+
 class TableBlock(BaseModel):
     kind: Literal["table"]
     has_header: bool = Field(
@@ -232,6 +259,33 @@ class Page(BaseModel):
     blocks: List[Union[TableBlock, TextBlock]] = Field(
         description="Every block on the page, in top-to-bottom reading order."
     )
+
+
+class PageNoLook(BaseModel):
+    """Page, with TextBlockNoLook instead of TextBlock -- see that class."""
+    analysis: LayoutAnalysis = Field(
+        description="Your reasoning about the page layout, BEFORE extracting."
+    )
+    blocks: List[Union[TableBlock, TextBlockNoLook]] = Field(
+        description="Every block on the page, in top-to-bottom reading order."
+    )
+
+
+def _add_look_placeholders(page: "PageNoLook") -> "Page":
+    """Expand a PageNoLook into a canonical Page.
+
+    align/size/bold are filled with placeholders, never read as real values --
+    the only caller of the *NoLook schema (test_pdf.py, digital pages) always
+    runs measure_block_look() immediately afterward, which overwrites all
+    three unconditionally before the page is used for anything else.
+    """
+    blocks = [
+        b if isinstance(b, TableBlock) else
+        TextBlock(kind=b.kind, text=b.text, align="left", size="normal",
+                  bold=False)
+        for b in page.blocks
+    ]
+    return Page(analysis=page.analysis, blocks=blocks)
 
 
 # ===========================================================================
@@ -334,6 +388,49 @@ def squash(s: str) -> str:
     Used only to suppress false alarms, never to find new matches in prose.
     """
     return normalize(s).replace(" ", "")
+
+
+def drop_duplicate_blocks(page: Page):
+    """Remove TextBlocks the model repeated verbatim -- a real, confirmed bug.
+
+    Under greedy decoding (temperature 0) with no repeat_penalty, the model
+    was observed writing a page's real content correctly and then, instead of
+    closing the blocks array, re-emitting already-written blocks verbatim --
+    on a real 4-block digital page, blocks 1 and 3 were each repeated twice
+    more before the array finally closed. repeat_penalty (see extract_page())
+    fixes this at the source, confirmed by re-running the same page. This is
+    the deterministic backstop for whatever repeat_penalty misses: a page-level
+    guarantee that no two blocks say the same thing, independent of sampling
+    parameters, so a regression there cannot silently reintroduce duplicates.
+
+    Only TextBlocks are checked, and only ones with non-trivial text (over 12
+    normalized characters) -- a short repeated label ("Total", "N/A") can
+    legitimately appear twice on a page and is not this bug. 12 is deliberate:
+    caught on a real document at exactly 20 characters ("Monthly Active
+    Users", emitted once as a heading and once as a separate paragraph) -- a
+    higher cutoff would have missed that real duplicate. The first occurrence
+    is always kept; later exact repeats are dropped.
+
+    Returns (new_page, dropped_descriptions).
+    """
+    seen = set()
+    kept, dropped = [], []
+
+    for block in page.blocks:
+        if isinstance(block, TableBlock) or not block.text.strip():
+            kept.append(block)
+            continue
+
+        key = normalize(block.text)
+        if len(key) > 12 and key in seen:
+            dropped.append(block.text[:60])
+            continue
+        seen.add(key)
+        kept.append(block)
+
+    if not dropped:
+        return page, []
+    return Page(analysis=page.analysis, blocks=kept), dropped
 
 
 def check_structure(page: Page):
@@ -688,24 +785,87 @@ def check_grounding(page: Page, source_text: str):
 # THE MODEL CALL -- one per page
 # ===========================================================================
 
+# The manually-downloaded HF model (Q4_K_M LLM + Q8_0 mmproj), served by our
+# own llama-server -- the only model source verified and tuned this session
+# (repeat_penalty, the is_scanned schema trim, all latency numbers on record).
+# Defaulting to it here, not just in each script's --base-url flag, closes a
+# real incident: a run of image_to_word.py that omitted --base-url silently
+# fell back to Ollama's own bundled qwen3-vl:2b-instruct instead of failing --
+# and that build measurably dropped content (a whole table, merged headings)
+# on the same page this build handled cleanly. Pass base_url=None explicitly
+# to opt back into Ollama (e.g. to reach the 4B model for a hard page).
+DEFAULT_BASE_URL = "http://127.0.0.1:8090"
+
+
 def extract_page(image_path: str, model: str = MODEL_NAME,
-                 num_ctx: int = 8192, num_predict: int = 4000) -> Page:
+                 num_ctx: int = 8192, num_predict: int = 4000,
+                 return_timing: bool = False, base_url: str = DEFAULT_BASE_URL,
+                 include_look: bool = True):
     """Send one page image to the local model; get back analysis + blocks + review.
+
+    include_look=False switches the request schema from Page/TextBlock to
+    PageNoLook/TextBlockNoLook, dropping align/size/bold from what the model
+    is asked to produce. Only pass False when the caller will immediately
+    measure those three fields itself afterward (digital pages -- see
+    measure_block_look() in test_pdf.py); otherwise every block silently gets
+    placeholder appearance values that are never corrected. Default stays True
+    so existing callers (image_to_pdf.py, which has no text layer to measure
+    from) are unaffected.
 
     num_ctx is raised above Ollama's 4096 default because the reasoning fields
     plus a dense page's JSON can exceed it, and an overflowing context silently
     truncates the output rather than erroring.
+
+    return_timing=True additionally returns a dict broken down from the
+    server's OWN internal timers (nanoseconds since epoch-relative durations
+    it tracks server-side, not anything measured on the Python side): how long
+    loading the model took, how long it spent reading the page image + prompt
+    ("prefill"), and how long it spent writing the actual output token by
+    token ("generation"). Default is False so this stays a no-op for existing
+    callers (test_json.py) that only expect a Page back.
+
+    base_url, when given, bypasses Ollama's daemon entirely and calls a raw
+    llama-server instance directly via its OpenAI-compatible API (e.g.
+    "http://127.0.0.1:8090"). This exists because Ollama's own Modelfile
+    format has no documented way to attach a SEPARATE mmproj file to a model
+    -- confirmed against Ollama's own docs and matching GitHub issues, where
+    attempting it silently produces a model with no vision capability. Every
+    Ollama registry build we inspected bundles model+mmproj into one file for
+    exactly this reason. Since Ollama's own llama-server binary genuinely does
+    accept separate --model/--mmproj flags when run directly, this lets us
+    test GGUF files pulled straight from a source like Hugging Face -- e.g.
+    Qwen's official Q4_K_M model paired with their standalone Q8_0 mmproj --
+    without Ollama's packaging getting in the way. The model/format/schema
+    logic is otherwise identical; only the transport changes.
     """
+    if base_url:
+        return _extract_page_raw_server(
+            image_path, base_url, num_ctx, num_predict, return_timing,
+            include_look,
+        )
+
+    schema_cls = Page if include_look else PageNoLook
     response = ollama.chat(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": USER_PROMPT, "images": [image_path]},
         ],
-        format=Page.model_json_schema(),   # decoder cannot emit invalid JSON
+        format=schema_cls.model_json_schema(),   # decoder cannot emit invalid JSON
         options={
             "temperature": 0,
             "num_ctx": num_ctx,
+            # Without this, greedy decoding (temperature 0) has NOTHING
+            # discouraging it from re-emitting a block it already wrote.
+            # Confirmed directly: on a real digital page, the model correctly
+            # wrote 4 blocks (heading, paragraph, table, paragraph) and then,
+            # with repeat_penalty at its default of 1.0 (off), started
+            # re-generating blocks 1 and 3 verbatim -- twice each -- before
+            # finally closing the array. The blocks array has to stay
+            # unbounded (page content varies), so unlike block_kinds below it
+            # cannot be fixed by removing the array; this is the standard,
+            # correct lever for exactly this failure mode.
+            "repeat_penalty": 1.15,
             # Hard ceiling on generation. Not a tuning knob -- a circuit
             # breaker. An unbounded array in the schema plus greedy decoding
             # (temperature 0) can loop: at every position the grammar allows
@@ -726,4 +886,103 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
             f"usually means a runaway list in the analysis stage."
         )
 
-    return Page.model_validate_json(response["message"]["content"])
+    page = schema_cls.model_validate_json(response["message"]["content"])
+    if not include_look:
+        page = _add_look_placeholders(page)
+
+    if not return_timing:
+        return page
+
+    # Ollama returns every duration in nanoseconds; /1e9 converts to seconds.
+    # These three numbers are computed by Ollama itself while it processes the
+    # request -- not something guessed or timed from outside.
+    timing = {
+        "load_s": (response.get("load_duration") or 0) / 1e9,
+        "prefill_s": (response.get("prompt_eval_duration") or 0) / 1e9,
+        "prefill_tokens": response.get("prompt_eval_count") or 0,
+        "generate_s": (response.get("eval_duration") or 0) / 1e9,
+        "generate_tokens": response.get("eval_count") or 0,
+    }
+    return page, timing
+
+
+def _extract_page_raw_server(image_path: str, base_url: str,
+                             num_ctx: int, num_predict: int,
+                             return_timing: bool, include_look: bool = True):
+    """The base_url path: talk to a raw llama-server directly, not Ollama.
+
+    Uses its OpenAI-compatible /v1/chat/completions endpoint. Same system
+    prompt, same user prompt, same JSON schema as the Ollama path -- only the
+    transport and the base64 image-embedding differ, since a raw llama-server
+    has no equivalent of Ollama's images=[path] convenience.
+    """
+    import base64
+    import time as _time
+
+    import requests
+
+    with open(image_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode()
+
+    schema_cls = Page if include_look else PageNoLook
+    started = _time.time()
+    resp = requests.post(
+        f"{base_url.rstrip('/')}/v1/chat/completions",
+        json={
+            "model": "manual",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": [
+                    {"type": "text", "text": USER_PROMPT},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                ]},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "page", "schema": schema_cls.model_json_schema()},
+            },
+            "temperature": 0,
+            # See the matching comment in the Ollama path above -- confirmed
+            # directly on a real page: without this, greedy decoding re-emitted
+            # already-written blocks verbatim instead of stopping the array.
+            "repeat_penalty": 1.15,
+            "n_predict": num_predict,
+        },
+        timeout=600,
+    )
+    wall_elapsed = _time.time() - started
+    resp.raise_for_status()
+    d = resp.json()
+
+    finish_reason = d["choices"][0].get("finish_reason")
+    if finish_reason == "length":
+        raise ValueError(
+            f"model hit the {num_predict}-token generation limit without "
+            f"finishing -- output was truncated and cannot be parsed."
+        )
+
+    page = schema_cls.model_validate_json(d["choices"][0]["message"]["content"])
+    if not include_look:
+        page = _add_look_placeholders(page)
+
+    if not return_timing:
+        return page
+
+    # A raw llama-server DOES report real prefill/generate sub-durations --
+    # a "timings" block (a llama.cpp server extension, not standard OpenAI
+    # API): prompt_ms and predicted_ms, both server-measured. Confirmed by
+    # inspecting a live response rather than assumed. load_s is left at 0
+    # because a model already resident (as ours is, kept warm across this
+    # session) has nothing to separately report -- unlike Ollama, this
+    # endpoint has no distinct load_duration field either way.
+    usage = d.get("usage", {})
+    t = d.get("timings", {})
+    timing = {
+        "load_s": 0.0,
+        "prefill_s": (t.get("prompt_ms") or 0) / 1000,
+        "prefill_tokens": usage.get("prompt_tokens") or t.get("prompt_n") or 0,
+        "generate_s": (t.get("predicted_ms") or 0) / 1000,
+        "generate_tokens": usage.get("completion_tokens") or t.get("predicted_n") or 0,
+    }
+    return page, timing

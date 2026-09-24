@@ -191,8 +191,13 @@ def build_xlsx(pages: List[Page], path: str, image_sets: List[list] = None,
         # of text above me" into a block index to sit after, sorted so several
         # images on one page stay in page order.
         n = len(page.blocks)
+        # See the matching comment in to_docx.py: with an empty page every
+        # image's position collapses to 0, tying every tuple on its first
+        # element -- without key=, Python would fall back to comparing the
+        # image dicts themselves, which crashes (dicts have no ordering).
         pending = sorted(
-            (min(n, round(im.get("frac_above", 1.0) * n)), im) for im in images
+            ((min(n, round(im.get("frac_above", 1.0) * n)), im) for im in images),
+            key=lambda t: t[0],
         )
 
         for bno, block in enumerate(page.blocks):

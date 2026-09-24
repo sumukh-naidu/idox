@@ -319,8 +319,17 @@ def build_docx(pages: List[Page], path: str, title: str = None,
         # sit after. Sorted so several images on one page stay in page order,
         # and popped from the front as the blocks are written out.
         n = len(page.blocks)
+        # key=... is load-bearing, not style: with an empty page (n == 0 --
+        # exactly the separate scan document under --scan-mode both) every
+        # image's position collapses to 0, so every tuple ties on its first
+        # element. Without a key, Python falls back to comparing the second
+        # element (the image dict) to break the tie, and dicts have no
+        # ordering -- a real crash, reproduced with 2 images on one blank
+        # page. The key restricts comparison to the position only; Python's
+        # sort is stable, so tied images simply keep their original order.
         pending = sorted(
-            (min(n, round(im["frac_above"] * n)), im) for im in images
+            ((min(n, round(im["frac_above"] * n)), im) for im in images),
+            key=lambda t: t[0],
         )
 
         for bno, block in enumerate(page.blocks):

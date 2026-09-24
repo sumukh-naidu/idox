@@ -43,12 +43,14 @@ import time
 import pymupdf
 
 from blocks import (
+    DEFAULT_BASE_URL,
     Page,
     TableBlock,
     TextBlock,
     check_coverage,
     check_grounding,
     check_structure,
+    drop_duplicate_blocks,
     extract_page,
     normalize,
     ungrounded_table_blocks,
@@ -424,7 +426,13 @@ def measure_block_look(page, pdf_page):
             size = max((s["size"] for s in line["spans"]), default=10)
             bold = any("bold" in s.get("font", "").lower()
                        for s in line["spans"])
-            lines.append((normalize(text), size, line["bbox"], bold))
+            # Same technique as bold, one line down: an italic font is named
+            # accordingly ("Helvetica-Oblique", "Arial-Italic"), so this is a
+            # measured fact from the document, not a guess -- the same
+            # standard the rest of this function holds itself to.
+            italic = any(f in s.get("font", "").lower()
+                        for s in line["spans"] for f in ("italic", "oblique"))
+            lines.append((normalize(text), size, line["bbox"], bold, italic))
             sizes[round(size, 1)] = sizes.get(round(size, 1), 0) + len(text)
 
     if not lines:
@@ -432,6 +440,11 @@ def measure_block_look(page, pdf_page):
 
     body = max(sizes, key=sizes.get)          # the dominant size IS the body
     page_mid = pdf_page.rect.width / 2
+    # The widest line on the page approximates the real text column width.
+    # Needed below to tell a genuinely centred (narrow) line from an ordinary
+    # full-width paragraph line that merely happens to sit symmetrically
+    # between two equal page margins.
+    col_width = max((bbox[2] - bbox[0] for _, _, bbox, _, _ in lines), default=0)
     fixed = 0
 
     for block in page.blocks:
@@ -449,14 +462,43 @@ def measure_block_look(page, pdf_page):
         if match is None:
             continue
 
-        _, size, bbox, bold = match
+        _, size, bbox, bold, italic = match
         block.size = ("large" if size >= body * 1.15
                       else "small" if size <= body * 0.85 else "normal")
         block.bold = bold
 
+        # kind, like align/size/bold, is only ever the model's guess on a
+        # digital page -- but here too the text layer has a real, measurable
+        # answer for one common mistake: a caption/footnote line that the
+        # model called a plain "paragraph". Same thresholds already trusted
+        # elsewhere in this file for exactly this decision (see
+        # repair_missing_lines()). Deliberately one-directional: this only
+        # upgrades an under-classified "paragraph", never overrides a
+        # heading/list/caption the model already committed to, so a correct
+        # call is never second-guessed, only a generic fallback is.
+        if block.kind == "paragraph":
+            if size >= body * 1.25:
+                block.kind = "heading"
+            elif italic or size <= body * 0.88:
+                block.kind = "caption"
+
         centre = (bbox[0] + bbox[2]) / 2
+        width = bbox[2] - bbox[0]
         left_gap, right_gap = bbox[0], pdf_page.rect.width - bbox[2]
-        if abs(centre - page_mid) < 24 and left_gap > 40 and right_gap > 40:
+        # A real regression, confirmed on a real document: an ordinary
+        # full-width body paragraph line, wrapped near the right margin,
+        # lands its own midpoint within a few points of the page's midpoint
+        # purely because the page's left/right margins are symmetric -- NOT
+        # because the text is centred. "This report covers user growth..."
+        # (bbox centre 293.9 vs page mid 306.0, well inside the old 24pt
+        # tolerance) came out CENTER on a page where it visibly is not.
+        # A genuinely centred line (a title, a letterhead) is narrower than
+        # the page's own text column, with roughly equal empty space either
+        # side -- an ordinary paragraph line fills most of that column. This
+        # extra width check is what tells the two apart.
+        narrow_enough = col_width == 0 or width < col_width * 0.85
+        if (narrow_enough and abs(centre - page_mid) < 24
+                and left_gap > 40 and right_gap > 40):
             block.align = "center"
         elif left_gap > right_gap * 3 and left_gap > 100:
             block.align = "right"
@@ -650,6 +692,19 @@ parser.add_argument("--dpi", type=int, default=125,
                     help="render resolution (default 125). Measured on page 1: "
                          "100dpi loses every text block, 125 keeps all content "
                          "at ~16%% less time than 150.")
+parser.add_argument("--model", default="qwen3-vl:4b-instruct",
+                    help="Ollama model to use for extraction (default "
+                         "qwen3-vl:4b-instruct). E.g. qwen3-vl:2b-instruct -- "
+                         "measured ~2x faster on one real document, same "
+                         "block count, no accuracy loss observed. Ignored "
+                         "when --base-url is given.")
+parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
+                    help="the raw llama-server instance to use (default: "
+                         "the manually-downloaded HF model on "
+                         f"{DEFAULT_BASE_URL}). Pass an empty string to use "
+                         "Ollama's own bundled model instead (e.g. for "
+                         "--model qwen3-vl:4b-instruct, not present in the "
+                         "manually-downloaded set).")
 parser.add_argument("--out", default="extracted.md", help="clean Markdown output file")
 parser.add_argument("--docx", metavar="FILE.docx",
                     help="also write a Word document (Tier 3, no model involved)")
@@ -688,6 +743,22 @@ page_image_sets = []          # one list of extracted images per page (often [])
 scan_image_sets = []          # scanned-page images destined for a SEPARATE file
 source_texts = []             # the PDF's own text, for verifying that .docx
 source_layout = None          # page size/margins/font, so Word matches the PDF
+
+# Latency breakdown: these accumulate across every page in the loop, then get
+# printed as one total at the very end. Each is the standard
+# time.time()-before / time.time()-after / subtract pattern, just added up.
+total_extraction_time = 0.0     # PHASE 1: PDF -> data (extract_page calls)
+total_validation_time = 0.0     # PHASE 2: the 4 checks only (not repairs)
+total_conversion_time = 0.0     # PHASE 3: data -> .docx (build_docx, once)
+
+# TEMPORARY -- sub-breakdown of PHASE 1 only, straight from Ollama's own
+# internal timers. Remove alongside the other TEMPORARY block once the
+# bottleneck within extraction has been identified.
+total_model_load_time = 0.0
+total_prefill_time = 0.0
+total_generate_time = 0.0
+total_prefill_tokens = 0
+total_generate_tokens = 0
 
 for pno in targets:
     pdf_page = doc[pno]
@@ -800,15 +871,40 @@ for pno in targets:
         continue
 
     # --- Tier 1: the model ----------------------------------------------
+    # PHASE 1: PDF -> data extraction.
     started = time.time()
     try:
-        page = extract_page(img_path)
+        page, model_timing = extract_page(
+            img_path, model=args.model, return_timing=True,
+            base_url=args.base_url, include_look=is_scanned,
+        )
     except Exception as exc:
         print(f"Tier 1 FAILED to produce valid output: {exc}")
         continue
     elapsed = time.time() - started
+    total_extraction_time += elapsed
+
+    # A real, confirmed model failure mode: under greedy decoding, the model
+    # has re-emitted already-written blocks verbatim instead of stopping the
+    # array. repeat_penalty (in extract_page()) fixes this at the source; this
+    # is the deterministic backstop in case that ever isn't enough.
+    page, dupes = drop_duplicate_blocks(page)
+    for d in dupes:
+        print(f"       ! dropped duplicate block (model repeated itself): "
+              f"{d!r}")
 
     print(f"Tier 1 -- {len(page.blocks)} blocks in {elapsed:.1f}s\n")
+
+    # TEMPORARY -- PHASE 1 sub-breakdown, accumulated here and printed ONCE at
+    # the very end in the LATENCY BREAKDOWN summary (not per-page, to avoid
+    # showing the same numbers twice). Straight from Ollama's own internal
+    # timers, not re-measured here. Remove alongside the other TEMPORARY
+    # block once the bottleneck within extraction has been identified.
+    total_model_load_time += model_timing["load_s"]
+    total_prefill_time += model_timing["prefill_s"]
+    total_generate_time += model_timing["generate_s"]
+    total_prefill_tokens += model_timing["prefill_tokens"]
+    total_generate_tokens += model_timing["generate_tokens"]
 
     if args.show_reasoning:
         def show(title, obj):
@@ -838,12 +934,17 @@ for pno in targets:
             print(f"  [{i}] {block.kind}  {preview}")
 
     # --- the checks ------------------------------------------------------
+    # PHASE 2: validation -- the 4 checks only. Repairs (which run further
+    # below, if a check fails) are deliberately NOT included in this timing.
+    validation_started = time.time()
     structural, notes = check_structure(page)
     grounding, found, total = check_grounding(page, verify_text)
     geometry = check_geometry(page, pdf_page)
     coverage_problems, coverage, _missing, missing_lines = check_coverage(
         page, verify_text
     )
+    validation_elapsed = time.time() - validation_started
+    total_validation_time += validation_elapsed
 
     print("\n  --- checks ---")
 
@@ -880,6 +981,8 @@ for pno in targets:
               f"   ({coverage:.0%} of the PDF's text was extracted)")
     for p in coverage_problems:
         print(f"       - {p}")
+
+    print(f"  >>> PHASE 2 (validation, 4 checks) took {validation_elapsed:.3f}s")
 
     # --- repair: put dropped lines back, taken from the PDF itself ---------
     # The checks above deliberately report the model's RAW output, so how
@@ -1007,11 +1110,15 @@ print(f"clean extraction written to {args.out}")
 # --- Tier 3: build the Word document ------------------------------------
 # Deterministic. python-docx writes the file from the extracted structure;
 # no model is asked anything here.
+# PHASE 3: data -> .docx. Runs ONCE here, after every page has already been
+# extracted and validated above -- NOT once per page.
 if args.docx and extracted_pages:
+    conversion_started = time.time()
     problems = build_docx(
         extracted_pages, args.docx, title=os.path.basename(args.pdf),
         layout=source_layout, image_sets=page_image_sets,
     )
+    total_conversion_time += time.time() - conversion_started
     print(f"Word document written to {args.docx}")
     if source_layout:
         print(f"  page setup matched to source: "
@@ -1081,3 +1188,40 @@ if args.xlsx and extracted_pages:
 
 print(f"rendered page images in {RENDER_DIR}/ -- open these to see what the "
       f"model actually saw")
+
+# --- latency breakdown: totals across every page, all three phases side by
+# side so you can see which one is actually the bottleneck without adding
+# per-page numbers up yourself.
+total_time = total_extraction_time + total_validation_time + total_conversion_time
+print()
+print("=" * 72)
+print("LATENCY BREAKDOWN (summed across all pages processed)")
+print("=" * 72)
+if total_time > 0:
+    print(f"  PHASE 1  extraction  (PDF -> data)   "
+          f"{total_extraction_time:8.2f}s  "
+          f"({total_extraction_time / total_time:5.1%})")
+    # TEMPORARY -- PHASE 1 sub-breakdown, from Ollama's own internal timers.
+    _phase1_sub = (total_model_load_time + total_prefill_time
+                  + total_generate_time) or 1e-9
+    print(f"      model load:                       "
+          f"{total_model_load_time:8.2f}s  "
+          f"({total_model_load_time / _phase1_sub:5.1%} of phase 1)")
+    print(f"      reading page (prefill):           "
+          f"{total_prefill_time:8.2f}s  "
+          f"({total_prefill_time / _phase1_sub:5.1%} of phase 1)  "
+          f"-- {total_prefill_tokens} tokens")
+    print(f"      generating (writing output):      "
+          f"{total_generate_time:8.2f}s  "
+          f"({total_generate_time / _phase1_sub:5.1%} of phase 1)  "
+          f"-- {total_generate_tokens} tokens")
+    print(f"  PHASE 2  validation  (4 checks)       "
+          f"{total_validation_time:8.2f}s  "
+          f"({total_validation_time / total_time:5.1%})")
+    print(f"  PHASE 3  conversion  (data -> .docx)  "
+          f"{total_conversion_time:8.2f}s  "
+          f"({total_conversion_time / total_time:5.1%})")
+    print(f"  {'-' * 68}")
+    print(f"  TOTAL                                 {total_time:8.2f}s")
+else:
+    print("  no pages were timed -- nothing to report")

@@ -9,8 +9,15 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# Model weights - far too large for git, never commit
+models_manual/
+
 # Generated output
 pdf_out/
+pdf_out_img/
+pdf_to_word_output/
+scanned_pdf_output/
+xlsx_output/
 render/
 *.docx
 *.log
@@ -32,6 +39,9 @@ text2.md
 real_form_1040.pdf
 real_business_doc.pdf
 End-of-Day_Report___Day_7.pdf
+
+# Local tooling state
+.claude/scheduled_tasks.lock
 
 # OS
 .DS_Store

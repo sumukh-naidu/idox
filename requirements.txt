@@ -1,0 +1,25 @@
+# Pinned to the exact versions this project has been built and tested against.
+# Install with: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# This covers Python libraries ONLY. It does NOT cover:
+#   - the actual model weights (the .gguf files) -- not a pip package, see
+#     the migration notes doc for how those transfer
+#   - tesseract-ocr, libreoffice-writer, or Ollama itself (system packages,
+#     not Python libraries) -- also covered in the migration notes doc
+#
+# ollama==0.6.2 below is the thin Python client library for Ollama's API
+# (blocks.py: import ollama / ollama.chat(...)) -- it is NOT the model, and
+# NOT the default path anymore. It's only exercised when base_url="" is
+# passed explicitly to opt into Ollama's bundled model on purpose (e.g. to
+# reach the 4B model, which isn't in models_manual/). Kept here because the
+# code can still import and call it; removing the package would break that
+# path, not just make it unused.
+
+pymupdf==1.28.2
+pydantic==2.13.5
+python-docx==1.2.0
+openpyxl==3.1.5
+pillow==12.3.0
+pytesseract==0.3.13
+requests==2.34.2
+ollama==0.6.2

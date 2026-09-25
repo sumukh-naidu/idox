@@ -51,13 +51,52 @@ must commit to a count before transcribing. If it sees 5 rows and writes 4, the
 mismatch is detectable.
 """
 
+import os
 import re
+import tempfile
 from typing import List, Literal, Union
 
 import ollama
+from PIL import Image
 from pydantic import BaseModel, Field
 
 MODEL_NAME = "qwen3-vl:4b-instruct"
+
+# A Letter page rendered at test_pdf.py's own 125dpi default comes to roughly
+# 1063x1375px -- 1,461,625 pixels. Measured directly, not assumed: a raw
+# image sent as-is (test.png, 671x862 = 578,402px) landed at 1,088 vision
+# tokens versus 1,427 for an equivalent PDF page at that resolution, a real
+# ~31% detail gap. The server's own --image-min-tokens 1024 floor already
+# stops a raw image being sent at full native resolution when it's small,
+# but that floor is still meaningfully below what test_pdf.py achieves
+# through deliberate DPI control. This is the same target, so a raw image
+# gets the SAME detail budget a PDF page would, not just the bare minimum
+# the server enforces on its own.
+MIN_IMAGE_PIXELS = 1_450_000
+
+
+def _ensure_min_resolution(image_path: str) -> str:
+    """Upscale a raw image to test_pdf.py's own detail budget, never downscale.
+
+    Returns the original path unchanged if it's already at or above the
+    target -- this is a floor, not a fixed size, so a PDF page rendered by
+    test_pdf.py (already at or above this budget) is untouched. Returns a
+    path to a temporary upscaled copy otherwise; the caller is responsible
+    for cleaning it up once the request is done.
+    """
+    with Image.open(image_path) as im:
+        w, h = im.size
+        if w * h >= MIN_IMAGE_PIXELS:
+            return image_path
+
+        scale = (MIN_IMAGE_PIXELS / (w * h)) ** 0.5
+        new_size = (round(w * scale), round(h * scale))
+        upscaled = im.convert("RGB").resize(new_size, Image.LANCZOS)
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        upscaled.save(tmp_path)
+        return tmp_path
 
 
 # ===========================================================================
@@ -881,6 +920,15 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
     without Ollama's packaging getting in the way. The model/format/schema
     logic is otherwise identical; only the transport changes.
     """
+    # Upscale a low-resolution raw image up to the same detail budget a
+    # test_pdf.py-rendered PDF page gets -- a no-op for anything already at
+    # or above that (including every PDF page test_pdf.py itself sends
+    # here, since those are already rendered at 125dpi). Left in /tmp
+    # afterward rather than cleaned up here -- a handful of small PNGs is a
+    # standard, low-risk tradeoff against re-plumbing multiple return paths
+    # for a cleanup that the OS already handles.
+    image_path = _ensure_min_resolution(image_path)
+
     if base_url:
         return _extract_page_raw_server(
             image_path, base_url, num_ctx, num_predict, return_timing,

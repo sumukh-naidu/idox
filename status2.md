@@ -2,76 +2,66 @@
 
 Snapshot of the project *right now*. For full background, every bug's root cause, and the
 complete architecture, see `memory.md` — this file only covers current state and the
-immediate open decision.
+immediate open decisions.
 
-**Last updated:** 2026-09-25
-**Branch:** `feature/testing_2b_Q8mmproj` — working tree clean, latest commit `58b4e1d`.
+**Last updated:** 2026-09-25 (later revision — several fixes landed since this file was
+first written)
+**Branch:** `feature/testing_2b_Q8mmproj`. **Uncommitted right now:** `blocks.py`, holding
+the resolution-upscaling fix (`memory.md` §11) — not yet committed.
 **Model in use:** raw `llama-server` on `http://127.0.0.1:8090` (Qwen3-VL-2B-Instruct,
-Q4_K_M + Q8_0 mmproj, manually downloaded from Qwen's official HF repo). **This is now the
-automatic default everywhere** — no script needs `--base-url` typed anymore; omitting it no
-longer silently switches to a different model (that was a real bug, fixed this session).
+Q4_K_M + Q8_0 mmproj). Still the automatic default everywhere — no `--base-url` needed.
 
 ---
 
 ## What's working, right now, verified
 
-- **PDF → Word/Excel** (`test_pdf.py`) — digital pages: content extraction is trimmed
-  (no wasted `align`/`size`/`bold` guessing), appearance AND now `kind`
-  (heading/caption misclassification) are corrected from the real text layer. Scanned
-  pages: OCR-checked, text/image/both modes all work.
-- **Raw image → Word** (`image_to_word.py`, new script this session) — `--mode text` /
-  `image` / `both` all working, OCR-backed grounding/coverage checks in place.
-- **Raw image → PDF** (`image_to_pdf.py`) — same OCR checks added, same default-model fix.
-- **Word → PDF** (`word_to_pdf.py`) — unchanged, deterministic, no issues.
-- **No known crashes remaining.** The `sorted()`/dict-comparison crash (triggered by
-  `--scan-mode both` on a page with 2+ images) is fixed and verified in both `to_docx.py`
-  and `to_xlsx.py`.
-- **No known duplicate-block issue remaining.** `repeat_penalty` fixes it at the source;
-  `drop_duplicate_blocks()` is a deterministic backstop regardless.
+- **PDF → Word/Excel** (`test_pdf.py`) — digital pages: trimmed extraction, appearance +
+  `kind` correction from the real text layer, tables now have real spacing (6pt) instead of
+  sitting flush against text, bullet-character mismatches no longer trigger false
+  "duplicate" repairs. Scanned pages: OCR-checked, text/image/both modes all work.
+- **Raw image → Word/PDF** (`image_to_word.py`, `image_to_pdf.py`) — OCR-backed checks in
+  place, AND (new) low-resolution uploads now get upscaled to the same detail budget a
+  PDF page gets, closing a real, measured ~31% visual-detail gap that was making raw images
+  more error-prone than PDFs for reasons that had nothing to do with the model itself.
+- **No known crashes remaining.**
+- **Portability is set up**: `requirements.txt` (Python deps, pinned) in the repo, and a
+  separate migration-notes doc at `/home/aiteam/Documents/idox-migration-notes.md` (outside
+  the project, deliberately) covering everything that does NOT travel with `git clone` —
+  the model weights, `llama-server`, Tesseract, LibreOffice.
 
 ---
 
-## The one open, unresolved problem
+## Two open problems, not one — don't conflate them
 
-**Alignment (and block-`kind` classification) is unreliable for any page with no text
-layer — scanned PDFs and raw images both — and there's no deterministic fix available yet.**
+**1. Alignment — unchanged, still no fix chosen.** Model-guessed alignment (raw images,
+scanned PDFs) has a confirmed bias toward guessing "center" for heading-like text even when
+it's genuinely left-aligned. Three real options on the table (bigger model / OCR-alignment-
+flagging / dedicated layout-detection model), none chosen. **The resolution fix does
+nothing for this** — confirmed explicitly before it was built, different root cause
+entirely (see `memory.md` §8, §11).
 
-Confirmed pattern: the model has a learned bias toward guessing a short, bold,
-heading-like line is `center`-aligned, even when it's genuinely left-aligned in the source.
-Seen on two separate documents, through two separate scripts (`image_to_word.py` on
-`demo2.png`, `test_pdf.py`'s scanned path on `demo_scanned_with_image.pdf`) — same
-underlying code path (`measure_block_look()` is skipped whenever there's no text layer to
-measure from), so this isn't fixable by "reusing whichever script does it right" — neither
-does, for this specific problem.
-
-A detailed prompt-engineering alternative (explicit XY-coordinate/bounding-box spatial
-reasoning) was proposed by the project owner and **explicitly turned down** — reasoning is
-in `memory.md` §8, short version: this codebase's own documented history already proved
-prose instructions are advisory and get dropped by the model, the failure looks like a
-learned statistical prior rather than a missing instruction, and even a "successful" version
-of this idea would need a real schema change plus new, unverifiable-against-anything code.
-
-**Three real options are on the table, none chosen yet:**
-1. Use the 4B model for raw images (partial improvement, already measured: 3→6 blocks
-   recovered on a hard test page, still incomplete).
-2. Extend the OCR check to flag alignment disagreement too (makes it visible, doesn't fix it).
-3. A dedicated document-layout-detection model, separate from the VLM (the real fix,
-   unscoped, new dependency).
-
-**Immediate next step:** get a decision from the project owner on which of the three (or
-what combination) to pursue. Nothing should be built here without that decision — this is
-a genuine architecture choice, not a bug fix.
+**2. Content sometimes still missing on raw images — partially improved, not solved.**
+Root cause turned out to be TWO separate things, not one:
+  - **Low image resolution** (fixed, verified) — raw images were getting meaningfully less
+    visual detail than PDF pages because nothing controlled their resolution. Now upscaled
+    to match. Real, measured fix.
+  - **Genuine run-to-run model inconsistency** (still open, not fixable by a code patch) —
+    even after the resolution fix, repeated tests on the same image show *different*
+    content dropped on different calls (not the same gap every time). Traced to a real
+    mechanism: floating-point non-associativity in multi-threaded CPU inference plus
+    KV-cache reuse means temperature=0 isn't perfectly bitwise-reproducible — a near-tie
+    probability decision can flip between calls. Most exposed on visually ambiguous content.
+  - **Proposed, not built:** auto-retry when OCR coverage scores low. Directly motivated by
+    the mechanism above — a fresh retry has real expected value here, unlike retrying a
+    deterministic bug. This is the next concrete thing to build if "full extraction"
+    reliability is the priority.
 
 ---
 
 ## Numbers worth keeping straight (don't re-derive, don't assume stale)
 
-- Canonical latency baseline (pre-session, text-only 1-page digital PDF): **154.10s**
-  (68.72s prefill, 85.08s generate). This was BEFORE `repeat_penalty`, `drop_duplicate_blocks`,
-  the `include_look` schema trim, and the kind-correction fix all landed — every one of
-  those changes the generation-phase token count somewhat. **Not re-benchmarked fresh since
-  all of them stacked together** — if latency comes up again, get a new number rather than
-  quoting 154.10s as still-current.
-- Per-block token cost of `align`/`size`/`bold`: measured at 17 tokens/block (server's own
-  `/tokenize`), directly informing the `include_look` schema trim.
-- Governor and iGPU are closed questions — do not re-test (see `memory.md` §7 for why).
+- Canonical latency baseline (154.10s) is from BEFORE most of this session's fixes and is
+  explicitly flagged stale in `memory.md` — don't quote it as current.
+- Resolution fix: raw image detail budget raised from ~1,088 to ~1,434 vision tokens on a
+  real test file, matching test_pdf.py's own 125dpi PDF-page baseline (~1,427).
+- Governor and iGPU are closed questions — do not re-test (see `memory.md` §7).

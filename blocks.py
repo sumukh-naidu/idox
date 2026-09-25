@@ -360,6 +360,15 @@ USER_PROMPT = "Analyse this page briefly, then extract every block on it."
 # straight apostrophe in "Forgenite's" while the model writes a curly one.
 # Without folding them, the grounding check reports a hallucination that is
 # really just a different quote mark -- a false alarm that hides real ones.
+# Bullet characters get the same treatment, for a real, confirmed reason: a
+# PDF's text layer stores a list item's bullet as whatever glyph the author
+# used ("•"), while the model's own list rendering always uses a plain "-".
+# Without folding these too, check_coverage()'s line-match sees "• Generated
+# programmatically..." and "- Generated programmatically..." as unrelated
+# strings -- the words are identical, only the bullet differs -- calls the
+# line "missing entirely", and repair_missing_lines() then RE-INSERTS it as a
+# new block. The model's extraction was correct; the repair step was the one
+# creating a visible duplicate, by "fixing" content that was never missing.
 _PUNCT = str.maketrans({
     "‘": "'", "’": "'", "‛": "'", "′": "'",
     "“": '"', "”": '"', "„": '"', "″": '"',
@@ -367,6 +376,8 @@ _PUNCT = str.maketrans({
     "—": "-", "―": "-", "−": "-",
     " ": " ", " ": " ", " ": " ",
     "…": "...",
+    "•": "-", "◦": "-", "▪": "-", "▫": "-",
+    "‣": "-", "·": "-",
 })
 
 
@@ -390,30 +401,50 @@ def squash(s: str) -> str:
     return normalize(s).replace(" ", "")
 
 
+_BULLET_CHARS = "-*•●‣ \t"
+
+
 def drop_duplicate_blocks(page: Page):
-    """Remove TextBlocks the model repeated verbatim -- a real, confirmed bug.
+    """Remove TextBlocks the model repeated -- a real, confirmed bug, two shapes.
 
     Under greedy decoding (temperature 0) with no repeat_penalty, the model
     was observed writing a page's real content correctly and then, instead of
-    closing the blocks array, re-emitting already-written blocks verbatim --
-    on a real 4-block digital page, blocks 1 and 3 were each repeated twice
-    more before the array finally closed. repeat_penalty (see extract_page())
-    fixes this at the source, confirmed by re-running the same page. This is
-    the deterministic backstop for whatever repeat_penalty misses: a page-level
-    guarantee that no two blocks say the same thing, independent of sampling
-    parameters, so a regression there cannot silently reintroduce duplicates.
+    closing the blocks array, continuing to generate content already written.
+    repeat_penalty (see extract_page()) fixes this at the source, confirmed by
+    re-running the same page. This is the deterministic backstop for whatever
+    repeat_penalty misses -- confirmed necessary in practice: it is NOT 100%
+    reliable even with repeat_penalty on, seen on a real document where the
+    same page extracted cleanly on some runs and not others.
 
-    Only TextBlocks are checked, and only ones with non-trivial text (over 12
-    normalized characters) -- a short repeated label ("Total", "N/A") can
+    Two distinct shapes of the same bug, both handled here:
+
+      1. WHOLE-BLOCK repeat -- an earlier block re-emitted verbatim as a later
+         block. On a real 4-block page, blocks 1 and 3 were each repeated
+         twice more before the array finally closed.
+
+      2. LIST-ITEM repeat -- a "list" block (all bullets correctly grouped as
+         ONE block, per the schema) followed by those SAME items generated
+         AGAIN individually, one per extra block. Caught on a real document:
+         a 3-item list, then all 3 items repeated as 3 separate standalone
+         blocks right after it. A whole-block check alone misses this, since
+         no single later block matches the list block's full text -- each one
+         only matches ONE of its items. Normalizing away a leading bullet
+         marker (-, *, bullet characters) is necessary here because the
+         model formats the repeat differently each time ("- item" inside the
+         list, "* item" or "item" alone outside it).
+
+    Only TextBlocks are checked (never TableBlock), and only text over 12
+    normalized characters -- a short repeated label ("Total", "N/A") can
     legitimately appear twice on a page and is not this bug. 12 is deliberate:
     caught on a real document at exactly 20 characters ("Monthly Active
     Users", emitted once as a heading and once as a separate paragraph) -- a
     higher cutoff would have missed that real duplicate. The first occurrence
-    is always kept; later exact repeats are dropped.
+    is always kept; later repeats, of either shape, are dropped.
 
     Returns (new_page, dropped_descriptions).
     """
     seen = set()
+    seen_list_items = set()
     kept, dropped = [], []
 
     for block in page.blocks:
@@ -422,10 +453,22 @@ def drop_duplicate_blocks(page: Page):
             continue
 
         key = normalize(block.text)
+        bare = key.strip(_BULLET_CHARS)
+
         if len(key) > 12 and key in seen:
             dropped.append(block.text[:60])
             continue
+        if (block.kind != "list" and len(bare) > 12
+                and bare in seen_list_items):
+            dropped.append(block.text[:60])
+            continue
+
         seen.add(key)
+        if block.kind == "list":
+            for line in block.text.splitlines():
+                item = normalize(line).strip(_BULLET_CHARS)
+                if item:
+                    seen_list_items.add(item)
         kept.append(block)
 
     if not dropped:

@@ -679,7 +679,14 @@ def render_block(block) -> str:
     if block.kind == "caption":
         return f"*{block.text}*"
     if block.kind == "list":
-        return "\n".join(f"- {l.strip()}" for l in block.text.splitlines() if l.strip())
+        # Strip any bullet marker the model already put in the text (it
+        # sometimes writes "- item" itself) before adding one -- otherwise a
+        # real document came out "- - Generated programmatically using
+        # Python", a double marker, not a formatting choice.
+        return "\n".join(
+            f"- {l.strip().lstrip('-*•●‣ \t').strip()}"
+            for l in block.text.splitlines() if l.strip()
+        )
     return block.text
 
 

@@ -332,6 +332,16 @@ def build_docx(pages: List[Page], path: str, title: str = None,
             key=lambda t: t[0],
         )
 
+        # A table is a different kind of element than a paragraph in Word's
+        # own format, and does not inherit the Normal style's space_after the
+        # way one paragraph inherits it from the paragraph before it. Left
+        # alone, a table sits flush against the text on both sides -- true on
+        # every page, not something specific to any one document. Tracking
+        # the most recently written paragraph, and whether a table was just
+        # written, is what lets the gap be added explicitly on both sides.
+        last_para = None
+        after_table = False
+
         for bno, block in enumerate(page.blocks):
             where = f"page {pno} block[{bno}]"
 
@@ -339,7 +349,10 @@ def build_docx(pages: List[Page], path: str, title: str = None,
                 _add_images(doc, [pending.pop(0)[1]], layout, problems, where)
 
             if isinstance(block, TableBlock):
+                if last_para is not None:
+                    last_para.paragraph_format.space_after = Pt(6)
                 _add_table(doc, block, problems, where)
+                after_table = True
                 continue
 
             text = block.text.strip()
@@ -360,8 +373,9 @@ def build_docx(pages: List[Page], path: str, title: str = None,
                     for line in _unescape(text).splitlines()
                     if line.strip(" •◦▪-–\t")
                 ]
+                para = None
                 for item in items or [text]:
-                    doc.add_paragraph(item, style="List Bullet")
+                    para = doc.add_paragraph(item, style="List Bullet")
 
             elif block.kind == "caption":
                 para = doc.add_paragraph()
@@ -372,6 +386,12 @@ def build_docx(pages: List[Page], path: str, title: str = None,
                 para = doc.add_paragraph()
                 _write_lines(para, text)
                 _apply_look(para, block, layout, scale=scale)
+
+            if after_table and para is not None:
+                para.paragraph_format.space_before = Pt(6)
+            after_table = False
+            if para is not None:
+                last_para = para
 
         # Anything whose fraction landed past the last block goes at the end.
         if pending:

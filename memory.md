@@ -714,8 +714,46 @@ can be dropped or misread, and it works the same on digital and scanned PDFs.
   in `test_pdf.py`). Password-protected PDFs are skipped with a message. The written files
   are read back with PIL to check they are valid images.
 - **Command:** `.venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/report.pdf`
+- **Verification, added the same day at the owner's request** (to show everything was
+  converted). Each saved JPG is read back and checked against the PDF (`check_page()`):
+  1. *Dimensions*: exactly the page size at the chosen dpi.
+  2. *Not blank*: a page with text, images or drawings must not be a white JPG.
+  3. *Text lines* (digital pages): every line of the PDF's text layer is looked up by its
+     coordinates and that region of the JPG must contain ink. No OCR, so no false alarms
+     from OCR misreads.
+  4. *OCR words* (digital pages, tesseract needed, `--no-ocr` skips): an OCR reading of the
+     JPG must contain at least 90% of the PDF's own words (over 3 characters).
+  The run prints a per-page result, a summary, and `VERDICT: PASS` or `FAIL` (exit code 1 on
+  FAIL). **Scanned pages (no text layer) only get checks 1 and 2**, and the report says so:
+  they are verified as "drawn", not as "every word present". A truly blank page passes
+  when the JPG is blank too.
+- **The checks were shown to fail, not just pass.** On a real page, tampering with the JPG
+  gave FAIL each time: all white (0% OCR, 0/25 lines), middle band erased (2 lines with no
+  ink, OCR 71%), top erased (OCR 36%), half-size image (size mismatch). An untouched page
+  gave 25/25 lines and 100% OCR.
 - **Tested** on 4 PDFs (digital, one with an embedded image, two scanned): all pages written
-  and valid, about 0.2s per PDF, 25-350 KB per page at the defaults. A page with a table,
-  paragraphs and an embedded logo was inspected visually and looked correct. `--pages 9` on a
+  and verified, 0.1-2.0s per PDF with OCR, 25-350 KB per page at the defaults. A page with a
+  table, paragraphs and an embedded logo was inspected visually and looked correct. `--pages 9` on a
   2-page PDF is skipped with a message and exit code 1. A missing file prints "skipping ...
   not found" and does not count as a failure, like the other scripts.
+
+---
+
+## 18. JPG → PDF (started 2026-09-29)
+
+Folders `jpg_to_pdf_input/` and `jpg_to_pdf_output/` were created. **The conversion already
+exists**: `image_to_pdf.py` (model reads the image -> `build_docx()` -> LibreOffice -> PDF)
+takes a JPG as-is. No new script has been written yet. Command:
+`.venv/bin/python image_to_pdf.py jpg_to_pdf_input/x.jpg --base-url http://127.0.0.1:8090 --outdir jpg_to_pdf_output`
+
+**First test** (page 2 of `Free_Test_Data_100KB_PDF.pdf` rendered to JPG by `pdf_to_jpg.py`,
+local 2B at 512 image tokens): 62s (prefill 12.4s, generate 47.4s / 556 tokens). The PDF has
+real selectable text and a real table. Problems seen:
+- **Character misreads in the text:** "nascetur" -> "nescetur", "inceptos" -> "inceptus",
+  "vulputate" -> "voluptate". OCR coverage reported FAIL (96%, 7 lines differ). Not yet known
+  whether the 512-token cap causes this; it was not tested at 1,024.
+- **The logo picture became the text "FreeTestData".** A raw image has no embedded picture
+  objects to copy (unlike a PDF), so the model can only read it, not preserve it.
+- **A headerless table got a bold first row** (the model treated row 1 as a header, and its
+  own check reported "claims 4 rows but returned 3").
+- The final PDF is not read back or verified (unlike `pdf_to_jpg.py`).

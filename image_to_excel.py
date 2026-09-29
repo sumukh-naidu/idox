@@ -1,51 +1,43 @@
 """
-image_to_pdf.py -- convert a raw IMAGE (not a PDF page) into a PDF, via 2B.
+image_to_excel.py -- convert a raw IMAGE (not a PDF page) into an Excel .xlsx.
 
-DELIBERATELY CHAINS TWO ALREADY-BUILT, ALREADY-PROVEN PIECES rather than
-writing a third PDF-writer from scratch:
+Same extraction as every other image pipeline in this project (image_to_word.py,
+image_to_pdf.py) -- only the final writer differs. build_xlsx() already exists
+(built for the PDF pipeline) and already handles exactly what an image needs:
+tables become real spreadsheet grids, prose goes into column A as context, and
+nothing here is table-specific extraction logic -- extract_page() never assumed
+what was on the page to begin with, so it already works for a photo of a form,
+a screenshot of a spreadsheet, a page of pure prose, or anything in between.
 
-    image -> extract_page() -> Page objects -> build_docx() -> temp.docx
-                                                                   |
-                                                    word_to_pdf.convert()
-                                                    (LibreOffice, no model)
-                                                                   |
-                                                                final.pdf
+No --mode flag here, deliberately, unlike image_to_word.py/image_to_pdf.py: the
+entire point of this conversion is turning the image's CONTENT into an editable
+spreadsheet, so a "just embed the picture, skip extraction" mode would defeat
+the purpose rather than offer a real alternative the way it does for a Word
+document or a PDF snapshot.
 
-This is the same "chain existing writers" principle used for the PDF-output
-case in the wider image-to-{pdf,word,excel,xml,ppt,csv} requirement: nobody
-needs a bespoke PDF-writing library here, because build_docx() + LibreOffice
-already produce valid PDFs reliably (proven earlier: 100% word coverage,
-every paragraph/cell preserved, on three real documents).
-
-WHY THIS CASE HAS NO GROUND TRUTH -- read before trusting the output blindly
-A raw image (unlike a PDF) has no embedded text layer at all -- there is
-nothing to compare the model's reading against. This is the exact same
-blind spot documented for scanned PDF pages. Closed the same way scanned
-PDFs close it: Tesseract OCR reads the image independently (a different
-method from the model, so its mistakes don't correlate), and checks 2
-(grounding) and 4 (coverage) run against THAT instead of reporting N/A. Still
-not ground truth -- OCR is a reading of the pixels, not the document -- but
-real, independent evidence instead of nothing.
+WHY THIS CASE HAS NO GROUND TRUTH -- read before trusting the output blindly.
+A raw image has no embedded text layer at all -- there is nothing to compare
+the model's reading against, the same blind spot as a scanned PDF page.
+checks 2 (grounding) and 4 (coverage) are answered here using an independent
+OCR reading instead of reporting N/A -- OCR is still not ground truth, only a
+second, differently-fallible opinion.
 
 Usage:
-    .venv/bin/python image_to_pdf.py image_input/photo.jpg
-    .venv/bin/python image_to_pdf.py image_input/*.png --model qwen3-vl:2b-instruct
+    .venv/bin/python image_to_excel.py image_to_excel_input/table_photo.jpg
+    .venv/bin/python image_to_excel.py image_to_excel_input/*.png
 """
 
 import argparse
 import glob
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import time
 
 import ocr
 from blocks import (
     DEFAULT_BASE_URL,
     LOCAL_BASE_URL,
-    Page,
+    TableBlock,
     check_coverage,
     check_grounding,
     check_structure,
@@ -54,56 +46,10 @@ from blocks import (
     fix_trailing_heading_after_table,
     merge_nested_tables,
 )
-from to_docx import build_docx
+from to_xlsx import build_xlsx
 
-IMAGE_DIR = "image_input"
-PDF_OUT_DIR = "pdf_out_img"
-
-
-# --- copied from word_to_pdf.py, on purpose -------------------------------
-# word_to_pdf.py is a SCRIPT, not a library: it runs its own argparse at
-# import time, which would hijack this script's own arguments if imported
-# directly. word_to_pdf.py's own docstring states the project's convention
-# for exactly this situation: copy small reusable pieces rather than import
-# across independent scripts, so neither can break the other.
-
-def find_soffice() -> str:
-    for name in ("soffice", "libreoffice"):
-        path = shutil.which(name)
-        if path:
-            return path
-    raise SystemExit(
-        "LibreOffice not found. Install it with:\n"
-        "    sudo apt-get install -y libreoffice-writer"
-    )
-
-
-def docx_to_pdf(docx_path: str, out_dir: str, timeout: int = 180) -> str:
-    """Render a .docx to PDF with LibreOffice. Returns the output path."""
-    soffice = find_soffice()
-    os.makedirs(out_dir, exist_ok=True)
-
-    with tempfile.TemporaryDirectory() as profile:
-        result = subprocess.run(
-            [soffice,
-             f"-env:UserInstallation=file://{profile}",
-             "--headless", "--norestore",
-             "--convert-to", "pdf",
-             "--outdir", out_dir,
-             docx_path],
-            capture_output=True, text=True, timeout=timeout,
-        )
-
-    expected = os.path.join(
-        out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
-    )
-    if not os.path.exists(expected):
-        raise RuntimeError(
-            f"conversion produced no file.\n"
-            f"  stdout: {result.stdout.strip()}\n"
-            f"  stderr: {result.stderr.strip()}"
-        )
-    return expected
+IMAGE_DIR = "image_to_excel_input"
+XLSX_OUT_DIR = "image_to_excel_output"
 
 
 def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool:
@@ -140,8 +86,36 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
           f"/{timing['prefill_tokens']}tok, generate {timing['generate_s']:.1f}s "
           f"/{timing['generate_tokens']}tok)")
     for b in page.blocks:
-        preview = b.text[:60] if hasattr(b, "text") else f"table {b.n_data_rows}x{b.n_cols}"
-        print(f"    [{b.kind}] {preview}")
+        if hasattr(b, "text"):
+            print(f"    [{b.kind}] {b.text[:60]}")
+        else:
+            print(f"    [table] {b.n_data_rows}x{b.n_cols}"
+                  f"{' with header' if b.has_header else ''}")
+            if b.has_header:
+                print(f"        H | {' | '.join(b.header)}")
+            for row in b.rows:
+                print(f"          | {' | '.join(row)}")
+
+    # The whole reason to pick Excel over Word is expecting tabular data --
+    # if the model found none at all, writing a near-empty spreadsheet (or
+    # one that's just prose in column A) would misleadingly look like a
+    # successful conversion of something that was never suited to this
+    # format in the first place. There's no way to know this in advance
+    # without actually reading the image (a passport photo and a real table
+    # look identical until read), so this is checked here, after
+    # extraction, not before it.
+    has_table = any(isinstance(b, TableBlock) for b in page.blocks)
+    if not has_table:
+        print()
+        print("  NO TABLE DETECTED -- this image does not appear to contain "
+              "tabular data.")
+        print("  Excel conversion needs a table to be meaningful; nothing "
+              "will be written.")
+        print("  Please check the image and re-upload one that contains a "
+              "real table, or use image_to_word.py instead if this is "
+              "meant to be a text document, not a spreadsheet.")
+        print()
+        return False
 
     print("\n  --- checks ---")
     problems, notes = check_structure(page)
@@ -149,13 +123,10 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
     for p in problems:
         print(f"       - {p}")
 
-    # A raw image has no text layer -- OCR gives grounding/coverage something
-    # real to compare against instead of reporting N/A: a genuinely
-    # independent second reading (Tesseract, per-character classification,
-    # not a transformer), so its mistakes don't correlate with the model's.
-    # Same role OCR plays for a scanned PDF page. Never used to auto-repair --
-    # a disagreement is reported, never silently applied, because OCR is a
-    # READING, not the document.
+    # Same reasoning as image_to_word.py: a raw image has no text layer, so
+    # OCR stands in as an independent second reading for grounding/coverage
+    # instead of reporting N/A. Never used to auto-repair -- a disagreement
+    # is reported, never silently applied.
     if ocr.have_tesseract():
         ocr_text = ocr.ocr_image(image_path)
         if ocr_text.strip():
@@ -194,18 +165,10 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
           "disagreement means look at it, not the model is wrong.")
 
     os.makedirs(out_dir, exist_ok=True)
-    temp_docx = os.path.join(out_dir, f".{name}_temp.docx")
-    build_docx([page], temp_docx)
-
-    try:
-        pdf_path = docx_to_pdf(temp_docx, out_dir)
-    finally:
-        if os.path.exists(temp_docx):
-            os.remove(temp_docx)
-
-    final_path = os.path.join(out_dir, f"{name}.pdf")
-    if pdf_path != final_path:
-        shutil.move(pdf_path, final_path)
+    final_path = os.path.join(out_dir, f"{name}.xlsx")
+    xl_problems = build_xlsx([page], final_path)
+    for p in xl_problems:
+        print(f"    - {p}")
 
     print(f"  -> {final_path}")
     print()
@@ -215,7 +178,7 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("images", nargs="+", help="image file(s), globs allowed")
 parser.add_argument("--model", default="qwen3-vl:2b-instruct")
-parser.add_argument("--outdir", default=PDF_OUT_DIR)
+parser.add_argument("--outdir", default=XLSX_OUT_DIR)
 parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
                     help="the raw llama-server instance to use (default: "
                          f"the remote Qwen3-VL-8B endpoint at {DEFAULT_BASE_URL}"

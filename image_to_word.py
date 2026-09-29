@@ -45,12 +45,15 @@ from PIL import Image
 import ocr
 from blocks import (
     DEFAULT_BASE_URL,
+    LOCAL_BASE_URL,
     Page,
     check_coverage,
     check_grounding,
     check_structure,
     drop_duplicate_blocks,
     extract_page,
+    fix_trailing_heading_after_table,
+    merge_nested_tables,
 )
 from to_docx import build_docx
 
@@ -131,6 +134,14 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
     for d in dupes:
         print(f"  ! dropped duplicate block (model repeated itself): {d!r}")
 
+    page, fixed_order = fix_trailing_heading_after_table(page)
+    if fixed_order:
+        print("  ! moved a trailing heading back in front of its table")
+
+    page, nested_merges = merge_nested_tables(page)
+    for m in nested_merges:
+        print(f"  ! {m}")
+
     print(f"  extracted {len(page.blocks)} blocks in {elapsed:.1f}s  "
           f"(load {timing['load_s']:.1f}s, prefill {timing['prefill_s']:.1f}s "
           f"/{timing['prefill_tokens']}tok, generate {timing['generate_s']:.1f}s "
@@ -205,11 +216,11 @@ parser.add_argument("--model", default="qwen3-vl:2b-instruct")
 parser.add_argument("--outdir", default=DOCX_OUT_DIR)
 parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
                     help="the raw llama-server instance to use (default: "
-                         "the manually-downloaded HF model on "
-                         f"{DEFAULT_BASE_URL}). Pass an empty string to use "
-                         "Ollama's own bundled model instead (e.g. for "
-                         "--model qwen3-vl:4b-instruct, not present in the "
-                         "manually-downloaded set).")
+                         f"the remote Qwen3-VL-8B endpoint at {DEFAULT_BASE_URL}"
+                         f"). Pass --base-url {LOCAL_BASE_URL} for this "
+                         "machine's local 2B model instead, or an empty "
+                         "string to use Ollama's own bundled model (e.g. "
+                         "for --model qwen3-vl:4b-instruct).")
 parser.add_argument("--mode", choices=("text", "image", "both"), default="text",
                     help="'text' (default) reads the image with the model "
                          "and writes editable text/tables. 'image' embeds "

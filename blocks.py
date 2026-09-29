@@ -472,22 +472,59 @@ def drop_duplicate_blocks(page: Page):
          model formats the repeat differently each time ("- item" inside the
          list, "* item" or "item" alone outside it).
 
-    Only TextBlocks are checked (never TableBlock), and only text over 12
-    normalized characters -- a short repeated label ("Total", "N/A") can
-    legitimately appear twice on a page and is not this bug. 12 is deliberate:
-    caught on a real document at exactly 20 characters ("Monthly Active
-    Users", emitted once as a heading and once as a separate paragraph) -- a
-    higher cutoff would have missed that real duplicate. The first occurrence
-    is always kept; later repeats, of either shape, are dropped.
+    Text over 12 normalized characters counts -- a short repeated label
+    ("Total", "N/A") can legitimately appear twice on a page and is not this
+    bug. 12 is deliberate: caught on a real document at exactly 20 characters
+    ("Monthly Active Users", emitted once as a heading and once as a
+    separate paragraph) -- a higher cutoff would have missed that real
+    duplicate. The first occurrence is always kept; later repeats, of any
+    shape, are dropped.
+
+      3. TABLE repeat, whole or fragment -- confirmed necessary on a real
+         document: a small standalone table appeared whose rows were exact
+         repeats of rows already inside an earlier, larger table on the same
+         page. Left unchecked, this doesn't just look redundant -- it can
+         actively confuse merge_nested_tables() into pairing a genuinely
+         nested table with this stray duplicate instead of the real one,
+         producing a wrong merge. Checked two ways: an exact whole-table
+         repeat (same header and rows as one already kept), and a table
+         whose EVERY row already appeared as a row in some earlier table --
+         a full subset, not a coincidental one-row overlap (which two
+         genuinely different tables can share by chance, e.g. both having a
+         "Total" row).
 
     Returns (new_page, dropped_descriptions).
     """
     seen = set()
     seen_list_items = set()
+    seen_tables = set()
+    seen_table_rows = set()
     kept, dropped = [], []
 
     for block in page.blocks:
-        if isinstance(block, TableBlock) or not block.text.strip():
+        if isinstance(block, TableBlock):
+            row_keys = [
+                normalize(" ".join(str(c) for c in row)) for row in block.rows
+            ]
+            table_key = normalize(
+                " ".join(block.header) + " ".join(k for k in row_keys)
+            )
+            substantive = [k for k in row_keys if len(k) > 12]
+
+            if table_key in seen_tables and block.rows:
+                dropped.append(f"table (header={block.header})")
+                continue
+            if substantive and all(k in seen_table_rows for k in substantive):
+                dropped.append(f"table (header={block.header}, "
+                               f"all rows already seen)")
+                continue
+
+            seen_tables.add(table_key)
+            seen_table_rows.update(row_keys)
+            kept.append(block)
+            continue
+
+        if not block.text.strip():
             kept.append(block)
             continue
 
@@ -513,6 +550,129 @@ def drop_duplicate_blocks(page: Page):
     if not dropped:
         return page, []
     return Page(analysis=page.analysis, blocks=kept), dropped
+
+
+def fix_trailing_heading_after_table(page: Page):
+    """Move a heading that trails a table back in front of it.
+
+    A real, confirmed model ordering mistake -- NOT a one-off: reproduced
+    consistently across repeated runs of the same document, unlike the
+    content-dropping issue elsewhere in this project, which varies run to
+    run. The model commits to a table's shape in its own analysis stage
+    before writing any blocks, and appears to only assign the table's label
+    once the table itself is already fully written -- describing it in
+    hindsight ("Sample table") as the very last block, instead of
+    introducing it first the way every other heading on the page does.
+
+    Deterministic, not a guess, and narrow on purpose: a heading almost
+    always introduces what follows it, so one with NOTHING after it, sitting
+    immediately after a table, doesn't fit that pattern -- a strong, safe
+    signal it belongs in front of the table instead. A table followed by a
+    heading that goes on to introduce more content is a completely normal
+    document structure and is left untouched; this only fires for the one
+    specific, detectable shape: table, then a lone trailing heading, then
+    nothing else.
+
+    Returns (new_page, fixed_count).
+    """
+    blocks = list(page.blocks)
+    if len(blocks) < 2:
+        return page, 0
+
+    last, second_last = blocks[-1], blocks[-2]
+    trailing_heading = (
+        not isinstance(last, TableBlock) and last.kind == "heading"
+    )
+    if trailing_heading and isinstance(second_last, TableBlock):
+        blocks[-2], blocks[-1] = blocks[-1], blocks[-2]
+        return Page(analysis=page.analysis, blocks=blocks), 1
+
+    return page, 0
+
+
+def merge_nested_tables(page: Page):
+    """Merge a table that's actually nested inside another table's cell.
+
+    Our schema has no way to represent "this cell contains another whole
+    table" -- TableBlock is a flat 2D grid only. Faced with genuine nesting
+    (confirmed on a real document, up to 3 levels deep: a table inside a
+    table inside a table cell), the model does the only thing the schema
+    allows: emits each level as its own separate, independent TableBlock,
+    one right after the other.
+
+    The real, detectable signal that the next table is nested rather than
+    a new independent one: the table immediately before it has a genuinely
+    BLANK trailing cell in its last row -- the "couldn't fit the real
+    content here" placeholder left behind. Column-width comparison alone is
+    NOT reliable -- confirmed on the same real document: a doubly-nested
+    table can be the exact same width as its own immediate parent (both 2
+    columns), so "narrower than the previous table" misses it entirely.
+
+    Always merges the DEEPEST nesting first (the last such blank-cell
+    trigger found in the block list, not the first), because a document's
+    most deeply nested table always appears later in the flattened
+    sequence than its ancestors -- repeating until no trigger remains
+    correctly unwinds any depth of nesting, not just one level.
+
+    Returns (new_page, merge_descriptions).
+    """
+    blocks = list(page.blocks)
+    merges = []
+
+    while True:
+        trigger_i = None
+        for i in range(len(blocks) - 1):
+            a, b = blocks[i], blocks[i + 1]
+            if (isinstance(a, TableBlock) and isinstance(b, TableBlock)
+                    and a.rows and a.rows[-1] and a.rows[-1][-1] == ""):
+                trigger_i = i  # keep overwriting -- the LAST match wins,
+                                # so the deepest nesting resolves first
+        if trigger_i is None:
+            break
+
+        parent, child = blocks[trigger_i], blocks[trigger_i + 1]
+        parent_rows = list(parent.rows)
+        last_row = parent_rows.pop()
+        parent_prefix = last_row[:-1]                # drop the blank placeholder cell
+        parent_header_prefix = (
+            parent.header[:-1] if parent.has_header else []
+        )
+
+        child_width = (
+            len(child.header) if child.has_header
+            else (len(child.rows[0]) if child.rows else 0)
+        )
+        child_header = (
+            child.header if child.has_header else [""] * child_width
+        )
+        new_header = parent_header_prefix + child_header
+        width = len(new_header)
+
+        # Rows the parent already had that were NEVER nested get padded to
+        # the new, wider shape -- they have nothing to contribute to the
+        # columns the merge just added.
+        padded_old_rows = [
+            (list(r) + [""] * width)[:width] for r in parent_rows
+        ]
+        # The parent's own last row, repeated once per child row -- this is
+        # what "this cell contained a whole table" actually unpacks to.
+        expanded_rows = [list(parent_prefix) + list(r) for r in child.rows]
+
+        merged = TableBlock(
+            kind="table",
+            has_header=bool(parent.has_header or child.has_header),
+            n_data_rows=len(padded_old_rows) + len(expanded_rows),
+            n_cols=width, header=new_header,
+            rows=padded_old_rows + expanded_rows,
+        )
+
+        label = "/".join(str(c) for c in parent_prefix if c) or "its parent row"
+        merges.append(f"merged a {len(child.rows)}-row nested table into {label}")
+        blocks[trigger_i:trigger_i + 2] = [merged]
+
+    if not merges:
+        return page, []
+    return Page(analysis=page.analysis, blocks=blocks), merges
 
 
 def check_structure(page: Page):
@@ -867,16 +1027,38 @@ def check_grounding(page: Page, source_text: str):
 # THE MODEL CALL -- one per page
 # ===========================================================================
 
-# The manually-downloaded HF model (Q4_K_M LLM + Q8_0 mmproj), served by our
-# own llama-server -- the only model source verified and tuned this session
-# (repeat_penalty, the is_scanned schema trim, all latency numbers on record).
-# Defaulting to it here, not just in each script's --base-url flag, closes a
-# real incident: a run of image_to_word.py that omitted --base-url silently
-# fell back to Ollama's own bundled qwen3-vl:2b-instruct instead of failing --
-# and that build measurably dropped content (a whole table, merged headings)
-# on the same page this build handled cleanly. Pass base_url=None explicitly
-# to opt back into Ollama (e.g. to reach the 4B model for a hard page).
-DEFAULT_BASE_URL = "http://127.0.0.1:8090"
+# The default model endpoint every script talks to unless overridden. Kept as
+# one named constant, not a literal repeated in every script's argparse
+# default, for the same reason established earlier this session: a run that
+# omits --base-url must still hit a KNOWN, INTENDED model, never silently
+# fall back to something else (see the real incident this closes, below).
+#
+# Currently: a remote Qwen3-VL-8B-Instruct (Q4_K_M) endpoint, served by the
+# same llama-server stack, over the local network -- switched from the local
+# 2B setup on 2026-09-28 after a real, direct comparison confirmed the exact
+# same client code, prompt, and JSON schema work unchanged against it (only
+# the base URL differs), and measured it faster on both phases (prefill
+# 14.07s vs ~68s, generate ~19.25 tok/s vs ~12-13 tok/s, on the identical test
+# page). This is a genuine dependency change, not a tuning tweak: every run
+# now requires network reachability to another machine (10.0.3.33:8080),
+# which is not under this project's control the way the local server was.
+# If that endpoint is unreachable, pass --base-url explicitly to fall back
+# to the local server (still fully configured, see below) rather than assume
+# the remote one is always up.
+#
+# The original incident this pattern closes, for context: a run of
+# image_to_word.py that omitted --base-url once silently fell back to
+# Ollama's own bundled qwen3-vl:2b-instruct instead of failing -- and that
+# build measurably dropped content (a whole table, merged headings) on a
+# page the intended model handled cleanly. Pass base_url=None explicitly to
+# opt into Ollama on purpose (e.g. to reach its 4B model for a hard page).
+DEFAULT_BASE_URL = "http://10.0.3.33:8080"
+
+# The local, fully-controlled setup this replaced as the default -- still
+# valid, still running, not removed. Use this explicitly (--base-url
+# http://127.0.0.1:8090) if the remote endpoint above is unreachable or you
+# want the original, locally-hosted 2B model specifically.
+LOCAL_BASE_URL = "http://127.0.0.1:8090"
 
 
 def extract_page(image_path: str, model: str = MODEL_NAME,

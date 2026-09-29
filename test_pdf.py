@@ -44,6 +44,7 @@ import pymupdf
 
 from blocks import (
     DEFAULT_BASE_URL,
+    LOCAL_BASE_URL,
     Page,
     TableBlock,
     TextBlock,
@@ -52,12 +53,15 @@ from blocks import (
     check_structure,
     drop_duplicate_blocks,
     extract_page,
+    fix_trailing_heading_after_table,
+    merge_nested_tables,
     normalize,
     ungrounded_table_blocks,
     ungrounded_text_blocks,
 )
 import ocr
 from to_docx import build_docx, verify_docx, verify_images
+from to_pptx import build_pptx, verify_pptx
 from to_xlsx import build_xlsx, verify_xlsx
 
 RENDER_DIR = "render"
@@ -707,11 +711,11 @@ parser.add_argument("--model", default="qwen3-vl:4b-instruct",
                          "when --base-url is given.")
 parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
                     help="the raw llama-server instance to use (default: "
-                         "the manually-downloaded HF model on "
-                         f"{DEFAULT_BASE_URL}). Pass an empty string to use "
-                         "Ollama's own bundled model instead (e.g. for "
-                         "--model qwen3-vl:4b-instruct, not present in the "
-                         "manually-downloaded set).")
+                         f"the remote Qwen3-VL-8B endpoint at {DEFAULT_BASE_URL}"
+                         f"). Pass --base-url {LOCAL_BASE_URL} for this "
+                         "machine's local 2B model instead, or an empty "
+                         "string to use Ollama's own bundled model (e.g. "
+                         "for --model qwen3-vl:4b-instruct).")
 parser.add_argument("--out", default="extracted.md", help="clean Markdown output file")
 parser.add_argument("--docx", metavar="FILE.docx",
                     help="also write a Word document (Tier 3, no model involved)")
@@ -719,6 +723,11 @@ parser.add_argument("--xlsx", metavar="FILE.xlsx",
                     help="also write an Excel file (Tier 3, no model involved). "
                          "Every page goes into one sheet, tables as grids and "
                          "prose in column A, all values kept as text.")
+parser.add_argument("--pptx", metavar="FILE.pptx",
+                    help="also write a PowerPoint deck (Tier 3, no model "
+                         "involved). One slide per page, always -- a page's "
+                         "content is never split across slides. The first "
+                         "heading on each page becomes that slide's title.")
 parser.add_argument("--no-ocr", action="store_true",
                     help="skip OCR verification on scanned pages, leaving "
                          "checks 2 and 4 reporting N/A as before")
@@ -899,6 +908,14 @@ for pno in targets:
     for d in dupes:
         print(f"       ! dropped duplicate block (model repeated itself): "
               f"{d!r}")
+
+    page, fixed_order = fix_trailing_heading_after_table(page)
+    if fixed_order:
+        print("       ! moved a trailing heading back in front of its table")
+
+    page, nested_merges = merge_nested_tables(page)
+    for m in nested_merges:
+        print(f"       ! {m}")
 
     print(f"Tier 1 -- {len(page.blocks)} blocks in {elapsed:.1f}s\n")
 
@@ -1188,6 +1205,24 @@ if args.xlsx and extracted_pages:
 
     coverage, missing = verify_xlsx(args.xlsx, "\n".join(source_texts))
     print(f"  content check: {coverage:.0%} of the PDF's words are in the .xlsx")
+    if missing:
+        shown = ", ".join(missing[:8])
+        more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        print(f"    missing: {shown}{more}")
+
+# --- Tier 3: the PowerPoint deck -----------------------------------------
+# Same Page objects, same checks, a different writer. Deterministic: nothing
+# here asks the model anything. One slide per page, always.
+if args.pptx and extracted_pages:
+    ppt_problems = build_pptx(extracted_pages, args.pptx,
+                              image_sets=page_image_sets)
+    print(f"PowerPoint deck written to {args.pptx}  "
+          f"({len(extracted_pages)} slide(s), one per page)")
+    for p in ppt_problems:
+        print(f"    - {p}")
+
+    coverage, missing = verify_pptx(args.pptx, "\n".join(source_texts))
+    print(f"  content check: {coverage:.0%} of the PDF's words are in the .pptx")
     if missing:
         shown = ", ".join(missing[:8])
         more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""

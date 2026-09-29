@@ -1,67 +1,94 @@
 # idox — Status 2
 
 Snapshot of the project *right now*. For full background, every bug's root cause, and the
-complete architecture, see `memory.md` — this file only covers current state and the
-immediate open decisions.
+complete architecture, see `memory.md` (§14–§16 cover everything since 2026-09-25). This
+file only covers current state and the open decisions.
 
-**Last updated:** 2026-09-25 (later revision — several fixes landed since this file was
-first written)
-**Branch:** `feature/testing_2b_Q8mmproj`. **Uncommitted right now:** `blocks.py`, holding
-the resolution-upscaling fix (`memory.md` §11) — not yet committed.
-**Model in use:** raw `llama-server` on `http://127.0.0.1:8090` (Qwen3-VL-2B-Instruct,
-Q4_K_M + Q8_0 mmproj). Still the automatic default everywhere — no `--base-url` needed.
-
----
-
-## What's working, right now, verified
-
-- **PDF → Word/Excel** (`test_pdf.py`) — digital pages: trimmed extraction, appearance +
-  `kind` correction from the real text layer, tables now have real spacing (6pt) instead of
-  sitting flush against text, bullet-character mismatches no longer trigger false
-  "duplicate" repairs. Scanned pages: OCR-checked, text/image/both modes all work.
-- **Raw image → Word/PDF** (`image_to_word.py`, `image_to_pdf.py`) — OCR-backed checks in
-  place, AND (new) low-resolution uploads now get upscaled to the same detail budget a
-  PDF page gets, closing a real, measured ~31% visual-detail gap that was making raw images
-  more error-prone than PDFs for reasons that had nothing to do with the model itself.
-- **No known crashes remaining.**
-- **Portability is set up**: `requirements.txt` (Python deps, pinned) in the repo, and a
-  separate migration-notes doc at `/home/aiteam/Documents/idox-migration-notes.md` (outside
-  the project, deliberately) covering everything that does NOT travel with `git clone` —
-  the model weights, `llama-server`, Tesseract, LibreOffice.
+**Last updated:** 2026-09-29
+**Branch:** `feature/testing_2b_Q8mmproj`, HEAD `b240895`. Everything was committed as of
+this update, apart from the edits to this file and `memory.md`.
+**Machine:** now `/home/sumukh/Downloads/idox` (moved from `/home/aiteam/idox`, see
+`memory.md` §15).
 
 ---
 
-## Two open problems, not one — don't conflate them
+## Model in use right now
 
-**1. Alignment — unchanged, still no fix chosen.** Model-guessed alignment (raw images,
-scanned PDFs) has a confirmed bias toward guessing "center" for heading-like text even when
-it's genuinely left-aligned. Three real options on the table (bigger model / OCR-alignment-
-flagging / dedicated layout-detection model), none chosen. **The resolution fix does
-nothing for this** — confirmed explicitly before it was built, different root cause
-entirely (see `memory.md` §8, §11).
-
-**2. Content sometimes still missing on raw images — partially improved, not solved.**
-Root cause turned out to be TWO separate things, not one:
-  - **Low image resolution** (fixed, verified) — raw images were getting meaningfully less
-    visual detail than PDF pages because nothing controlled their resolution. Now upscaled
-    to match. Real, measured fix.
-  - **Genuine run-to-run model inconsistency** (still open, not fixable by a code patch) —
-    even after the resolution fix, repeated tests on the same image show *different*
-    content dropped on different calls (not the same gap every time). Traced to a real
-    mechanism: floating-point non-associativity in multi-threaded CPU inference plus
-    KV-cache reuse means temperature=0 isn't perfectly bitwise-reproducible — a near-tie
-    probability decision can flip between calls. Most exposed on visually ambiguous content.
-  - **Proposed, not built:** auto-retry when OCR coverage scores low. Directly motivated by
-    the mechanism above — a fresh retry has real expected value here, unlike retrying a
-    deterministic bug. This is the next concrete thing to build if "full extraction"
-    reliability is the priority.
+- **Code default:** `DEFAULT_BASE_URL = http://10.0.3.33:8080`, the remote Qwen3-VL-8B.
+  **It is DOWN as of 2026-09-29.**
+- **In use instead:** the local 2B (Qwen3-VL-2B-Instruct, Q4_K_M + Q8_0 mmproj) on
+  `http://127.0.0.1:8090`. **Pass `--base-url http://127.0.0.1:8090` on every run** until
+  the 8B is back. Leaving it out sends the request to the dead remote endpoint, and it fails.
+- Launch and stop commands: `memory.md` §15.
+- **Image tokens fixed at 512** (`--image-min-tokens 512 --image-max-tokens 512`) to cut
+  latency. `hi.png` went from 74.1s to 28.4s, but `complex.png` failed at 512 (hit the
+  4,000-token output limit, no file). Details in `memory.md` §15.
 
 ---
 
-## Numbers worth keeping straight (don't re-derive, don't assume stale)
+## Environment on this machine
 
-- Canonical latency baseline (154.10s) is from BEFORE most of this session's fixes and is
-  explicitly flagged stale in `memory.md` — don't quote it as current.
-- Resolution fix: raw image detail budget raised from ~1,088 to ~1,434 vision tokens on a
-  real test file, matching test_pdf.py's own 125dpi PDF-page baseline (~1,427).
-- Governor and iGPU are closed questions — do not re-test (see `memory.md` §7).
+| Piece | State |
+|---|---|
+| Python | 3.13.15 via `uv`, `.venv` rebuilt from `requirements.txt` |
+| llama-server | b11247, CPU-only, `~/.local/opt/llama.cpp/llama-b11247/` |
+| Model weights | `models_manual/` (present) |
+| tesseract | **not installed**, so the OCR checks report N/A |
+| LibreOffice | **not installed**, so `image_to_pdf.py` / `word_to_pdf.py` fail |
+| git, curl | **not installed** |
+| Ollama | not installed (optional; only needed for `--base-url ""`) |
+
+Install the missing system packages with:
+`sudo apt-get install -y git curl tesseract-ocr libreoffice-writer`
+
+Verified: `image_to_word.py` ran end to end against the local 2B (one smoke test, 74.1s,
+self-consistency PASS). The other scripts import cleanly but haven't been re-run on this
+machine yet.
+
+---
+
+## What works (verified on the previous machine)
+
+- **PDF → JPG** (`pdf_to_jpg.py`), new 2026-09-29: direct page rendering, no model.
+  Tested on 4 PDFs (`memory.md` §17).
+- **PDF → Word / Excel / PowerPoint** (`test_pdf.py --docx/--xlsx/--pptx`), both digital
+  and scanned (`--scan-mode text/image/both`).
+- **Image → Word / PDF / Excel** (`image_to_word.py`, `image_to_pdf.py`,
+  `image_to_excel.py`), with low-resolution images upscaled to the 125dpi budget.
+- **Deterministic fixes after extraction:**
+  - drop duplicate blocks, including list items and tables
+  - move a table's heading back in front of it when it trails the table
+  - merge nested tables, deepest level first
+
+---
+
+## Open problems (don't conflate them)
+
+1. **Alignment on scanned pages and raw images.** The model is biased toward "center" for
+   heading-like text. No fix chosen (`memory.md` §8).
+2. **Content sometimes missing on raw images.** The resolution fix helped. What remains is
+   the model varying from run to run (§12). Proposed: auto-retry when OCR coverage is low.
+   Not built.
+3. **Nested tables, third shape.** Rows arrive crammed unevenly into one single table
+   block. Not handled.
+4. **Suspected bugs from the code read-through** (`memory.md` §16, not yet verified):
+   - `merge_nested_tables` with a parent table that has no header
+   - `merge_nested_tables` joining separate tables when the first ends in a blank cell
+   - trailing-heading fix misfiring on multi-page PDFs
+   - bullet stripping in Word removing a leading minus sign
+5. **Not built:**
+   - human-review report for OCR disagreements
+   - skipping the model on digital pages
+   - CSV output, image → PPT/XML
+
+---
+
+## Numbers worth keeping straight
+
+- Old laptop, local 2B, `text_only_1page.pdf`: 154.10s. This is from before most fixes;
+  treat it as stale.
+- 8B remote vs 2B local, same page: prefill 14.07s vs about 68s, generation about 19.25 vs
+  12-13 tok/s.
+- Latency comparisons need a cold cache: restart the server between runs (`memory.md` §14.3).
+- Governor and iGPU questions are closed on the old laptop (§7). This machine has the same
+  CPU family and Iris Xe graphics, so the iGPU/Vulkan rule is kept here too.

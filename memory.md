@@ -10,6 +10,12 @@ An earlier, now-partially-superseded version of this document exists as `handove
 script existed). This document supersedes them — treat `handover.md`/`status.md` as
 historical, not current.
 
+**Updated 2026-09-29.** §1-§13 were written up to 2026-09-25 and are kept as the historical
+record; where a later section contradicts an earlier one, **the later section wins**. The
+biggest changes since: the default endpoint (§3 is superseded by §14.1), new scripts and
+fixes (§14), and the project's move to a new machine (§15). §16 lists suspected bugs found
+by reading the code, not yet verified by running it.
+
 ---
 
 ## 1. Goal
@@ -23,6 +29,14 @@ needed, and deterministic code for everything else. Four conversion directions e
 2. **Raw image → Word** (`image_to_word.py`) — new this session.
 3. **Raw image → PDF** (`image_to_pdf.py`) — via Word + LibreOffice.
 4. **Word → PDF** (`word_to_pdf.py`) — pure LibreOffice, no model, no vision involved at all.
+5. **PDF → PowerPoint** (`test_pdf.py --pptx`, writer `to_pptx.py`) — added after this
+   section was first written, see §14.
+6. **Raw image → Excel** (`image_to_excel.py`) — added after this section was first
+   written, see §14.
+
+7. **PDF → JPG** (`pdf_to_jpg.py`) — added 2026-09-29, see §17.
+
+Not built yet: CSV output (any source), image → PowerPoint, image → XML.
 
 A major, ongoing secondary goal: reduce latency and improve reliability, with every claim
 backed by direct measurement (server logs, tokenizer counts, `/sys` counters, before/after
@@ -92,6 +106,10 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 - **pytesseract / Tesseract** (`ocr.py`) — independent second reading, used for: (a)
   scanned PDF pages (original use), (b) raw images through `image_to_word.py` and
   `image_to_pdf.py` (added this session).
+> **Superseded (2026-09-28/29):** the default endpoint, server binary path, launch command
+> and hardware below are out of date. `DEFAULT_BASE_URL` is now the remote 8B endpoint, and
+> the project has moved machines. See §14.1 and §15 for the current setup.
+
 - **Model serving — two sources, ONE is now the default everywhere:**
   1. **Raw `llama-server`** (`/usr/local/lib/ollama/llama-server`, invoked directly,
      bypassing Ollama's daemon/Modelfile system), serving manually-downloaded GGUF files
@@ -130,6 +148,9 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `word_to_pdf.py` | Standalone LibreOffice-based Word→PDF converter. No model. Do not import it. |
 | `to_docx.py` | Deterministic Word writer (Tier 3). Fixed a real crash bug this session (§6). |
 | `to_xlsx.py` | Deterministic Excel writer (Tier 3). Had the identical crash bug, fixed alongside `to_docx.py`. |
+| `pdf_to_jpg.py` | PDF → JPG, added 2026-09-29 — see §17. No model: PyMuPDF draws each page. One subfolder per PDF, one JPG per page. |
+| `to_pptx.py` | Deterministic PowerPoint writer (Tier 3), added later — see §14.4. One PDF page = one slide, first heading = slide title. |
+| `image_to_excel.py` | Raw image → `.xlsx`, added later — see §14.4. No `--mode` flag by design. Refuses to write a file when no table is detected. |
 | `ocr.py` | Tesseract wrapper. `ocr_page(pdf_page)` for a scanned PDF page, `ocr_image(path)` for a raw image file (used by the two raw-image scripts now). Role is verifier only, never extractor, never used to auto-repair. |
 | `bench.py`, `show_docx.py`, `test_json.py`, `test.py` | Small pre-existing dev/utility scripts (latency benchmarking, printing a `.docx`'s real structure to the terminal, an early single-image smoke test). Not part of the main pipeline; not touched this session. |
 | `models_manual/` | Manually downloaded HF GGUF files (see §3). |
@@ -143,6 +164,13 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `scanned_pdf_input/` / `scanned_pdf_output/` | Scanned-PDF-specific `test_pdf.py` testing. |
 | `image_to_word_input/` / `image_to_word_output/` | `image_to_word.py` I/O. |
 | `image_input/` / `pdf_out_img/` | `image_to_pdf.py` I/O (pre-existing). |
+| `pdf_to_ppt_input/` / `pdf_to_ppt_output/` | `test_pdf.py --pptx` I/O (added later). |
+| `image_to_excel_input/` / `image_to_excel_output/` | `image_to_excel.py` I/O (added later). |
+| `pdf_to_jpg_input/` / `pdf_to_jpg_output/` | `pdf_to_jpg.py` I/O (added 2026-09-29). |
+| `pdf_input_xlsx/` / `xlsx_output/` | Early PDF → Excel testing. |
+| `test_output/` | Disposable outputs from the 256/512 image-token experiments (§14.3). Safe to delete when no longer needed. |
+| `render/` | Scratch space: `test_pdf.py` overwrites it on every run (page PNGs, extracted images). |
+| `.kilo/worktrees/` | Two identical, older snapshots of the project, left by another tool (Kilo). Not used by the pipeline. |
 | `models_manual/` | See §3. |
 
 ---
@@ -351,6 +379,10 @@ available in the current architecture.**
 
 ## 9. Git state
 
+> **Superseded (2026-09-29):** everything is now committed. HEAD is `b240895` ("changes
+> made") on `feature/testing_2b_Q8mmproj`, and the working tree was clean when checked. The
+> remote is `https://github.com/sumukh-naidu/idox.git`. The text below is historical.
+
 Branch `feature/testing_2b_Q8mmproj`. Commits since §5-§8 were written (all made by the
 project owner directly, not by an assistant in this conversation — no commits should be
 made without being explicitly asked): `a7266bb` "Add memory notes", `b8ea79e` "Added
@@ -411,7 +443,14 @@ today), but the project owner did not confirm building it — flat 6pt stands fo
 
 ---
 
-## 11. The raw-image resolution gap (found, measured, and fixed)
+## 11. The raw-image resolution gap (found, measured, and fixed — LATER REMOVED)
+
+> **Removed 2026-09-29.** With the server fixed at 512 image tokens (§15), it resizes every
+> image to ~512 tokens whatever size arrives. Measured: `sample2.png` original (965x898) and
+> upscaled (1248x1162) both gave 1,141 prompt tokens. So `MIN_IMAGE_PIXELS` and
+> `_ensure_min_resolution()` were deleted from `blocks.py`. If the server goes back to
+> `--image-min-tokens 1024` or higher, this upscaling matters again and can be restored from
+> git history. The text below is kept as the historical record.
 
 **How it was found:** the project owner directly challenged the assumption that dropped
 content on raw images (`test.png`) was pure "model randomness," pointing out that scanned
@@ -500,3 +539,183 @@ near-tie caused the previous drop.
   the three options chosen (bigger model / OCR-alignment-flagging / dedicated
   layout-detection model). The resolution fix in §11 does not touch this; confirmed
   explicitly before that fix was built, so it isn't mistaken for progress on alignment.
+- **Human review of disagreements only** (proposed after the OCR-restoration revert, §14.5):
+  a focused report showing just the disputed lines, with the model's reading, OCR's
+  reading and a cropped image of that region side by side. Never auto-applied. Not built.
+- **Skipping the model on digital pages.** `is_scanned` is computed but `extract_page()`
+  still runs on every page (`test_pdf.py`, the Tier 1 call), even when the text layer
+  already has the content. Still the biggest known latency lever for digital PDFs. Not built.
+
+---
+
+## 14. Third wave (2026-09-25 → 2026-09-29)
+
+### 14.1 Default endpoint is now the remote 8B, with the local 2B kept
+A colleague proposed a remote `Qwen3-VL-8B-Instruct` (Q4_K_M) endpoint at
+`http://10.0.3.33:8080`, on the same llama-server / OpenAI-compatible stack. Verified
+directly: it was reachable, `/props` confirmed the model, and one real extraction worked
+with zero code changes. At the owner's explicit choice it became the project-wide default:
+`blocks.DEFAULT_BASE_URL = "http://10.0.3.33:8080"`. The local 2B setup is kept as
+`blocks.LOCAL_BASE_URL = "http://127.0.0.1:8090"`.
+
+This is a real dependency change: every run that omits `--base-url` needs the remote
+machine to be up. It has gone down several times. The pattern each time was that the host
+answered but the port refused connections, meaning the server process wasn't running, not a
+network fault. **Whenever the 8B endpoint is down, pass `--base-url http://127.0.0.1:8090`.**
+As of 2026-09-29 the 8B endpoint is down and the owner is using the local 2B.
+
+### 14.2 8B vs 2B, measured
+- **Speed:** on the same test page, 8B was faster on both phases despite being the larger
+  model. Prefill took 14.07s vs about 68s, and generation ran at about 19.25 vs 12-13 tok/s.
+  The remote machine's hardware decided this, not model size.
+- **Accuracy at 256 image tokens:** word-for-word diffs showed neither model was uniformly
+  better. Each made different character misreads and different table-structure mistakes.
+
+### 14.3 Image-token reduction (256 / 512 tokens): a caching artifact, caught and redone
+The first result, "no latency difference", was wrong. The server log showed the fixed
+643-token text prefix was being reused from the previous request's cache. The "512-token"
+test had therefore evaluated only 526 tokens, not 1,178. Every test was redone with a full
+server restart in between to guarantee a cold cache. Latency then scaled roughly in
+proportion to token count. **Rule: restart the server (or vary the input) between any
+latency comparison.** Outputs are in `test_output/`.
+
+### 14.4 New writers, scripts and fixes
+- **`to_pptx.py` + `test_pdf.py --pptx`.** One PDF page is always one slide, and the first
+  heading becomes the slide title. Two real layout bugs were found and fixed with measured
+  positions:
+  - Text height was estimated per block, so paragraphs overlapped tables. It now uses an
+    estimated wrapped-line count (`_wrapped_line_count`).
+  - Images were capped only against a flat 5in, so one ran 1in past the slide. They are now
+    also capped by the space actually left (`_remaining_height`).
+  - Body text starts below the real title placeholder's bottom edge, not below a guessed
+    1.4in.
+- **`image_to_excel.py`.** Deliberately has no `--mode image`: a snapshot is pointless in a
+  spreadsheet. It writes nothing, and returns failure, if the model finds no table.
+- **`fix_trailing_heading_after_table()`** (`blocks.py`). The model *consistently* (not
+  randomly) emitted a table's own heading after the table. The fix is deterministic and only
+  fires on one shape: a table, then a single heading, and the heading is the last block.
+- **`merge_nested_tables()`** (`blocks.py`). The schema cannot represent a table inside a
+  cell, so the model emits each nesting level as its own table. This merges them: a
+  **blank last cell in the previous table's last row** triggers the merge, deepest level
+  first, repeating until no trigger is left. Column-width comparison was tried and rejected,
+  because a doubly-nested table can be as wide as its parent. Verified live on
+  `image_to_excel_input/complex.png` (3 levels deep).
+- **`drop_duplicate_blocks()` now checks tables too.** It drops an exact repeat of a table,
+  and a table whose every substantive row (>12 characters) already appeared in an earlier
+  table. Found while testing nested tables: a stray duplicate fragment had tricked the merge
+  into pairing the wrong tables.
+- **Still open, not fixed:** a third nested-table failure, where rows arrive crammed
+  unevenly into one single table block instead of as separate blocks. Neither fix above
+  handles it.
+
+### 14.5 OCR-restoration: built, then fully reverted
+Automatically inserting lines that OCR found but the model missed was built and tested for
+raw images, then reverted at the owner's request. It made outputs worse: OCR's misread
+bullets (`+`, `'`, `©`, `*`) went into documents as if verified, and a heading landed in
+the middle of garbled restored fragments. `ocr.py`, `image_to_word.py` and
+`image_to_pdf.py` went back to their last committed state, and the one added function was
+removed from `blocks.py`. **Standing rule: OCR only reports, it never writes into the
+output.** The accepted direction is the human-review report in §13.
+
+---
+
+## 15. Machine migration (2026-09-29)
+
+The project moved from `/home/aiteam/idox` to `/home/sumukh/Downloads/idox`, on an Ubuntu
+26.04 machine with an Intel Tiger Lake CPU, Iris Xe graphics, 8 threads and 14 GB RAM. Paths
+in older sections and in `handover.md` / `status.md` still say `/home/aiteam/...`.
+
+What was set up, all in user space (no sudo):
+- **Python 3.13.15**, installed with `uv` (`~/.local/bin/uv`). The old `.venv` was built
+  for Python 3.12, which this machine doesn't have, so it couldn't import anything. It was
+  moved (not deleted) to `~/.local/share/idox-old-venv-py312`.
+- **New `.venv`** (Python 3.13), built from `requirements.txt` with
+  `uv pip install --python .venv/bin/python -r requirements.txt`. `uv` venvs have no `pip`
+  inside, so use `uv pip` to add packages.
+- **llama.cpp `llama-server` b11247, CPU-only build** (`llama-b11247-bin-ubuntu-x64`), at
+  `~/.local/opt/llama.cpp/llama-b11247/llama-server`. The Vulkan build was deliberately not
+  used (§7). This replaces `/usr/local/lib/ollama/llama-server`, which doesn't exist here.
+
+Starting the local 2B server:
+```bash
+setsid nohup ~/.local/opt/llama.cpp/llama-b11247/llama-server \
+  --model /home/sumukh/Downloads/idox/models_manual/Qwen3VL-2B-Instruct-Q4_K_M.gguf \
+  --mmproj /home/sumukh/Downloads/idox/models_manual/mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf \
+  --port 8090 --host 127.0.0.1 --no-webui --ctx-size 8192 \
+  --image-min-tokens 512 --image-max-tokens 512 \
+  > ~/.local/share/idox/llama-server.log 2>&1 < /dev/null & disown
+```
+Health check: `GET http://127.0.0.1:8090/health` returns `{"status":"ok"}`. To stop it:
+`kill $(pgrep -x llama-server)`. Don't use `pkill -f` with the path: it also matches the
+shell running the command and kills it.
+
+**Image tokens fixed at 512 (2026-09-29, by the owner's choice, to cut latency).** Earlier
+sections used `--image-min-tokens 1024`, which gave ~1,550 image tokens on `complex.png`.
+Measured with a cold server each time:
+- `hi.png`: 74.1s at 1,024 min (2,089 prompt tokens) vs 28.4s at 512 (1,138 tokens). Prefill
+  61.0s -> 17.4s. Same 2 blocks, same text.
+- `complex.png` (3-level nested table): at 512 the model hit the 4,000-token output limit
+  after 9m40s and produced no file. It ran once, so this isn't proof it always fails.
+- The server warns that Qwen-VL needs at least 1,024 image tokens for grounding tasks.
+To go back, use `--image-min-tokens 1024` and drop `--image-max-tokens`.
+
+**Smoke test (one run, not a benchmark):**
+`image_to_word.py image_to_word_input/hi.png --base-url http://127.0.0.1:8090` extracted
+2 blocks and passed self-consistency. Prefill took 61.0s for 2,089 tokens and generation
+12.9s for 131 tokens, 74.1s in total.
+
+System packages still needed (need sudo):
+`sudo apt-get install -y git curl tesseract-ocr libreoffice-writer`. Without tesseract,
+the OCR checks report N/A. Without LibreOffice, `image_to_pdf.py` and `word_to_pdf.py`
+fail. Ollama is not installed, so the `--base-url ""` Ollama path won't work here.
+
+---
+
+## 16. Suspected bugs, from reading the code (NOT verified by running it)
+
+Found in a full read-through on 2026-09-29. Each still needs a real test case to confirm,
+the same bar as everything else in this document.
+
+1. **`merge_nested_tables()` with a parent table that has no header.** The parent's header
+   part becomes `[]`, so the merged header and `width` come from the child only. The
+   parent's earlier rows are then cut down to that width, losing columns, and the expanded
+   rows (parent prefix + child row) come out longer than the header.
+2. **`merge_nested_tables()` false merges.** Any table whose last cell is `""`, followed
+   directly by another table, is merged. Two separate tables where the first ends in a row
+   with an empty last cell (a totals row, say) would be joined.
+3. **`fix_trailing_heading_after_table()` on multi-page PDFs.** A heading at the bottom of
+   a page usually introduces the next page's content. It would be moved in front of the
+   table above it.
+4. **Bullet stripping in `to_docx.py`.** `line.strip(" •◦▪-–\t")` trims both ends of each
+   list item, so "-5% change" loses its minus sign and a trailing dash is dropped.
+5. **Minor:**
+   - `_PUNCT` folds "·" (middle dot) to "-".
+   - The raw-server request always labels the image `image/png`, even for a JPEG that
+     skipped upscaling.
+   - `test.py`, `test_json.py` and `bench.py` reference files not in this tree
+     (`test_page.png`, `real_business_doc.pdf`).
+   - `xlsx_output/` is in `.gitignore` but its files are tracked.
+
+---
+
+## 17. PDF → JPG (2026-09-29)
+
+`pdf_to_jpg.py`. Chosen by the owner from two options: render each page directly, versus
+extract with the model, rebuild a Word file, convert to PDF, then render. Direct rendering
+was picked: PyMuPDF draws each page exactly as it looks, so **no model is involved**, nothing
+can be dropped or misread, and it works the same on digital and scanned PDFs.
+
+- **Layout:** each PDF gets its own subfolder, one JPG per page:
+  `pdf_to_jpg_input/report.pdf` -> `pdf_to_jpg_output/report/page_001.jpg`, `page_002.jpg`, ...
+- **Defaults:** 150 dpi, JPG quality 90. Flags: `--dpi`, `--quality`, `--pages` (e.g. `1-3`),
+  `--outdir`. Accepts several PDFs or globs.
+- **Guards:** a page whose declared size would render above 5,000 px on its longest side is
+  drawn at a lower dpi (some scanners declare the page box in pixels, see `_sane_page_rect()`
+  in `test_pdf.py`). Password-protected PDFs are skipped with a message. The written files
+  are read back with PIL to check they are valid images.
+- **Command:** `.venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/report.pdf`
+- **Tested** on 4 PDFs (digital, one with an embedded image, two scanned): all pages written
+  and valid, about 0.2s per PDF, 25-350 KB per page at the defaults. A page with a table,
+  paragraphs and an embedded logo was inspected visually and looked correct. `--pages 9` on a
+  2-page PDF is skipped with a message and exit code 1. A missing file prints "skipping ...
+  not found" and does not count as a failure, like the other scripts.

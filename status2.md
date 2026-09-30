@@ -49,6 +49,8 @@ machine yet.
 
 ## What works (verified on the previous machine)
 
+- **PDF → TIFF** (`pdf_to_tiff.py`), new 2026-09-30: one multi-page lossless TIFF per PDF,
+  300 dpi, verified pixel-exact against the PDF (`memory.md` §19).
 - **PDF → JPG** (`pdf_to_jpg.py`), new 2026-09-29: direct page rendering, no model.
   Tested on 4 PDFs (`memory.md` §17).
 - **PDF → Word / Excel / PowerPoint** (`test_pdf.py --docx/--xlsx/--pptx`), both digital

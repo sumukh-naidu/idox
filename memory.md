@@ -35,6 +35,7 @@ needed, and deterministic code for everything else. Four conversion directions e
    written, see §14.
 
 7. **PDF → JPG** (`pdf_to_jpg.py`) — added 2026-09-29, see §17.
+8. **PDF → TIFF** (`pdf_to_tiff.py`) — added 2026-09-30, see §19.
 
 Not built yet: CSV output (any source), image → PowerPoint, image → XML.
 
@@ -148,6 +149,7 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `word_to_pdf.py` | Standalone LibreOffice-based Word→PDF converter. No model. Do not import it. |
 | `to_docx.py` | Deterministic Word writer (Tier 3). Fixed a real crash bug this session (§6). |
 | `to_xlsx.py` | Deterministic Excel writer (Tier 3). Had the identical crash bug, fixed alongside `to_docx.py`. |
+| `pdf_to_tiff.py` | PDF → one multi-page TIFF, added 2026-09-30 — see §19. No model; lossless, verified pixel-exact. |
 | `pdf_to_jpg.py` | PDF → JPG, added 2026-09-29 — see §17. No model: PyMuPDF draws each page. One subfolder per PDF, one JPG per page. |
 | `to_pptx.py` | Deterministic PowerPoint writer (Tier 3), added later — see §14.4. One PDF page = one slide, first heading = slide title. |
 | `image_to_excel.py` | Raw image → `.xlsx`, added later — see §14.4. No `--mode` flag by design. Refuses to write a file when no table is detected. |
@@ -166,6 +168,8 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `image_input/` / `pdf_out_img/` | `image_to_pdf.py` I/O (pre-existing). |
 | `pdf_to_ppt_input/` / `pdf_to_ppt_output/` | `test_pdf.py --pptx` I/O (added later). |
 | `image_to_excel_input/` / `image_to_excel_output/` | `image_to_excel.py` I/O (added later). |
+| `pdf_to_tiff_input/` / `pdf_to_tiff_output/` | `pdf_to_tiff.py` I/O (added 2026-09-30). |
+| `jpg_to_pdf_input/` / `jpg_to_pdf_output/` | For JPG → PDF via `image_to_pdf.py --outdir` (§18). |
 | `pdf_to_jpg_input/` / `pdf_to_jpg_output/` | `pdf_to_jpg.py` I/O (added 2026-09-29). |
 | `pdf_input_xlsx/` / `xlsx_output/` | Early PDF → Excel testing. |
 | `test_output/` | Disposable outputs from the 256/512 image-token experiments (§14.3). Safe to delete when no longer needed. |
@@ -757,3 +761,37 @@ real selectable text and a real table. Problems seen:
 - **A headerless table got a bold first row** (the model treated row 1 as a header, and its
   own check reported "claims 4 rows but returned 3").
 - The final PDF is not read back or verified (unlike `pdf_to_jpg.py`).
+
+---
+
+## 19. PDF → TIFF (2026-09-30)
+
+`pdf_to_tiff.py`. Planned first, then built to the owner's choices: **one multi-page TIFF
+per PDF, colour, lossless LZW, 300 dpi.** No model: PyMuPDF draws each page, Pillow writes
+the frames. Same for digital and scanned PDFs.
+
+- **Output:** `pdf_to_tiff_input/report.pdf` -> `pdf_to_tiff_output/report.tiff`.
+- **Command:** `.venv/bin/python pdf_to_tiff.py pdf_to_tiff_input/report.pdf`
+- **Flags:** `--dpi` (default 300), `--compression lzw|deflate` (deflate is about 30%
+  smaller, a few old viewers can't open it), `--pages 1-3`, `--outdir`, `--no-ocr`.
+- **Sizes measured** for one page at 150 dpi: uncompressed 6,163 KB, LZW 355 KB, Deflate
+  249 KB. Black-and-white Group 4 (27 KB) was offered but not chosen, since it loses colour.
+- **Memory:** frames are generated one at a time and handed to the writer, because a
+  300 dpi Letter page is about 25 MB and a 100-page PDF would otherwise need about 2.5 GB.
+- **Oversized pages:** a page declared over 5,000 px on its longest side is drawn at lower
+  dpi (e.g. a 23.6x30.6in box drew at 163 dpi), and each frame stores its own dpi.
+- **Verification** (the saved TIFF is reopened; ends in `VERDICT: PASS` or `FAIL`, exit 1 on
+  FAIL): frame count; per-frame size; stored dpi; **each frame byte-for-byte equal to a
+  fresh render** (only valid because LZW/Deflate are lossless); not blank; every PDF text
+  line sits on ink (by coordinates, no OCR); OCR reading contains at least 90% of the PDF's
+  words. Scanned pages (no text layer) skip the last two and the report says so: they are
+  verified as pixel-exact to the PDF, not as "every word present".
+- **Shown to fail, not just pass:** a single pixel changed by 1 (1 of 25,245,000 bytes),
+  all-white frame, an erased heading band, wrong stored dpi, half-size frame, and a frame
+  dropped from the saved file each gave FAIL.
+- **Bug found and fixed while testing:** the first version failed one PDF at 88% OCR. Cause:
+  the OCR copy of the frame was saved through Pillow with no dpi, so tesseract guessed the
+  resolution and missed words. Passing `dpi=` fixed it (100%). Same page, same content.
+  `pdf_to_jpg.py` was not affected: it OCRs the JPG PyMuPDF wrote, which carries a dpi.
+- **Tested** on 3 real PDFs (digital, one blank page, scanned), a synthetic mixed-size PDF,
+  deflate and `--pages`, and bad `--pages`. All passed; 0.3-1.0s to write, 2-6s with checks.

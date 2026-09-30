@@ -36,6 +36,7 @@ needed, and deterministic code for everything else. Four conversion directions e
 
 7. **PDF → JPG** (`pdf_to_jpg.py`) — added 2026-09-29, see §17.
 8. **PDF → TIFF** (`pdf_to_tiff.py`) — added 2026-09-30, see §19.
+9. **TIFF → PDF** (`tiff_to_pdf.py`) — added 2026-09-30, see §20.
 
 Not built yet: CSV output (any source), image → PowerPoint, image → XML.
 
@@ -149,6 +150,7 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `word_to_pdf.py` | Standalone LibreOffice-based Word→PDF converter. No model. Do not import it. |
 | `to_docx.py` | Deterministic Word writer (Tier 3). Fixed a real crash bug this session (§6). |
 | `to_xlsx.py` | Deterministic Excel writer (Tier 3). Had the identical crash bug, fixed alongside `to_docx.py`. |
+| `tiff_to_pdf.py` | (Multi-page) TIFF → searchable PDF, added 2026-09-30 — see §20. No model: lossless picture + Tesseract text layer. |
 | `pdf_to_tiff.py` | PDF → one multi-page TIFF, added 2026-09-30 — see §19. No model; lossless, verified pixel-exact. |
 | `pdf_to_jpg.py` | PDF → JPG, added 2026-09-29 — see §17. No model: PyMuPDF draws each page. One subfolder per PDF, one JPG per page. |
 | `to_pptx.py` | Deterministic PowerPoint writer (Tier 3), added later — see §14.4. One PDF page = one slide, first heading = slide title. |
@@ -168,6 +170,7 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `image_input/` / `pdf_out_img/` | `image_to_pdf.py` I/O (pre-existing). |
 | `pdf_to_ppt_input/` / `pdf_to_ppt_output/` | `test_pdf.py --pptx` I/O (added later). |
 | `image_to_excel_input/` / `image_to_excel_output/` | `image_to_excel.py` I/O (added later). |
+| `tiff_to_pdf_input/` / `tiff_to_pdf_output/` | `tiff_to_pdf.py` I/O (added 2026-09-30). |
 | `pdf_to_tiff_input/` / `pdf_to_tiff_output/` | `pdf_to_tiff.py` I/O (added 2026-09-30). |
 | `jpg_to_pdf_input/` / `jpg_to_pdf_output/` | For JPG → PDF via `image_to_pdf.py --outdir` (§18). |
 | `pdf_to_jpg_input/` / `pdf_to_jpg_output/` | `pdf_to_jpg.py` I/O (added 2026-09-29). |
@@ -795,3 +798,86 @@ the frames. Same for digital and scanned PDFs.
   `pdf_to_jpg.py` was not affected: it OCRs the JPG PyMuPDF wrote, which carries a dpi.
 - **Tested** on 3 real PDFs (digital, one blank page, scanned), a synthetic mixed-size PDF,
   deflate and `--pages`, and bad `--pages`. All passed; 0.3-1.0s to write, 2-6s with checks.
+
+---
+
+## 20. TIFF → PDF (2026-09-30)
+
+`tiff_to_pdf.py`. Planned first; the owner chose a **searchable PDF, one PDF per TIFF (every
+frame a page), page size = the frame's physical size.** Options considered and not chosen:
+picture-only PDF (kept as `--no-text`), and a model-rebuilt PDF (`image_to_pdf.py`, about a
+minute per page, re-typeset and can change letters).
+
+- **No model.** Each frame is embedded as a lossless picture, unchanged, so the page looks
+  exactly like the scan. An invisible text layer from Tesseract sits on top
+  (`-c textonly_pdf=1` gives a text-only PDF that is overlaid with `show_pdf_page`), so the
+  PDF can be searched and copied.
+- **Output:** `tiff_to_pdf_input/report.tiff` -> `tiff_to_pdf_output/report.pdf`.
+- **Command:** `.venv/bin/python tiff_to_pdf.py tiff_to_pdf_input/report.tiff`
+  Flags: `--no-text` (picture only), `--outdir`. Needs tesseract unless `--no-text`; it stops
+  with an install hint rather than quietly writing a PDF with no text.
+- **Page size:** pixels / dpi * 72, using the dpi stored in the TIFF (a 300 dpi A4 scan is an
+  A4 page). No usable dpi (missing, or below 10) is assumed to be 300 and the report says so.
+  A genuine centimetre-unit TIFF converts correctly (Pillow turns it into dpi).
+- **Colour modes:** 1-bit, greyscale, palette, CMYK, RGBA (flattened onto white) and 16-bit
+  are converted to RGB, and the report says which frames were converted.
+- **Verification** (the saved PDF and the original TIFF are both read again): page count;
+  each page's size; exactly one picture covering the page; **that picture pulled back out of
+  the PDF is byte-for-byte the frame**; the words OCR read from the frame are really in the
+  PDF's text layer; and a check that a colour conversion didn't turn a real scan flat. Ends
+  in `VERDICT: PASS` or `FAIL` (exit 1).
+- **Honest limits of the text layer:** it is only as good as Tesseract, which misses text
+  printed white on dark backgrounds and reads accented letters as plain ones (§19). The
+  text-layer check compares the PDF text with OCR of the same frame, so it proves the text
+  was embedded, **not** that OCR read the whole page. The picture is always exact.
+- **Gap found and closed while testing:** the pixel-exact check compares the PDF with the
+  already-converted RGB image, so a conversion that blackened a page would still pass. A
+  fake 16-bit file (values 0-255 instead of the real 0-65535) exposed this. Fixed with the
+  "conversion left one flat colour" check; a real 16-bit file converts correctly.
+- **Shown to fail, not just pass:** one pixel changed, a wrong picture in the PDF, a wrong
+  page size, an extra image on the page, a missing text layer, a flat-black conversion, and a
+  page missing from the saved PDF each gave FAIL.
+- **Tested** on `pdf_to_tiff_output/ten_page.tiff` (10 frames, 10/10 PASS, 15s to write,
+  28s with checks; 1.27 MB PDF from a 3.3 MB TIFF), a scanned 2-frame TIFF, and 13 synthetic
+  TIFFs (fax 1-bit Group 4, greyscale, CMYK, RGBA, 16-bit, palette, no dpi, cm unit, mixed
+  sizes and dpi in one file, blank, single frame). `--no-text`, a missing file (skipped, exit
+  code 0 like the other scripts) and a non-TIFF file ("COULD NOT OPEN") also behave.
+- **Still pending from §19:** whether to make the OCR word check advisory in `pdf_to_tiff.py`
+  and `pdf_to_jpg.py`. Left unchanged at the owner's request until they test.
+
+### 20.1 Speed-up (2026-09-30): OCR reused, and run in parallel
+The owner noticed `sample10.tiff` (10 frames, 2550x3300 px, dense text) was slow. Two
+changes were made, both at the owner's request:
+1. **The verification no longer runs OCR a second time.** It used to OCR every frame again
+   just to get a word list. Tesseract is deterministic, so that repeated the first reading.
+   The text of the first reading (the text-only PDF that becomes the text layer) is kept and
+   the check is whether that text survived into the saved PDF.
+2. **OCR runs on several pages at once** (`--workers`, default `min(4, cpu count)`; 1 = one
+   page at a time). Each tesseract process is limited to one thread (`OMP_THREAD_LIMIT=1`),
+   and at most `2 x workers` frames are in flight, so memory stays flat (peak about 600 MB
+   on this file).
+
+**Measured today, old and new run back to back on `sample10.tiff`:** old 40.5s wall,
+new 11.7s wall with 4 workers (21s with `--workers 1`). Output identical to the old version's
+on all 10 pages: same text layer text, same embedded picture bytes, for 1 and 4 workers.
+**Correction:** an earlier timing in this session put the old run at about 145s (65s OCR +
+63s repeated OCR). That figure did not reproduce; single-page tesseract measures about 1.6s
+per page with or without the thread limit, so 145s was inflated by something else on the
+machine at the time (cause not found). Don't quote 145s.
+
+**Two problems this change caused, both caught by testing and fixed:**
+- *Stale page objects.* With OCR results arriving later, holding the `Page` object from
+  `doc.new_page()` failed ("page is None"): PyMuPDF invalidates earlier Page objects whenever
+  a page is added. 9 of 10 text layers failed. Fix: look the page up by number when the
+  result arrives (`doc[i]`).
+- *A hole in the verdict.* That same run still printed `PASS 10/10`, because with the second
+  OCR gone, a failed text layer looked identical to a page with no text. Fix: a page whose
+  text layer could not be built now FAILS explicitly (`layer_error`). Shown by simulating a
+  tesseract crash on page 2: `pages verified 9/10`, `VERDICT: FAIL`.
+- Lesson: the repeated OCR looked redundant but was also the only independent check that the
+  text layer existed. When removing a "duplicate" check, ask what else it was catching.
+
+Regression after the change: 17 of 18 test TIFFs pass; the one FAIL is the deliberately
+malformed synthetic `e_16bit.tiff` (fake 16-bit values that convert to black), which the
+flat-conversion check is meant to reject. The genuine 16-bit file, `--no-text`, `--workers 8`
+and all eight damage tests behave as before.

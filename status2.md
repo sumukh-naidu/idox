@@ -49,6 +49,8 @@ machine yet.
 
 ## What works (verified on the previous machine)
 
+- **TIFF → PDF** (`tiff_to_pdf.py`), new 2026-09-30: searchable PDF, lossless picture plus
+  OCR text layer, no model (`memory.md` §20).
 - **PDF → TIFF** (`pdf_to_tiff.py`), new 2026-09-30: one multi-page lossless TIFF per PDF,
   300 dpi, verified pixel-exact against the PDF (`memory.md` §19).
 - **PDF → JPG** (`pdf_to_jpg.py`), new 2026-09-29: direct page rendering, no model.

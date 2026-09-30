@@ -1,0 +1,26 @@
+----- Page 1 -----
+
+TECHNICAL INSPECTION REPORT
+
+Document ID: SCAN-TEST001
+
+Inspection Summary
+
+This sample page is designed for testing scanned-document processing, OCR extraction, layout detection, and image preprocessing workflows.
+
+The original document was printed on standard A4 paper and reviewed during a routine inspection. Minor surface marks and uneven ink density are intentionally preserved to simulate a typical office scan.
+
+Item              Status  Remarks
+----------------  ------  ------------
+Document quality  PASS    Readable
+OCR suitability   PASS    Minor noise
+Table detection   PASS    Grid visible
+Page alignment    REVIEW  Slight skew
+
+Notes
+
+1. This is a synthetic test document.
+2. It contains intentional scan-like noise and imperfections.
+3. No real personal or confidential information is included.
+
+Inspector Signature

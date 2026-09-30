@@ -10,6 +10,8 @@ An earlier, now-partially-superseded version of this document exists as `handove
 script existed). This document supersedes them — treat `handover.md`/`status.md` as
 historical, not current.
 
+**For the developer building the chat/service integration, start with `handover_chat_integration.md`** (written 2026-09-30): features, models, latency and what a caller must know. This file remains the deep technical record.
+
 **Updated 2026-09-29.** §1-§13 were written up to 2026-09-25 and are kept as the historical
 record; where a later section contradicts an earlier one, **the later section wins**. The
 biggest changes since: the default endpoint (§3 is superseded by §14.1), new scripts and
@@ -37,6 +39,7 @@ needed, and deterministic code for everything else. Four conversion directions e
 7. **PDF → JPG** (`pdf_to_jpg.py`) — added 2026-09-29, see §17.
 8. **PDF → TIFF** (`pdf_to_tiff.py`) — added 2026-09-30, see §19.
 9. **TIFF → PDF** (`tiff_to_pdf.py`) — added 2026-09-30, see §20.
+10. **PDF → TXT** (`pdf_to_txt.py`) — added 2026-09-30, see §21 (digital pages only).
 
 Not built yet: CSV output (any source), image → PowerPoint, image → XML.
 
@@ -150,6 +153,7 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `word_to_pdf.py` | Standalone LibreOffice-based Word→PDF converter. No model. Do not import it. |
 | `to_docx.py` | Deterministic Word writer (Tier 3). Fixed a real crash bug this session (§6). |
 | `to_xlsx.py` | Deterministic Excel writer (Tier 3). Had the identical crash bug, fixed alongside `to_docx.py`. |
+| `pdf_to_txt.py` | PDF → plain text, added 2026-09-30 — see §21. Model on pages that have a text layer; scanned pages not yet converted. |
 | `tiff_to_pdf.py` | (Multi-page) TIFF → searchable PDF, added 2026-09-30 — see §20. No model: lossless picture + Tesseract text layer. |
 | `pdf_to_tiff.py` | PDF → one multi-page TIFF, added 2026-09-30 — see §19. No model; lossless, verified pixel-exact. |
 | `pdf_to_jpg.py` | PDF → JPG, added 2026-09-29 — see §17. No model: PyMuPDF draws each page. One subfolder per PDF, one JPG per page. |
@@ -170,6 +174,7 @@ input -> Tier 0 (deterministic) -> Tier 1/2 (model, where actually needed) -> Ti
 | `image_input/` / `pdf_out_img/` | `image_to_pdf.py` I/O (pre-existing). |
 | `pdf_to_ppt_input/` / `pdf_to_ppt_output/` | `test_pdf.py --pptx` I/O (added later). |
 | `image_to_excel_input/` / `image_to_excel_output/` | `image_to_excel.py` I/O (added later). |
+| `pdf_to_txt_input/` / `pdf_to_txt_output/` | `pdf_to_txt.py` I/O (added 2026-09-30). |
 | `tiff_to_pdf_input/` / `tiff_to_pdf_output/` | `tiff_to_pdf.py` I/O (added 2026-09-30). |
 | `pdf_to_tiff_input/` / `pdf_to_tiff_output/` | `pdf_to_tiff.py` I/O (added 2026-09-30). |
 | `jpg_to_pdf_input/` / `jpg_to_pdf_output/` | For JPG → PDF via `image_to_pdf.py --outdir` (§18). |
@@ -881,3 +886,117 @@ Regression after the change: 17 of 18 test TIFFs pass; the one FAIL is the delib
 malformed synthetic `e_16bit.tiff` (fake 16-bit values that convert to black), which the
 flat-conversion check is meant to reject. The genuine 16-bit file, `--no-text`, `--workers 8`
 and all eight damage tests behave as before.
+
+---
+
+## 21. PDF → TXT (2026-09-30)
+
+`pdf_to_txt.py`. The owner asked to focus on **the model for unscanned (digital) pages**. So
+each page that has a text layer is read by the vision model (same one call per page as
+`test_pdf.py`, trimmed schema without align/size/bold), returned as blocks, corrected, and
+written as text. The PDF's text layer stays the ground truth: it checks the model and
+restores dropped lines. The other decisions were left open by the owner, so these are
+DEFAULTS chosen by the assistant and easy to change: tables as columns padded with spaces
+(a dashed rule under a real header), lists as `- item`, pages separated by a line reading
+`----- Page N -----`, UTF-8.
+
+- **Command:** `.venv/bin/python pdf_to_txt.py pdf_to_txt_input/x.pdf --base-url http://127.0.0.1:8090`
+  Flags: `--pages`, `--dpi` (default 125), `--outdir`, `--model`, `--base-url`.
+  Output: `pdf_to_txt_output/<name>.txt`. Not importable (runs at import, like the others).
+- **Scanned pages (no text layer) are NOT converted in this version.** They are listed by
+  page number and the verdict is `PARTIAL` (exit 1), never PASS. A page with nothing on it
+  is written blank without a model call. A PDF made only of scans writes nothing.
+- **A failed model call is not silent** (unlike `test_pdf.py`): the page falls back to the
+  PDF's own text in reading order, the report says so, and the verdict notes how many pages
+  used the fallback.
+- **Pipeline per digital page:** model call -> `drop_duplicate_blocks` -> heading fix ->
+  `merge_nested_tables` -> drop text read out of a picture (only if the page has pictures)
+  -> `check_coverage` -> `repair_missing_lines` and `repair_table_rows` (**copied** from
+  `test_pdf.py`, following the project convention, because that file cannot be imported)
+  -> render. Pictures on a page are not in the text and the report says how many.
+- **Verification (the saved .txt is read back):** every page has its marker in order;
+  each page's words (over 3 chars, containing a letter or digit) are compared with the PDF's
+  text layer both ways (coverage at least 95%, words not in the PDF at most 5%); every PDF
+  line is present; the file's word count with repeats must be 0.85x-1.15x the PDF's (catches
+  duplication); and **any number that differs, in either direction, fails regardless of the
+  percentages**. Verdicts: `PASS`, `PARTIAL`, `FAIL`.
+- **Shown to fail, not just pass:** deleting a line, inserting invented words, removing a
+  page marker, duplicating a paragraph, emptying a page and changing one figure
+  (`84,200` -> `84,700`) each gave FAIL. Two gaps were found and closed while testing:
+  (1) the dashed table rule was counted as extra words (a bug in this script's own check);
+  (2) a single misread number passed because it was 2% of the page, so figures now fail on
+  any difference.
+- **Measured (local 2B, 512 image tokens, 7 digital pages, final rules): 4 PASS, 3 FAIL.**
+  Time per page 22-103 s (generation 10-89 s, 123-981 tokens), roughly the same formula as
+  in the handover doc.
+
+  | Page | Result | Why |
+  |---|---|---|
+  | `sample_digital_document` p1, p2 | PASS | 100% words, nothing extra |
+  | `ten_page` p1, p2 | PASS | |
+  | `Free_Test_Data` p1 | **FAIL** | model misread dense Latin prose (`etos`, `ibibendum`, `integre`); 10 words not in the PDF |
+  | `Free_Test_Data` p2 | **FAIL** | content repeated, 1.43x the PDF's word count |
+  | `ten_page` p3 | **FAIL** | model wrote `$1,250.00`; the PDF's text layer says `I1,250.00` (the rupee glyph is broken: it shows as a black box on the page) |
+
+- **Root cause of the repeated content, a design flaw shared with `test_pdf.py`:** when the
+  model misreads a paragraph, `check_coverage` sees the correct line as "missing" and
+  `repair_missing_lines` INSERTS the exact PDF line as a new block, while the misread
+  paragraph stays. The file ends up with both, interleaved. Coverage then reads 100% and
+  hides it. The new size check exposes it; nothing fixes it yet.
+- **Proposed, not built:** "snap to the text layer": when a model block closely matches a
+  span of the PDF's text (similarity above a threshold), replace the block's text with the
+  exact PDF text instead of inserting a duplicate. This would fix misreads and duplication
+  on digital pages deterministically, and would also benefit `test_pdf.py`. It needs the
+  owner's go-ahead.
+- **Also untested:** whether 1,024 image tokens removes most of the misreads (the page that
+  failed worst was Latin prose at 512). It needs a server restart, so it was not done.
+- **Verdict interpretation:** a FAIL here is the check working. It reports that the text
+  file differs from the PDF's own text; it does not mean the script crashed.
+
+### 21.1 Update, same day: snap to the text layer, and scanned pages with the model
+Both were approved by the owner (retesting at 1,024 tokens was declined; the server stays at 512).
+**This supersedes the statements above that scanned pages are skipped, that the verdict can be
+PARTIAL, and the 4-of-7 result.**
+
+**Scanned pages now go to the model too.** There is no text layer, so nothing is checked or
+restored: the page is marked UNVERIFIED in the report and never counted as verified. Tesseract's
+agreement with the model is printed for information only (it cannot fail a page: OCR misses
+white-on-dark text and accents). A page is a FAIL only if the model could not read it (a line
+`[Page N could not be read: ...]` is written in its place, no OCR is ever written into the
+output) or the page came out nearly empty while OCR reads 15+ words. Verdict: `PASS` (with the
+number of unverified scanned pages) or `FAIL`; `PARTIAL` no longer exists. Page images sent to
+the model are capped at 2,600 px on the long side. Real run, `sample_scanned_document.pdf`
+(2 pages): read cleanly, 18.0 s and 20.2 s (203 and 225 tokens), OCR agreement 92% / 100% and
+100% / 100%. The server's prompt cache can hide prefill time on repeated inputs.
+
+**`blocks.snap_to_text_layer(page, source_text)` (new, shared, wired only into `pdf_to_txt.py`).**
+Each block is matched to the passage of the PDF's own text it was read from, and a close match
+is replaced by the PDF's exact words. Three levels: (1) a stretch match of 3+ words (difflib on
+words, 75% similarity, length within 0.7-1.4x, never onto a passage already used); (2) the
+closest whole PDF line for 1-2 words and for table cells (cutoff 0.8, only if the text is not
+already an exact PDF line); (3) a **case-sensitive** word pass for words of 6+ characters that
+are not in the PDF but are 88%+ similar to one that is. Invented text with no close match, and
+real-but-different words, are left alone (tested). Symbols are not corrected (the text layer's
+own symbols can be garbage, e.g. a check mark stored as `\x13`). Result: the model's misread no
+longer makes `check_coverage` call the correct line "missing", so the repair step no longer
+inserts a second copy beside it.
+
+**`drop_duplicate_blocks(page, source_text=None)`:** with a source, a paragraph may appear as many
+times as the PDF has it (counted from the start and end of the passage, because the model's copy
+usually carries a misread in the middle). Found because `Free_Test_Data` page 1 genuinely repeats
+a paragraph and the old rule dropped the second copy (0.74x the PDF). With no source the
+behaviour is unchanged for every other caller.
+
+**Result on the same pages, live model, 512 image tokens: 7 of 7 digital pages PASS** (was 4 of 7):
+`sample_digital_document` p1-2, `Free_Test_Data` p1-2 (p3 blank), `ten_page` p1-3. Notable: on
+`ten_page` p3 the model's `$1,250.00` is now written as the PDF's exact `I1,250.00` (the PDF's
+broken rupee glyph; a faithful copy of the text layer, not of what a viewer shows).
+`test_pdf.py` does NOT use the snap yet and still has the duplicate-insertion flaw.
+
+**Bugs found in my own work while building this (all fixed, each caught by a test):** the word
+pass first matched case-insensitively and turned a lowercase alphabet into the uppercase one;
+the "never snap onto a passage twice" guard stopped the second copy of a genuinely repeated
+paragraph from being corrected (fixed by hiding used passages while matching); the repeat
+count found 0 occurrences of a paragraph the PDF has twice.
+**Not verified:** multi-column layouts, PDFs beyond the seven pages above, and how often the
+snap would wrongly "correct" a legitimately different word on documents that were not tested.

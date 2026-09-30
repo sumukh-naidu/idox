@@ -4,7 +4,9 @@ Snapshot of the project *right now*. For full background, every bug's root cause
 complete architecture, see `memory.md` (§14–§16 cover everything since 2026-09-25). This
 file only covers current state and the open decisions.
 
-**Last updated:** 2026-09-29
+**Handover for the chat integration developer:** `handover_chat_integration.md` (2026-09-30).
+
+**Last updated:** 2026-09-30
 **Branch:** `feature/testing_2b_Q8mmproj`, HEAD `b240895`. Everything was committed as of
 this update, apart from the edits to this file and `memory.md`.
 **Machine:** now `/home/sumukh/Downloads/idox` (moved from `/home/aiteam/idox`, see
@@ -49,6 +51,10 @@ machine yet.
 
 ## What works (verified on the previous machine)
 
+- **PDF → TXT** (`pdf_to_txt.py`), new 2026-09-30: model on digital AND scanned pages. Digital
+  pages are corrected and checked against the PDF's text layer (7 of 7 test pages pass);
+  scanned pages are read by the model and reported UNVERIFIED with an advisory OCR figure
+  (`memory.md` §21, §21.1).
 - **TIFF → PDF** (`tiff_to_pdf.py`), new 2026-09-30: searchable PDF, lossless picture plus
   OCR text layer, no model (`memory.md` §20).
 - **PDF → TIFF** (`pdf_to_tiff.py`), new 2026-09-30: one multi-page lossless TIFF per PDF,

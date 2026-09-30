@@ -404,7 +404,7 @@ def squash(s: str) -> str:
 _BULLET_CHARS = "-*•●‣ \t"
 
 
-def drop_duplicate_blocks(page: Page):
+def drop_duplicate_blocks(page: Page, source_text: str = None):
     """Remove TextBlocks the model repeated -- a real, confirmed bug, two shapes.
 
     Under greedy decoding (temperature 0) with no repeat_penalty, the model
@@ -454,8 +454,18 @@ def drop_duplicate_blocks(page: Page):
          genuinely different tables can share by chance, e.g. both having a
          "Total" row).
 
+      4. GENUINE REPEATS (only when source_text is given). A document can
+         really contain the same paragraph twice -- boilerplate, or a test page
+         built from repeated placeholder text -- and dropping the second copy
+         loses real content. On a digital page the PDF's own text says how many
+         times a passage occurs, so a text block is then allowed to appear that
+         many times (never fewer than once) before further copies are dropped.
+         Without source_text (scans, raw images) nothing changes.
+
     Returns (new_page, dropped_descriptions).
     """
+    source_norm = normalize(source_text) if source_text else None
+    text_counts = {}
     seen = set()
     seen_list_items = set()
     seen_tables = set()
@@ -493,7 +503,19 @@ def drop_duplicate_blocks(page: Page):
         bare = key.strip(_BULLET_CHARS)
 
         if len(key) > 12 and key in seen:
-            dropped.append(block.text[:60])
+            allowed = 1
+            if source_norm is not None:
+                # Counted from the start and the end of the passage, not the
+                # whole of it: the model's copy often carries a misread word in
+                # the middle, so the whole passage is not found in the PDF at
+                # all (measured: 0 occurrences of a paragraph the PDF has twice).
+                anchors = [key[:40], key[-40:]] if len(key) >= 40 else [key]
+                allowed = max(1, *(source_norm.count(a) for a in anchors))
+            if text_counts.get(key, 1) >= allowed:
+                dropped.append(block.text[:60])
+                continue
+            text_counts[key] = text_counts.get(key, 1) + 1
+            kept.append(block)
             continue
         if (block.kind != "list" and len(bare) > 12
                 and bare in seen_list_items):
@@ -982,6 +1004,205 @@ def check_grounding(page: Page, source_text: str):
                     )
 
     return problems, found, total
+
+
+# ===========================================================================
+# SNAP TO THE TEXT LAYER -- correct the model's misreads from ground truth
+# ===========================================================================
+
+def snap_to_text_layer(page: Page, source_text: str,
+                       min_similarity: float = 0.75):
+    """Replace a block's misread words with the exact ones from the PDF.
+
+    THE PROBLEM THIS SOLVES. On a digital page the model sometimes misreads a
+    word or two ("Integre" for "Integer"). check_coverage() then finds the
+    correct line "missing", and repair_missing_lines() INSERTS it as a new block
+    while the misread paragraph stays: the page ends up with the paragraph twice,
+    once wrong and once exact, and coverage reads 100% because every word is
+    now present somewhere. Measured: a page came out 1.43x the PDF's length.
+
+    THE FIX. Before that check runs, each block is matched to the stretch of the
+    PDF's own text it was read from, and if the match is close, the block's text
+    is replaced by the PDF's exact characters. A misread is then simply gone and
+    nothing is "missing" to be re-inserted. Text the model invented, which has no
+    close match anywhere, is left alone and is still caught by the grounding
+    checks. This is the same principle already used for repairs: on a digital
+    page the text layer is the author's actual characters, so copying from it is
+    safe in a way that copying from OCR is not.
+
+    HOW A BLOCK IS MATCHED
+      - Paragraphs: the block's words are aligned to the page's word stream
+        (difflib), the matching stretch is located, and if at least
+        min_similarity of the words agree, the stretch replaces the block. A
+        stretch already claimed by an earlier block is never reused, so two
+        blocks cannot both snap onto the same passage.
+      - A block with line breaks (a list, an address) is matched line by line so
+        its line structure survives; a leading bullet is kept as it was.
+      - Very short text (1-2 words) and table cells: the closest whole line of
+        the PDF's text (cutoff 0.8), only when the text is not already an exact
+        line of the PDF. A cell that is already exactly right is never touched.
+
+    Returns (new_page, snaps) where snaps is a list of (before, after) strings
+    for the caller to report. Blocks of kind "image" are skipped: text read out
+    of a picture is not in the text layer, and dropping it is a different step.
+    """
+    import difflib
+
+    src_tokens = source_text.split()
+    if not src_tokens:
+        return page, []
+    norm_src = [normalize(t) for t in src_tokens]
+    src_lines = [ln.strip() for ln in source_text.splitlines() if ln.strip()]
+    line_by_norm = {}
+    for ln in src_lines:
+        line_by_norm.setdefault(normalize(ln), ln)
+    line_keys = list(line_by_norm)
+    claimed = [False] * len(src_tokens)
+    snaps = []
+    # Long words of the PDF, for the word-level pass below. Matched CASE-
+    # SENSITIVELY and as written: lowercasing them merged "ABC..." with "abc...",
+    # and a lowercase alphabet was "corrected" into the uppercase one.
+    src_exact = set(src_tokens)
+    src_long = sorted({t for t in src_tokens if len(t) >= 6})
+
+    def close_line(text: str):
+        """The PDF line closest to a short string, or None."""
+        key = normalize(text)
+        if not key or key in line_by_norm:
+            return None
+        hit = difflib.get_close_matches(key, line_keys, n=1, cutoff=0.8)
+        if not hit:
+            return None
+        found = line_by_norm[hit[0]]
+        if not 0.6 <= len(found) / max(len(text), 1) <= 1.6:
+            return None
+        return found
+
+    def snap_span(text: str):
+        """The PDF's exact words for a run of 3+ words, or None."""
+        words = text.split()
+        if len(words) < 3:
+            return None
+        nb = [normalize(w) for w in words]
+        if " ".join(nb) in " ".join(norm_src):
+            return None                       # already exactly in the PDF
+        # Passages already given to an earlier block are hidden from the match,
+        # so when the PDF genuinely repeats a paragraph, the second copy of it
+        # in the model's output finds the PDF's second occurrence instead of
+        # colliding with the first.
+        visible = [t if not claimed[i] else "\x00" for i, t in enumerate(norm_src)]
+        matches = [m for m in difflib.SequenceMatcher(
+            None, nb, visible, autojunk=False).get_matching_blocks() if m.size]
+        if not matches:
+            return None
+        matches.sort(key=lambda m: m.b)
+        clusters, cur = [], [matches[0]]
+        for m in matches[1:]:
+            if m.b - (cur[-1].b + cur[-1].size) > len(words) + 5:
+                clusters.append(cur)
+                cur = [m]
+            else:
+                cur.append(m)
+        clusters.append(cur)
+        best = max(clusters, key=lambda c: sum(m.size for m in c))
+        first, last = best[0], best[-1]
+        # Words before the first agreeing word and after the last one are the
+        # misread ones, and take the same number of words from the PDF.
+        start = max(0, first.b - first.a)
+        end = min(len(src_tokens),
+                  last.b + last.size + (len(words) - (last.a + last.size)))
+        if end <= start or not 0.7 <= (end - start) / len(words) <= 1.4:
+            return None
+        sim = difflib.SequenceMatcher(None, nb, norm_src[start:end],
+                                      autojunk=False).ratio()
+        if sim < min_similarity:
+            return None
+        if sum(claimed[start:end]) > 0.3 * (end - start):
+            return None
+        for i in range(start, end):
+            claimed[i] = True
+        return " ".join(src_tokens[start:end])
+
+    def snap_words(body: str):
+        """Fix individual long words that are not in the PDF but nearly are.
+
+        The stretch match above gives up when too little of a line agrees, e.g. a
+        line that is mostly one long, unusual string ("ABCDEFGHJLKMNOPQRSTUWXYZ"
+        for the alphabet). Here each word of 6+ characters that the PDF does not
+        contain is replaced by the PDF word it is at least 88% similar to. The high
+        cutoff is deliberate: a real, different word must never be "corrected".
+        """
+        parts = re.split(r"(\s+)", body)
+        changed = False
+        for i, part in enumerate(parts):
+            if len(part) < 6 or part.isspace() or part in src_exact:
+                continue
+            hit = difflib.get_close_matches(part, src_long, n=1, cutoff=0.88)
+            if hit and hit[0] != part:
+                parts[i] = hit[0]
+                changed = True
+        return "".join(parts) if changed else None
+
+    def snap_text(text: str):
+        """One line or paragraph -> corrected text, or None if unchanged."""
+        body = text.lstrip(_BULLET_CHARS)
+        prefix = text[:len(text) - len(body)]
+        words = body.split()
+        if not words:
+            return None
+        fixed = snap_span(body) if len(words) >= 3 else close_line(body)
+        if fixed is None:
+            fixed = snap_words(body)
+        return None if fixed is None or fixed == body else prefix + fixed
+
+    out_blocks = []
+    for block in page.blocks:
+        if isinstance(block, TableBlock):
+            changed = False
+
+            def fix_cell(c: str) -> str:
+                nonlocal changed
+                if len(c.strip()) < 4:
+                    return c
+                found = close_line(c)
+                if found is None or found == c:
+                    return c
+                snaps.append((c, found))
+                changed = True
+                return found
+
+            header = [fix_cell(c) for c in block.header]
+            rows = [[fix_cell(c) for c in row] for row in block.rows]
+            out_blocks.append(
+                block.model_copy(update={"header": header, "rows": rows})
+                if changed else block)
+            continue
+
+        if block.kind == "image" or not block.text.strip():
+            out_blocks.append(block)
+            continue
+
+        if "\n" in block.text.strip():
+            new_lines, changed = [], False
+            for line in block.text.split("\n"):
+                fixed = snap_text(line) if line.strip() else None
+                if fixed is not None:
+                    snaps.append((line.strip(), fixed.strip()))
+                    changed = True
+                new_lines.append(fixed if fixed is not None else line)
+            new_text = "\n".join(new_lines)
+        else:
+            fixed = snap_text(block.text.strip())
+            changed = fixed is not None
+            new_text = fixed if changed else block.text
+            if changed:
+                snaps.append((block.text.strip(), fixed))
+        out_blocks.append(
+            block.model_copy(update={"text": new_text}) if changed else block)
+
+    if not snaps:
+        return page, []
+    return Page(analysis=page.analysis, blocks=out_blocks), snaps
 
 
 # ===========================================================================

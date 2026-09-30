@@ -1,0 +1,25 @@
+----- Page 1 -----
+
+Sample Scanned Document
+
+This is a sample scanned document, page 1 of 2.
+
+It was generated to resemble a paper document that has been scanned using a standard flatbed or sheet-fed scanner.
+
+- Slight rotation / skew
+- Uneven lighting or paper texture
+- Minor blur compared to a native digital PDF
+
+You can use this file to test OCR pipelines, PDF upload forms, or document viewers.
+
+----- Page 2 -----
+
+Sample Scanned Document
+
+This is page 2 of 2 of the sample document.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
+
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+
+End of document.

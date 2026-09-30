@@ -606,8 +606,60 @@ def _render_dpi(pdf_page, dpi: int) -> int:
     return dpi
 
 
+RAW_MAX_SIDE_PX = 4000
+
+
+def scan_image_for_model(pdf_page, doc, out_path: str) -> bool:
+    """Save a scanned page's OWN embedded image, when that is all the page is.
+
+    OFF BY DEFAULT (--scan-image turns it on), because the evidence points both
+    ways. Rendering a scanned page resamples the scan and the server then shrinks
+    it again to its fixed token budget; two resamplings blur thin marks. On the
+    txt_test.pdf scan the model dropped the hyphen of "SCAN-TEST-001" on 9 of 9
+    reads of renders (125, 200 and 300 dpi alike) and read it correctly on 4 of 4
+    reads of the scan's own image. But on sample_scanned_document.pdf page 1 the
+    same route lost a whole line on 4 of 4 reads (21 OCR words missing in total)
+    against 1 of 4 for the render (3 words). A dropped line is the worse error,
+    so the render stays the default until this is understood.
+
+    ONLY WHEN THE PAGE IS EXACTLY THAT IMAGE: one image, upright (no rotation, no
+    skew, no mirroring), covering at least 85% of the page, no vector drawings, no
+    transparency mask, and the page itself unrotated. Otherwise a render is the
+    faithful picture of the page and the caller uses it.
+
+    Returns True if out_path was written.
+    """
+    try:
+        images = pdf_page.get_images(full=True)
+        if len(images) != 1 or pdf_page.rotation != 0 or pdf_page.get_drawings():
+            return False
+        xref = images[0][0]
+        info = next((i for i in pdf_page.get_image_info(xrefs=True)
+                     if i.get("xref") == xref), None)
+        if info is None:
+            return False
+        a, b, c, d = info["transform"][:4]
+        if abs(b) > 1e-3 or abs(c) > 1e-3 or a <= 0 or d <= 0:
+            return False
+        area = abs(pymupdf.Rect(info["bbox"]) & pdf_page.rect)
+        if area < 0.85 * abs(pdf_page.rect):
+            return False
+        raw = doc.extract_image(xref)
+        if not raw or raw.get("smask"):
+            return False
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(raw["image"])).convert("RGB")
+        if max(im.size) > RAW_MAX_SIDE_PX:
+            im.thumbnail((RAW_MAX_SIDE_PX, RAW_MAX_SIDE_PX), Image.LANCZOS)
+        im.save(out_path, "PNG")
+        return True
+    except Exception:
+        return False
+
+
 def run(pdf_path: str, out_dir: str, pages: str, dpi: int, base_url: str,
-        model: str) -> bool:
+        model: str, use_scan_image: bool = False) -> bool:
     name = os.path.splitext(os.path.basename(pdf_path))[0]
     print("=" * 72)
     print(pdf_path)
@@ -662,7 +714,10 @@ def run(pdf_path: str, out_dir: str, pages: str, dpi: int, base_url: str,
                 continue
 
             img = os.path.join(tmp, f"page_{n:03d}.png")
-            doc[p].get_pixmap(dpi=_render_dpi(doc[p], dpi)).save(img)
+            used_scan = (use_scan_image and kind == "scanned"
+                         and scan_image_for_model(doc[p], doc, img))
+            if not used_scan:
+                doc[p].get_pixmap(dpi=_render_dpi(doc[p], dpi)).save(img)
             t0 = time.time()
             timing = {}
             try:
@@ -688,6 +743,8 @@ def run(pdf_path: str, out_dir: str, pages: str, dpi: int, base_url: str,
                     unreadable.append(n)
                     how = "NOT READ"
             elapsed = time.time() - t0
+            if used_scan:
+                notes.append("read from the scan's own image, not a render (a render blurs thin marks)")
             n_img = len(doc[p].get_images(full=True))
             if n_img and kind == "digital":
                 notes.append(f"{n_img} picture(s) on this page are not in the text file")
@@ -788,6 +845,11 @@ parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
                     help=f"the llama-server to use (default {DEFAULT_BASE_URL}). "
                          f"Pass --base-url {LOCAL_BASE_URL} for this machine's "
                          "local 2B model, or an empty string for Ollama.")
+parser.add_argument("--scan-image", action="store_true",
+                    help="EXPERIMENTAL: for a scanned page that is exactly one "
+                         "upright full-page image, send that image to the model "
+                         "instead of a render. Fixed a lost hyphen on one scan but "
+                         "lost more whole lines on another; see scan_image_for_model().")
 args = parser.parse_args()
 
 paths = []
@@ -800,7 +862,8 @@ for path in paths:
     if not os.path.exists(path):
         print(f"skipping {path}: not found")
         continue
-    if run(path, args.outdir, args.pages, args.dpi, args.base_url, args.model):
+    if run(path, args.outdir, args.pages, args.dpi, args.base_url, args.model,
+           use_scan_image=args.scan_image):
         ok += 1
     else:
         fail += 1

@@ -54,7 +54,7 @@ machine yet.
 - **PDF → TXT** (`pdf_to_txt.py`), new 2026-09-30: model on digital AND scanned pages. Digital
   pages are corrected and checked against the PDF's text layer (7 of 7 test pages pass);
   scanned pages are read by the model and reported UNVERIFIED with an advisory OCR figure
-  (`memory.md` §21, §21.1).
+  (`memory.md` §21, §21.1). Root causes of what the model misses on scans: §21.2.
 - **TIFF → PDF** (`tiff_to_pdf.py`), new 2026-09-30: searchable PDF, lossless picture plus
   OCR text layer, no model (`memory.md` §20).
 - **PDF → TIFF** (`pdf_to_tiff.py`), new 2026-09-30: one multi-page lossless TIFF per PDF,

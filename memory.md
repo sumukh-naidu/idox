@@ -1000,3 +1000,47 @@ paragraph from being corrected (fixed by hiding used passages while matching); t
 count found 0 occurrences of a paragraph the PDF has twice.
 **Not verified:** multi-column layouts, PDFs beyond the seven pages above, and how often the
 snap would wrongly "correct" a legitimately different word on documents that were not tested.
+
+### 21.2 Why the model misses things on scans: findings (2026-09-30)
+Asked by the owner: the model read everything on `txt_test.pdf` except one hyphen and, in one
+run, the label "Date". All numbers below are from the local 2B at 512 image tokens. Small
+samples: read them as evidence, not as rates.
+
+**1. The lost hyphen (`SCAN-TEST-001` read as `SCAN-TEST001`) is a resampling effect, not a
+recognition limit and not randomness.**
+- Full page read from a render: hyphen lost on **9 of 9** reads (renders at 123-129, 200 and 300
+  dpi). Raising the render dpi did NOT help.
+- The same line read from a tight crop: correct, with the plain "transcribe" prompt and with the
+  page-extraction schema prompt alike; also correct from crops up to 1,500 px tall. So neither the
+  prompt nor JSON output is the cause, and the model CAN read it.
+- Full page read from the scan's own embedded image: hyphen correct on **4 of 4** reads.
+- Likely cause (inferred, not proven): a render resamples the scan, the server shrinks it again to
+  its fixed token budget, and two resamplings blur a 1-2 px mark. Cutting the page into 3 bands
+  rendered at 125 dpi did not help either (hyphen still lost).
+
+**2. But the fix is not a clear win.** `pdf_to_txt.py --scan-image` sends the scan's own image
+(only when the page is exactly one upright, full-page image, no drawings, no mask). On
+`sample_scanned_document.pdf` page 1 that route lost a whole line on **4 of 4** reads (21 OCR
+words missing in total) against **1 of 4** for the render (3 words). A dropped line is the
+worse error, so the flag is **off by default** and marked experimental. The routing itself works:
+9 of the 11 scanned pages in the repo qualify; the other two (a second image; vector drawings)
+would keep the render.
+
+**3. "Date" and other dropped lines are NOT a reading problem: the model skips content.**
+Read directly from a strip, the model gets these lines exactly right every time. In full-page
+reads the dropped item varies from run to run and often is the LAST item (the "Date" label; the
+final paragraph "You can use this file..."), or a middle sentence ("Typical characteristics...").
+Observed: "Date" lost in 1 of about 11 reads of `txt_test.pdf`; the "Typical characteristics"
+sentence lost in 2 of 3 early reads and 1 of 4 later reads of the other page. Consistent with the
+model closing its list early, but that mechanism is a guess. More resolution does not address it.
+
+**4. What does address both:** the OCR-flag then model-re-read step tried on `txt_test.pdf`
+(not built into the script). OCR locates a line missing from the output, the MODEL reads only
+that strip, and the result is accepted only if it agrees with OCR (at least 0.85). It replaced
+the wrong `SCAN-TEST001` with `SCAN-TEST-001` and re-read all 5 lines deliberately removed, every
+one exactly (6 of 6). Cost: OCR about 3 s per page plus 16-19 s per flagged line (a strip costs
+the full 512-token image read). Its placement was not good enough to ship: a re-read table row
+was split over 3 lines, a mid-paragraph fragment landed after the paragraph, and side-by-side
+labels caused a duplicate ("Date" twice). It needs (a) per-segment comparison, (b) table rows
+re-formatted into the existing table's columns, (c) inline insertion when the neighbouring lines
+sit in one paragraph. Not built; awaiting the owner's decision.

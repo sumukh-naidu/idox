@@ -35,14 +35,14 @@
 | **Features built** | **11 conversion routes** (12 outputs if you count the Markdown file the PDF converter always writes). Details in §2–§3. |
 | **Routes that need the AI model** | 7 (PDF→Word, PDF→Excel, PDF→PowerPoint, PDF→TXT, Image→Word, Image→PDF, Image→Excel). |
 | **Routes with no AI model** | 4 (Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF), plus the "image" mode of Image→Word. |
-| **AI models** | **One model family: Qwen3-VL.** In use now: the **2B** model on this machine. Configured as the code default but **currently down**: a remote **8B**. Also: **Tesseract 5.5.0** (an OCR engine, not a language model). |
+| **AI models** | **One model family: Qwen3-VL, plus one other model on the tuhin-ai API.** Local **Qwen3-VL-2B** on this machine. **tuhin-ai API**: a remote **Qwen3.6-35B-A3B** (vision) on a colleague's laptop, authenticated by an API key, **verified working with this pipeline** (§5.6). The older remote 8B at `10.0.3.33` is **down**. Also **Tesseract 5.5.0** (OCR, not a language model). |
 | **Speed** | Model routes are **slow: roughly 25 s to several minutes per page** on this CPU-only laptop (§6). Non-model routes take **under a few seconds to ~20 s**. |
-| **Exposed to other services?** | **No.** Everything is a command-line script that reads and writes files. There is **no API, no server and no plan for one** written anywhere in the repo. §7 explains what that means for you and gives recommendations (clearly marked as proposals). |
+| **Exposed to other services?** | **Partly.** There is still no API for other services, but there is now a **local web app** (`idox_app.py` + `idox_app.html`, localhost only) where a person uploads a file, picks a conversion, and downloads the result. It runs the same scripts as subprocesses, one job folder each, with a queue, cancel and downloads. It is a working reference for the job-service pattern in §7 (§7.8). |
 | **Git** | Everything is committed (HEAD `21b6ab6`) except one untracked test file, `pdf_to_word_input/new.pdf`. |
 
 **Five things you must know before you start:**
 
-1. **The default model endpoint is dead.** `blocks.DEFAULT_BASE_URL` points to `http://10.0.3.33:8080` (the remote 8B), which refuses connections. Every model route **fails unless you pass `--base-url http://127.0.0.1:8090`** (the local 2B). §5.3.
+1. **The default model endpoint in the code is dead.** `blocks.DEFAULT_BASE_URL` still points to `http://10.0.3.33:8080` (the old remote 8B), which refuses connections, so a model route fails unless you pass `--base-url`. Use the tuhin-ai API (`--base-url http://10.0.3.2:8080` with the key in `IDOX_API_KEY`) or the local 2B (`--base-url http://127.0.0.1:8090`). The web app does this for you from its Settings. §5.3, §5.6.
 2. **Most scripts cannot be imported.** They run their argument parsing at import time. Call them as subprocesses, or refactor (§7.3).
 3. **Model routes take minutes and can fail** (a 4,000-token output cap, a 600 s request timeout, an endpoint that goes down). A chat layer must run them as background jobs with progress and clear failure messages (§7).
 4. **`test_pdf.py` can silently skip a page** whose model call fails, and its final "content check" does not notice (§10.2). Do not treat its exit code (always 0) as success.
@@ -86,7 +86,7 @@ All commands are run from the repo root with `.venv/bin/python`. "Model?" means 
 | 5 | **Image → PDF** (also covers **JPG → PDF**) | `image_to_pdf.py` | **Yes** (+ LibreOffice) | Self-consistency + OCR cross-check only | Prints `-> path`; exit 1 if any failed. |
 | 6 | **Image → Excel** (.xlsx) | `image_to_excel.py` | **Yes** | Self-consistency + OCR cross-check only | Prints `-> path`; refuses (exit 1) if no table is found. |
 | 7 | **Word → PDF** | `word_to_pdf.py` | **No** (LibreOffice) | **Yes** (word, paragraph, table-cell and image coverage) | `verdict PASS/FAIL`; exit 1 on FAIL. |
-| 8 | **PDF → JPG** | `pdf_to_jpg.py` | **No** | **Yes** | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
+| 8 | **PDF → JPG / JPEG** | `pdf_to_jpg.py` (`--ext jpeg` for the .jpeg ending) | **No** | **Yes** | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
 | 9 | **PDF → TIFF** (one multi-page file) | `pdf_to_tiff.py` | **No** | **Yes** (pixel-exact) | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
 | 10 | **TIFF → PDF** (searchable) | `tiff_to_pdf.py` | **No** (Tesseract OCR only) | **Yes** (pixel-exact picture) | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
 | 11 | **PDF → TXT** | `pdf_to_txt.py` | **Yes**, per digital or scanned page | **Yes** for digital pages (read back, word by word against the PDF's text); scanned pages are reported **unverified** | `VERDICT: PASS / FAIL`; exit 1 on FAIL. |
@@ -234,6 +234,7 @@ Full list with root causes: `memory.md` §5, §10, §14, §19, §20. Highlights:
 |---|---|---|---|---|
 | **Qwen3-VL-2B-Instruct** | Vision-language model (the extractor) | Q4_K_M weights (1.1 GB) + `mmproj` vision encoder at **Q8_0** (445 MB), from Qwen's official HF repo `Qwen/Qwen3-VL-2B-Instruct-GGUF`, files in `models_manual/` | **This machine**, `llama-server` on `http://127.0.0.1:8090`, **CPU only** | **In use now, running** |
 | **Qwen3-VL-8B-Instruct** | Same family, larger | Q4_K_M | **Remote machine** `http://10.0.3.33:8080` (a colleague's, GPU/accelerated) | **Configured as the code default (`DEFAULT_BASE_URL`), currently DOWN** |
+| **Qwen3.6-35B-A3B** (tuhin-ai API) | Vision-language model, much larger. The server reports `Qwen3.6-35B-A3B-UD-IQ4_XS.gguf`, capabilities `completion` and `multimodal` | 4-bit quantised GGUF | **A colleague's laptop** on the office network, `http://10.0.3.2:8080` (the name `tuhin-ai.local` did not resolve on this machine) | **In use through the web app; verified with this pipeline 2026-09-30.** Needs an API key. |
 | Qwen3-VL 4B / 2B via **Ollama** | Same family, Ollama's bundled builds | `qwen3-vl:4b-instruct`, `qwen3-vl:2b-instruct` | Ollama daemon | **Legacy path.** Used only if `--base-url ""` is passed. Ollama is **not installed** on this machine. `blocks.MODEL_NAME` still names the 4B. |
 | **Tesseract 5.5.0** | OCR engine — recognises characters; it is not a language model (language data: `eng`, `osd` only) | system package | this machine | Used for verification and, in TIFF→PDF, to *produce* the text layer |
 
@@ -254,6 +255,16 @@ Full list with root causes: `memory.md` §5, §10, §14, §19, §20. Highlights:
 | **TIFF→PDF** | — | **Builds the text layer** (functional, not just a check) | |
 
 The **only** place the model is invoked in the code is `blocks.extract_page()` → `_extract_page_raw_server()` (`blocks.py`, ~line 1025 and 1134).
+
+### 5.6 The tuhin-ai API (added 2026-09-30)
+- **Address:** `http://10.0.3.2:8080` (office network only). The friendly name `http://tuhin-ai.local:8080` did not resolve on this machine; the IP did. Pass the address **without** `/v1`; the code adds `/v1/chat/completions`.
+- **Auth:** `Authorization: Bearer <key>`. The key comes from the API's owner. **It is never stored in the repo, the docs or the job files.** The code reads it from the environment variable `IDOX_API_KEY`; the web app keeps it in memory only and passes it to each script through that variable.
+- **Settings the code now reads from the environment** (all optional; with none set the request is exactly what it was for the local server): `IDOX_API_KEY`, `IDOX_THINKING` (`off` or `on`, sent as `chat_template_kwargs.enable_thinking`; the API owner advises **off** for extraction), `IDOX_MAX_IMAGE_SIDE` (shrink the image, the owner advises at most 1600 px), `IDOX_TIMEOUT` (default 600 s; the owner advises 10 minutes or more), `IDOX_MODEL`.
+- **What was verified against the live API:** the key is accepted and a wrong key returns 401; an image plus the page JSON schema plus thinking off returns a valid page; the web app's connection test and a read of a generated test image both pass (5.4 s warm, about 30 s on the first request after idle).
+- **API limits, as documented by its owner (not measured by us):** two requests run at once and more queue; about 9-12 tokens/s writing; an image is capped at about 1,000 tokens; the first request after a restart is slower; office network only.
+- **Measured through this pipeline (2026-09-30):** `hi.png` to Word **26.7 s** alone; one digital PDF page to text **61.7 s** the first time and **25.2 s** on an immediate repeat (the server probably reused its read of the identical image); three jobs at once (two running, one queued) took **80 s, 110 s and 202 s**, because they shared the API laptop. For comparison the local 2B did `hi.png` in about 27 s. **So the API is not faster than the local 2B for this pipeline. Whether its output is more accurate has not been measured.**
+- **Not tested against the API:** scanned PDFs, PDFs with many pages, pages with complex tables, and two people using it at once.
+- **Main risk:** the pipeline relies on the server honouring the JSON schema. It did for every page tried; a page type that breaks it would show up as a failed job with the server's message.
 
 ### 5.3 How the endpoint is chosen (important for integration)
 
@@ -348,6 +359,16 @@ Peak memory for `tiff_to_pdf.py` on `sample10.tiff` was about 600 MB.
 
 ### 7.1 Is there a plan today?
 **No.** A search of the code and every document in the repo found no API, service, queue, or chat integration, and no written plan for one. The project owner has said that **another developer (you) will build a chat option that triggers these conversions**, and that this handover exists for that purpose. Everything below is therefore **a recommendation from reading and running the code, not a decision already made.** The decisions that need the owner are listed in §7.7.
+
+### 7.8 A working reference: the local web app (added 2026-09-30)
+`idox_app.py` (server, standard library only) and `idox_app.html` (the page). Run `.venv/bin/python idox_app.py`, open `http://127.0.0.1:8765`.
+- **What it does:** upload one or more files; each gets a "Convert to" list based on its type (PDF, image, Word, TIFF, 14 conversions in all) and optional pages, dpi and scanned-page settings; jobs queue and run as subprocesses, each in its own folder under `~/.local/share/idox/jobs/<id>/`; progress, live status, cancel, log, per-file download and one `.zip`; a Settings panel for the engine (tuhin-ai API or local), address, key, thinking, image size and wait limit, with a connection test and a "read a test image" check.
+- **How it decides the outcome** (because several scripts exit 0 even when a page failed): output files present, then the log is scanned for explicit failure lines and `VERDICT: FAIL`. States: **Done**, **Done, please check** (files exist but a check failed or a page was skipped), **Failed**, **Cancelled**.
+- **Safety:** binds to 127.0.0.1 only; refuses a Host that is not localhost and a write whose Origin is another site; only the 14 listed routes can run; arguments are passed as a list (no shell); uploads are renamed to a safe stem; downloads cannot leave the job folder; the key never reaches the browser, a file or a command line.
+- **Concurrency:** at most 2 model jobs on the API at once (the API's documented limit), 1 on the local model, 3 other jobs.
+- **Tested (2026-09-30):** all no-model routes, three model jobs through the real API, cancel (stops within 2 s, no process left), wrong key, switching to the local model, forgetting the key, 17 safety checks, a restart (16 jobs reloaded from disk), and the page in a real browser (light, dark, 400 px wide, no script errors).
+- **Not tested:** a very large upload, several users at once, long PDFs, and running it on another operating system.
+- **For the chat developer:** the same job model (upload, queue, poll, download) and the same outcome rules can sit behind a chat. Reuse `ROUTES` and `build_command()` in `idox_app.py` as the intent-to-command table.
 
 ### 7.2 What exists today
 
@@ -453,7 +474,7 @@ Replace `<job>` with a per-job directory. `MODEL` = `--base-url http://127.0.0.1
 
 ## 9. Current state
 
-- **Git:** branch `feature/testing_2b_Q8mmproj`, HEAD `21b6ab6` ("new feature added"). **Uncommitted since:** `pdf_to_txt.py` (new), `handover_chat_integration.md`/`.html` (new), and edits to `memory.md` and `status2.md`, plus the untracked `pdf_to_word_input/new.pdf`. Recent commits: `21b6ab6`, `1f368dc`, `ba5e494`, `c4b28cb` (all "new feature…"), then `b240895` ("changes made"). The remote URL is now SSH (`git@github.com:sumukh-naidu/idox.git`).
+- **Git:** branch `feature/testing_2b_Q8mmproj`, HEAD `de9c634`. **Uncommitted:** `idox_app.py` and `idox_app.html` (new), edits to `blocks.py` (API key, thinking flag, image cap, clearer errors), `pdf_to_jpg.py` (`--ext`), `memory.md`, this file, the two `pdf_to_jpeg_*` folders, and `pdf_to_word_input/new.pdf`. `sample_test_document.pdf` and `handover_chat_integration.html` show as deleted (not by the assistant).
 - **Server running now:** local 2B on `127.0.0.1:8090`, `--ctx-size 8192`, `--image-min-tokens 512 --image-max-tokens 512`. **Remote 8B: down.**
 - **Documents:** `memory.md` and `status2.md` were kept current through 2026-09-30. `handover.md` and `status.md` are old (§13).
 - **Folders `jpg_to_pdf_*`** exist and are empty. `pdf_to_txt_input/` and `pdf_to_txt_output/` exist for `pdf_to_txt.py`.
@@ -476,6 +497,7 @@ Also listed in `memory.md` §16.
 - **`test_pdf.py` skips a failed page silently.** If the model call for a page raises, the script prints `Tier 1 FAILED …` and moves on; that page is then also absent from the source text used for the final content check, so the check can still report 100%. Only the console shows it. It also always exits 0. (Not fixed; offered to the owner.)
 - **The OCR word check in `pdf_to_jpg.py` and `pdf_to_tiff.py` can fail good output** (§4.7). E.g. 3 of 10 pages of `ten_page.pdf` failed only on OCR while being byte-exact. Fix options offered, not chosen (§10.3).
 - **A text layer can differ from what is visible.** In `ten_page.pdf` the rupee sign renders as a black box (the PDF's font lacks the glyph) and the text layer stores it as the letter "I". Any text extraction gives `I1,250.00`.
+- **`test_pdf.py` can produce a Word file that is missing whole pages while reporting 100%, and its timing summary ignores failed pages.** Shown on a real 2-page report (local 2B): page 2 hit the 4,000-token cap after 544 s and was skipped; the Word file held only page 1 in scrambled order; the tool printed "content check: 100%" and "TOTAL 37.28 s" while the real run took 595.5 s. A caller must not trust that script's exit code or those two lines; check the page count in the log (`Tier 1 FAILED`). Details: `memory.md` §23.
 - **In `test_pdf.py`, the repair step can still duplicate content.** When the model misreads a paragraph, `check_coverage` reports the correct line as missing and `repair_missing_lines` inserts the exact PDF line beside the misread one. `pdf_to_txt.py` no longer has this problem, because `blocks.snap_to_text_layer` corrects the misread first. `test_pdf.py` does not call it yet (a one-line change plus testing; not done).
 - **PDF → TXT was tested on a small set:** 7 digital pages and 2 scanned pages. Multi-column layouts were not tested. The correction step is deliberately conservative (invented text and real-but-different words are left alone, checked on synthetic cases), but how often it wrongly "corrects" a word on other documents is unknown. Symbols are not corrected: a PDF's own text layer can hold garbage for them.
 - **Scanned pages are never verified** (no ground truth). The OCR figure is advisory: it misses white-on-dark text and accents.
@@ -516,7 +538,9 @@ Also listed in `memory.md` §16.
 
 ## 12. Repo map
 
-**Core modules (importable):** `blocks.py` (schema, prompts, model call, checks, repairs, 1,213 lines), `to_docx.py`, `to_xlsx.py`, `to_pptx.py`, `ocr.py`.
+**Web app:** `idox_app.py` (server) and `idox_app.html` (page), see §7.8.
+
+**Core modules (importable):** `blocks.py` (schema, prompts, model call, checks, repairs, about 1,700 lines), `to_docx.py`, `to_xlsx.py`, `to_pptx.py`, `ocr.py`.
 
 **Conversion scripts (CLI, not importable):** `test_pdf.py` (PDF → Word/Excel/PPT/MD, 1,269 lines), `image_to_word.py`, `image_to_pdf.py`, `image_to_excel.py`, `word_to_pdf.py`, `pdf_to_jpg.py`, `pdf_to_tiff.py`, `tiff_to_pdf.py`, `pdf_to_txt.py`.
 
@@ -583,8 +607,9 @@ Run from the repo root. `MODEL` = `--base-url http://127.0.0.1:8090` (required w
 # Word -> PDF (no model)
 .venv/bin/python word_to_pdf.py in.docx --outdir DIR          # or --out exact/path.pdf
 
-# PDF -> JPG (no model)   default 150 dpi, quality 90, one subfolder per PDF
-.venv/bin/python pdf_to_jpg.py in.pdf --outdir DIR --pages 1-3 --dpi 200 --quality 95 --no-ocr
+# PDF -> JPG or JPEG (no model)   default 150 dpi, quality 90, one subfolder per PDF
+# (the same format either way; --ext jpeg names the files .jpeg instead of .jpg)
+.venv/bin/python pdf_to_jpg.py in.pdf --outdir DIR --pages 1-3 --dpi 200 --quality 95 --no-ocr --ext jpeg
 
 # PDF -> TIFF (no model)  default 300 dpi, LZW, one multi-page file per PDF
 .venv/bin/python pdf_to_tiff.py in.pdf --outdir DIR --pages 1-3 --dpi 200 --compression lzw|deflate --no-ocr

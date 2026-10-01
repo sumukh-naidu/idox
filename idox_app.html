@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>idox</title>
+<style>
+/* Layout: a narrow "convert" column beside a wide job list; one column on a phone.
+   A local tool, so system fonts only (no font downloads) and one restrained accent.
+   Green / amber / red are status colours and are separate from the accent. */
+:root {
+  --bg: #f3f6f6;
+  --surface: #ffffff;
+  --ink: #15201f;
+  --muted: #5b6e6c;
+  --line: #d5dfde;
+  --accent: #0b6b67;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcefed;
+  --good: #1b7a3c;   --good-soft: #dff2e5;
+  --warn: #935700;   --warn-soft: #fbecd0;
+  --bad: #b3261e;    --bad-soft: #f9dedb;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1615; --surface: #152120; --ink: #e3edeb; --muted: #9db2af; --line: #2a3b39;
+    --accent: #5cc7c0; --accent-ink: #062321; --accent-soft: #173533;
+    --good: #5cc783; --good-soft: #15321f;
+    --warn: #e2a84d; --warn-soft: #35270e;
+    --bad: #f28078;  --bad-soft: #3a1a17;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); padding-inline: 16px; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.wrap { max-width: 1120px; margin-inline: auto; padding-block: 20px 48px; display: grid; gap: 18px; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mark { font-weight: 800; font-size: 1.5rem; letter-spacing: -.03em; }
+.tag { color: var(--muted); font-size: .9rem; }
+.engine { margin-left: auto; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 8px 6px 14px; cursor: pointer; }
+.engine:hover { border-color: var(--accent); }
+.engine .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.engine .dot.ok { background: var(--good); } .engine .dot.no { background: var(--warn); }
+.engine span { font-size: .86rem; }
+.gear { border: 0; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 3px 10px; font-size: .8rem; font-weight: 600; }
+
+.banner { border: 1px solid var(--line); border-left: 4px solid var(--warn); background: var(--warn-soft); border-radius: 6px; padding: 10px 14px; font-size: .92rem; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+main { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+h2 { font-size: .74rem; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; font-weight: 700; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+
+.drop { display: grid; gap: 4px; place-items: center; text-align: center; border: 2px dashed var(--line); border-radius: 8px; padding: 26px 14px; cursor: pointer; background: var(--bg); }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop strong { font-size: 1rem; }
+.drop small { color: var(--muted); }
+.files { display: grid; gap: 10px; margin-top: 14px; }
+.file { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; }
+.file .top { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.fname { font-family: var(--mono); font-size: .84rem; overflow-wrap: anywhere; }
+.fmeta { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+.rm { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0 2px; }
+.rm:hover { color: var(--bad); }
+label.fld { display: grid; gap: 4px; font-size: .78rem; color: var(--muted); font-weight: 600; }
+select, input[type=text], input[type=password], input[type=number] { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+select:hover, input:hover { border-color: var(--muted); }
+.note { color: var(--muted); font-size: .8rem; margin: 0; }
+.opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.model-tag { display: inline-block; font-size: .68rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+
+.btn { display: inline-block; text-decoration: none; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); color: var(--accent-ink); }
+.btn.small { padding: 4px 10px; font-size: .84rem; }
+.btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.go { width: 100%; margin-top: 12px; padding: 10px; }
+
+.jobs { display: grid; gap: 12px; }
+.empty { color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; padding: 22px; text-align: center; }
+.job { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 10px; }
+.job .head { display: flex; gap: 10px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
+.job .title { display: grid; gap: 2px; min-width: 0; }
+.job .title .fname { font-size: .9rem; }
+.job .title .to { color: var(--muted); font-size: .84rem; }
+.pill { display: inline-flex; gap: 6px; align-items: center; border-radius: 999px; padding: 3px 10px; font-size: .78rem; font-weight: 700; white-space: nowrap; background: var(--accent-soft); color: var(--accent); }
+.pill.queued, .pill.cancelled { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.pill.done { background: var(--good-soft); color: var(--good); }
+.pill.review { background: var(--warn-soft); color: var(--warn); }
+.pill.failed { background: var(--bad-soft); color: var(--bad); }
+.pill .t { font-variant-numeric: tabular-nums; font-weight: 600; opacity: .85; }
+.bar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; border: 1px solid var(--line); }
+.bar i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.bar.wait i { width: 35% !important; animation: slide 1.6s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .bar.wait i { animation: none; margin-left: 0; } }
+.prog { display: flex; justify-content: space-between; font-size: .8rem; color: var(--muted); }
+.last { font-family: var(--mono); font-size: .76rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sum { margin: 0; padding-left: 18px; font-size: .84rem; color: var(--muted); }
+.sum li { margin-bottom: 2px; overflow-wrap: anywhere; }
+.err { margin: 0; font-size: .88rem; color: var(--bad); }
+.detail { margin: 0; font-family: var(--mono); font-size: .74rem; color: var(--muted); overflow-wrap: anywhere; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-family: var(--mono); font-size: .76rem; border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; color: var(--ink); text-decoration: none; background: var(--bg); }
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+details.log summary { cursor: pointer; font-size: .82rem; color: var(--muted); }
+details.log pre { margin: 8px 0 0; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: .74rem/1.45 var(--mono); max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0; width: min(560px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(8, 16, 15, .55); }
+.dlg { padding: 20px; display: grid; gap: 14px; max-height: calc(100vh - 40px); overflow: auto; }
+.dlg h3 { margin: 0; font-size: 1.1rem; }
+.row { display: grid; gap: 4px; }
+.seg { display: flex; gap: 6px; }
+.seg label { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: pointer; display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: .9rem; }
+.seg input { width: auto; }
+.seg label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 460px) { .two { grid-template-columns: 1fr; } }
+.check { display: flex; gap: 10px; align-items: flex-start; }
+.check input { width: auto; margin-top: 4px; }
+.tests { display: grid; gap: 6px; font-size: .86rem; }
+.tests div { display: flex; gap: 8px; align-items: baseline; }
+.tests .ok { color: var(--good); } .tests .no { color: var(--bad); }
+.foot { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: .9rem; max-width: calc(100vw - 32px); z-index: 10; }
+.linkbtn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; font-size: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="mark">idox</span>
+    <span class="tag">Convert documents between formats</span>
+    <button class="engine" id="engineBtn" type="button" aria-label="Open settings">
+      <i class="dot" id="engineDot"></i><span id="engineText">Loading…</span><span class="gear">Settings</span>
+    </button>
+  </header>
+
+  <div class="banner" id="keyBanner" hidden>
+    <span id="keyBannerText"></span>
+    <button class="btn small" type="button" id="keyBannerBtn">Open settings</button>
+  </div>
+
+  <main>
+    <section>
+      <h2>Convert</h2>
+      <div class="panel">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose files to convert">
+          <strong>Drop files here, or click to choose</strong>
+          <small>PDF, Word (.docx), images (PNG, JPG, WebP, BMP) and TIFF</small>
+        </div>
+        <input type="file" id="picker" multiple hidden accept=".pdf,.docx,.png,.jpg,.jpeg,.bmp,.webp,.tif,.tiff">
+        <div class="files" id="files"></div>
+        <button class="btn primary go" id="go" type="button" hidden>Convert</button>
+        <p class="note" id="goNote" style="margin-top:10px" hidden></p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Conversions</h2>
+      <div class="jobs" id="jobs"><div class="empty" id="empty">Nothing converted yet. Add a file on the left.</div></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog" class="dlg" id="settings" onsubmit="return false">
+    <h3>Settings</h3>
+
+    <div class="row">
+      <span class="note" style="font-weight:600">Model used for reading pages</span>
+      <div class="seg">
+        <label><input type="radio" name="backend" value="tuhin"> tuhin-ai API</label>
+        <label><input type="radio" name="backend" value="local"> Local model</label>
+      </div>
+    </div>
+
+    <div id="remoteFields" class="dlg" style="padding:0">
+      <label class="fld">Server address
+        <input type="text" id="endpoint" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="note">Without <code>/v1</code>; idox adds the path. If <code>tuhin-ai.local</code> does not resolve on this computer, use
+        <button class="linkbtn" type="button" id="useFallback">the fallback address</button>.</p>
+
+      <label class="fld">API key
+        <input type="password" id="key" autocomplete="off" placeholder="" spellcheck="false">
+      </label>
+      <p class="note" id="keyNote"></p>
+
+      <label class="check"><input type="checkbox" id="thinking">
+        <span><strong>Let the model think before answering</strong><br>
+        <span class="note">Leave off for reading documents. Turning it on can add minutes to every page.</span></span></label>
+
+      <div class="two">
+        <label class="fld">Largest image side (px)
+          <input type="number" id="maxside" min="256" max="4000" step="100"></label>
+        <label class="fld">Wait limit per page (minutes)
+          <input type="number" id="timeout" min="1" max="120"></label>
+      </div>
+    </div>
+    <p class="note" id="localNote" hidden>Uses the model running on this computer at <code>127.0.0.1:8090</code>. It must be started separately.</p>
+
+    <div class="tests" id="tests" aria-live="polite"></div>
+    <div class="foot">
+      <button class="btn danger small" type="button" id="clearKey" hidden>Forget key</button>
+      <button class="btn" type="button" id="testBtn">Test connection</button>
+      <button class="btn" type="button" id="fullBtn">Read a test image</button>
+      <button class="btn primary" type="button" id="saveBtn">Save</button>
+      <button class="btn" type="button" id="closeBtn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+let routes = [], config = null;
+let picked = [];                       // {id, file, src, route, opts}
+const cards = new Map();               // job id -> {root, ...parts}
+let timer = null;
+
+/* ---------- helpers ---------- */
+function toast(msg, ms = 4200) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.h); toast.h = setTimeout(() => (t.hidden = true), ms);
+}
+async function api(path, opt = {}) {
+  const r = await fetch(path, opt);
+  let data = null; try { data = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((data && data.error) || `Request failed (${r.status})`);
+  return data;
+}
+const fmtSize = n => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
+const fmtTime = s => { s = Math.max(0, Math.round(s)); const m = Math.floor(s / 60); return m ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
+const srcOf = name => {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (ext === "pdf") return "pdf"; if (ext === "docx") return "docx";
+  if (["png", "jpg", "jpeg", "bmp", "webp"].includes(ext)) return "image";
+  if (["tif", "tiff"].includes(ext)) return "tiff"; return null;
+};
+
+/* ---------- engine chip and banner ---------- */
+function paintEngine() {
+  const c = config, remote = c.backend === "tuhin";
+  let text = "Local model", cls = "ok";
+  if (remote) {
+    const host = c.endpoint.replace(/^https?:\/\//, "");
+    text = `tuhin-ai (${host}) · thinking ${c.thinking ? "on" : "off"}` + (c.key_set ? "" : " · no key");
+    cls = c.key_set ? "ok" : "no";
+  }
+  $("#engineText").textContent = text; $("#engineDot").className = "dot " + cls;
+  const need = remote && !c.key_set;
+  $("#keyBanner").hidden = !need;
+  $("#keyBannerText").textContent = "Conversions that read pages with the model need the API key. Conversions that do not use the model still work.";
+  paintFiles();
+}
+$("#engineBtn").onclick = openSettings; $("#keyBannerBtn").onclick = openSettings;
+
+/* ---------- choosing files ---------- */
+const drop = $("#drop"), picker = $("#picker");
+drop.onclick = () => picker.click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); picker.click(); } };
+picker.onchange = () => { addFiles(picker.files); picker.value = ""; };
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+function optionsFor(src) { return routes.filter(r => r.src === src); }
+function usable(r) {
+  if (r.missing.length) return false;
+  if (r.model && config.backend === "tuhin" && !config.key_set) return false;
+  return true;
+}
+function addFiles(list) {
+  for (const f of list) {
+    const src = srcOf(f.name);
+    if (!src) { toast(`${f.name}: this type of file cannot be converted.`); continue; }
+    const first = optionsFor(src).find(usable) || optionsFor(src)[0];
+    picked.push({ id: Math.random().toString(36).slice(2), file: f, src, route: first.id, opts: {} });
+  }
+  paintFiles();
+}
+function paintFiles() {
+  const box = $("#files"); box.textContent = "";
+  for (const p of picked) {
+    const row = el("div", "file");
+    const top = el("div", "top");
+    const left = el("div"); left.append(el("div", "fname", p.file.name), el("div", "fmeta", fmtSize(p.file.size)));
+    const rm = el("button", "rm", "×"); rm.type = "button"; rm.title = "Remove"; rm.setAttribute("aria-label", "Remove " + p.file.name);
+    rm.onclick = () => { picked = picked.filter(x => x.id !== p.id); paintFiles(); };
+    top.append(left, rm);
+
+    const lab = el("label", "fld", "Convert to");
+    const sel = el("select"); sel.setAttribute("aria-label", "Convert " + p.file.name + " to");
+    for (const r of optionsFor(p.src)) {
+      const o = el("option", "", r.label + (r.model ? "  ·  uses model" : ""));
+      o.value = r.id; o.disabled = !usable(r);
+      if (r.missing.length) o.textContent += `  (needs ${r.missing.join(", ")})`;
+      else if (!usable(r)) o.textContent += "  (needs API key)";
+      sel.append(o);
+    }
+    sel.value = p.route;
+    sel.onchange = () => { p.route = sel.value; p.opts = {}; paintFiles(); };
+    lab.append(sel);
+
+    const route = routes.find(r => r.id === p.route);
+    const note = el("p", "note", route.note);
+    row.append(top, lab, note);
+
+    if (route.opts.length) {
+      const g = el("div", "opts");
+      if (route.opts.includes("pages")) g.append(field("Pages", "text", "all", p, "pages", "e.g. 1-3"));
+      if (route.opts.includes("dpi")) g.append(field("Resolution (dpi)", "number", "", p, "dpi", route.id === "pdf_tiff" ? "300" : "150"));
+      if (route.opts.includes("scan_mode")) {
+        const l = el("label", "fld", "Scanned pages"); const s = el("select");
+        [["text", "Read with the model"], ["image", "Keep as pictures (fast)"], ["both", "Both, in two files"]].forEach(([v, t]) => { const o = el("option", "", t); o.value = v; s.append(o); });
+        s.value = p.opts.scan_mode || "text"; s.onchange = () => (p.opts.scan_mode = s.value); l.append(s); g.append(l);
+      }
+      row.append(g);
+    }
+    box.append(row);
+  }
+  const go = $("#go"), n = picked.length;
+  go.hidden = !n; go.textContent = n > 1 ? `Convert ${n} files` : "Convert";
+  go.disabled = picked.some(p => !usable(routes.find(r => r.id === p.route)));
+  const gn = $("#goNote");
+  gn.hidden = !go.disabled;
+  gn.textContent = go.disabled ? "One of these conversions is not available. Open Settings to add the key, or pick another format." : "";
+}
+function field(label, type, ph, p, key, hint) {
+  const l = el("label", "fld", label); const i = el("input"); i.type = type;
+  i.placeholder = hint || ph; i.value = p.opts[key] || ""; if (type === "number") { i.min = 30; i.max = 600; }
+  i.oninput = () => (p.opts[key] = i.value); l.append(i); return l;
+}
+
+$("#go").onclick = async () => {
+  const go = $("#go"); go.disabled = true;
+  const todo = picked.slice(); picked = []; paintFiles();
+  for (const p of todo) {
+    try {
+      const q = new URLSearchParams({ route: p.route, opts: encodeURIComponent(JSON.stringify(p.opts)) });
+      const r = await fetch("/api/jobs?" + q, { method: "POST", body: p.file, headers: { "X-Filename": encodeURIComponent(p.file.name), "Content-Type": "application/octet-stream" } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "Upload failed");
+    } catch (e) { toast(`${p.file.name}: ${e.message}`, 7000); }
+  }
+  await refresh(); schedule();
+};
+
+/* ---------- jobs ---------- */
+function makeCard(id) {
+  const root = el("article", "job"); root.dataset.id = id;
+  const head = el("div", "head"), title = el("div", "title");
+  const name = el("div", "fname"), to = el("div", "to");
+  title.append(name, to);
+  const pill = el("span", "pill"), pillText = el("span"), t = el("span", "t"); pill.append(pillText, t);
+  head.append(title, pill);
+  const bar = el("div", "bar"), fill = el("i"); bar.append(fill);
+  const prog = el("div", "prog"), last = el("div", "last");
+  const err = el("p", "err"), detail = el("p", "detail");
+  const sum = el("ul", "sum");
+  const chips = el("div", "chips"), actions = el("div", "actions");
+  const det = el("details", "log"), sm = el("summary", "", "Show the log"), pre = el("pre");
+  det.append(sm, pre);
+  det.ontoggle = () => { if (det.open) loadLog(id, pre); };
+  root.append(head, bar, prog, last, err, detail, sum, chips, actions, det);
+  const c = { root, name, to, pill, pillText, t, bar, fill, prog, last, err, detail, sum, chips, actions, det, pre, sig: "" };
+  cards.set(id, c); return c;
+}
+async function loadLog(id, pre) {
+  try { const r = await fetch(`/api/jobs/${id}/log`); pre.textContent = await r.text(); pre.scrollTop = pre.scrollHeight; } catch (e) {}
+}
+const STATES = { queued: "Waiting", running: "Working", done: "Done", review: "Done, please check", failed: "Failed", cancelled: "Cancelled" };
+
+function paintJob(j) {
+  const c = cards.get(j.id) || makeCard(j.id);
+  c.name.textContent = j.filename; c.to.textContent = `${j.src_name} to ${j.label}` + (j.model ? "  ·  model" : "");
+  c.pill.className = "pill " + j.state; c.pillText.textContent = STATES[j.state];
+  c.root.dataset.state = j.state; c.root.dataset.started = j.started || ""; c.root.dataset.finished = j.finished || "";
+  const live = j.state === "running";
+  c.bar.hidden = c.prog.hidden = c.last.hidden = !live && j.state !== "queued";
+  if (live && j.progress) { c.bar.className = "bar"; c.fill.style.width = (100 * j.progress.done / j.progress.total) + "%"; c.prog.textContent = ""; c.prog.append(el("span", "", `Page ${Math.min(j.progress.done + 1, j.progress.total)} of ${j.progress.total}`), el("span", "", `${j.progress.done} finished`)); }
+  else if (live || j.state === "queued") { c.bar.className = "bar wait"; c.fill.style.width = "35%"; c.prog.textContent = j.state === "queued" ? "Waiting for a free slot" : "Working…"; }
+  c.last.textContent = live ? j.last_line : "";
+  c.err.hidden = !(j.error && j.state !== "done"); c.err.textContent = j.error || "";
+  c.detail.hidden = !j.detail; c.detail.textContent = j.detail || "";
+
+  const sig = JSON.stringify([j.state, j.outputs, j.summary, j.problems]);
+  if (sig !== c.sig) {
+    c.sig = sig;
+    c.sum.textContent = "";
+    if (j.state !== "failed") {            /* a failed job already shows its one reason above */
+      (j.problems || []).forEach(p => { const li = el("li", "", p); li.style.color = "var(--warn)"; c.sum.append(li); });
+      (j.summary || []).forEach(s => c.sum.append(el("li", "", s)));
+    }
+    c.sum.hidden = !c.sum.childElementCount;
+    c.chips.textContent = ""; c.actions.textContent = "";
+    if (j.outputs && j.outputs.length) {
+      const many = j.outputs.length > 1;
+      if (!many) { const a = el("a", "btn primary small", "Download " + j.outputs[0].name); a.href = `/api/jobs/${j.id}/files/${encodeURIComponent(j.outputs[0].name)}`; c.actions.append(a); }
+      else { const a = el("a", "btn primary small", `Download all (${j.outputs.length} files, .zip)`); a.href = `/api/jobs/${j.id}/zip`; c.actions.append(a); }
+      j.outputs.slice(0, 12).forEach(o => { const a = el("a", "chip", `${o.name} · ${fmtSize(o.size)}`); a.href = `/api/jobs/${j.id}/files/${o.name.split("/").map(encodeURIComponent).join("/")}`; c.chips.append(a); });
+      if (j.outputs.length > 12) c.chips.append(el("span", "fmeta", `+ ${j.outputs.length - 12} more in the .zip`));
+    }
+    if (j.state === "queued" || j.state === "running") {
+      const b = el("button", "btn small danger", "Cancel"); b.type = "button"; b.onclick = async () => { b.disabled = true; try { await api(`/api/jobs/${j.id}/cancel`, { method: "POST" }); refresh(); } catch (e) { toast(e.message); } }; c.actions.append(b);
+    } else {
+      const b = el("button", "btn small", "Remove"); b.type = "button"; b.onclick = async () => { try { await api(`/api/jobs/${j.id}`, { method: "DELETE" }); c.root.remove(); cards.delete(j.id); syncEmpty(); } catch (e) { toast(e.message); } }; c.actions.append(b);
+    }
+  }
+  if (c.det.open && (live || !c.pre.textContent)) loadLog(j.id, c.pre);
+  return c;
+}
+function syncEmpty() { $("#empty").hidden = cards.size > 0; }
+async function refresh() {
+  let list; try { list = await api("/api/jobs"); } catch (e) { return; }
+  const box = $("#jobs"), ids = new Set(list.map(j => j.id));
+  for (const [id, c] of cards) if (!ids.has(id)) { c.root.remove(); cards.delete(id); }
+  list.forEach((j, i) => { const c = paintJob(j); if (box.children[i] !== c.root) box.insertBefore(c.root, box.children[i] || null); });
+  syncEmpty(); tick();
+  return list.some(j => j.state === "queued" || j.state === "running");
+}
+function tick() {
+  for (const c of cards.values()) {
+    const s = parseFloat(c.root.dataset.started), f = parseFloat(c.root.dataset.finished), st = c.root.dataset.state;
+    if (st === "queued") c.t.textContent = "";
+    else if (s) c.t.textContent = fmtTime(((f || Date.now() / 1000) - s));
+  }
+}
+/* Poll quickly while something is running, slowly otherwise. */
+function schedule(ms = 0) {
+  clearTimeout(timer);
+  timer = setTimeout(async () => { const busy = await refresh(); schedule(busy ? 1500 : 6000); }, ms);
+}
+setInterval(tick, 1000);
+
+/* ---------- settings ---------- */
+const dlg = $("#dlg");
+function paintSettings() {
+  const c = config;
+  document.querySelectorAll("input[name=backend]").forEach(r => (r.checked = r.value === c.backend));
+  $("#endpoint").value = c.endpoint; $("#thinking").checked = c.thinking;
+  $("#maxside").value = c.max_image_side; $("#timeout").value = Math.round(c.timeout_s / 60);
+  $("#key").value = ""; $("#key").placeholder = c.key_set ? "A key is saved. Type here to replace it." : "Paste the key";
+  $("#keyNote").textContent = "Kept in this app's memory only. It is never written to disk or shown again. Restarting the app clears it.";
+  $("#clearKey").hidden = !c.key_set;
+  toggleFields();
+}
+/* Show the key fields only for the remote API. Reads the radio as it is now, not the saved setting. */
+function toggleFields() {
+  const remote = document.querySelector("input[name=backend]:checked").value === "tuhin";
+  $("#remoteFields").hidden = !remote; $("#localNote").hidden = remote;
+}
+function openSettings() { paintSettings(); $("#tests").textContent = ""; dlg.showModal(); }
+document.querySelectorAll("input[name=backend]").forEach(r => (r.onchange = toggleFields));
+$("#closeBtn").onclick = () => dlg.close();
+$("#useFallback").onclick = () => ($("#endpoint").value = config.fallback);
+function gather() {
+  const body = { backend: document.querySelector("input[name=backend]:checked").value, endpoint: $("#endpoint").value, thinking: $("#thinking").checked,
+    max_image_side: +$("#maxside").value, timeout_s: Math.round(+$("#timeout").value * 60) };
+  if ($("#key").value.trim()) body.key = $("#key").value.trim();
+  return body;
+}
+async function save(quiet) {
+  config = await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gather()) });
+  paintEngine(); paintSettings(); if (!quiet) toast("Settings saved.");
+}
+$("#saveBtn").onclick = async () => { try { await save(); dlg.close(); } catch (e) { toast(e.message, 6000); } };
+$("#clearKey").onclick = async () => { try { config = await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clear_key: true }) }); paintEngine(); paintSettings(); toast("Key forgotten."); } catch (e) { toast(e.message); } };
+async function runTest(kind, btn) {
+  const out = $("#tests"); out.textContent = ""; const wait = el("div", "", kind === "full" ? "Reading a small image. This can take a minute…" : "Checking…"); out.append(wait);
+  document.querySelectorAll("#testBtn, #fullBtn, #saveBtn").forEach(b => (b.disabled = true));
+  try {
+    await save(true);
+    const r = await api("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }) });
+    out.textContent = "";
+    r.checks.forEach(c => { const d = el("div"); d.append(el("b", c.ok ? "ok" : "no", c.ok ? "✓" : "✗"), el("span", "", `${c.name}: ${c.detail}`)); out.append(d); });
+    const s = el("div"); s.append(el("b", r.ok ? "ok" : "no", r.ok ? "Ready." : "Not ready.")); out.append(s);
+  } catch (e) { out.textContent = ""; const d = el("div"); d.append(el("b", "no", "✗"), el("span", "", e.message)); out.append(d); }
+  document.querySelectorAll("#testBtn, #fullBtn, #saveBtn").forEach(b => (b.disabled = false));
+}
+$("#testBtn").onclick = () => runTest("connect"); $("#fullBtn").onclick = () => runTest("full");
+
+/* ---------- start ---------- */
+(async function init() {
+  try {
+    [routes, config] = await Promise.all([api("/api/routes"), api("/api/config")]);
+  } catch (e) { $("#engineText").textContent = "Cannot reach the app"; return; }
+  paintEngine(); paintFiles(); schedule(0);
+})();
+</script>
+</body>
+</html>

@@ -16,6 +16,9 @@ this update, apart from the edits to this file and `memory.md`.
 
 ## Model in use right now
 
+- **NEW 2026-09-30: `idox_app.py`** is a local web app for uploading a file and converting it, and it can
+  use the **tuhin-ai API** (`http://10.0.3.2:8080`, needs its key) or the local 2B. See `memory.md` §22.
+
 - **Code default:** `DEFAULT_BASE_URL = http://10.0.3.33:8080`, the remote Qwen3-VL-8B.
   **It is DOWN as of 2026-09-29.**
 - **In use instead:** the local 2B (Qwen3-VL-2B-Instruct, Q4_K_M + Q8_0 mmproj) on

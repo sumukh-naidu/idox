@@ -726,6 +726,11 @@ can be dropped or misread, and it works the same on digital and scanned PDFs.
   in `test_pdf.py`). Password-protected PDFs are skipped with a message. The written files
   are read back with PIL to check they are valid images.
 - **Command:** `.venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/report.pdf`
+- **`--ext jpeg` (added 2026-09-30):** JPG and JPEG are the same format, so PDF -> JPEG is this same script.
+  `--ext jpeg` names the files `page_001.jpeg` instead of `.jpg` (default unchanged). Verified: the `.jpeg`
+  files are byte-identical to the `.jpg` ones, PIL reports JPEG, the checks still pass, and any other value
+  is rejected. Folders `pdf_to_jpeg_input/` and `pdf_to_jpeg_output/` exist for it:
+  `pdf_to_jpg.py pdf_to_jpeg_input/x.pdf --outdir pdf_to_jpeg_output --ext jpeg`.
 - **Verification, added the same day at the owner's request** (to show everything was
   converted). Each saved JPG is read back and checked against the PDF (`check_page()`):
   1. *Dimensions*: exactly the page size at the chosen dpi.
@@ -1044,3 +1049,78 @@ was split over 3 lines, a mid-paragraph fragment landed after the paragraph, and
 labels caused a duplicate ("Date" twice). It needs (a) per-segment comparison, (b) table rows
 re-formatted into the existing table's columns, (c) inline insertion when the neighbouring lines
 sit in one paragraph. Not built; awaiting the owner's decision.
+
+---
+
+## 22. The tuhin-ai API and the local web app (2026-09-30)
+
+The owner asked to call a colleague's model API instead of the local model, and to build a small
+HTML page for uploading a file and converting it. Both are done.
+
+**The API.** `http://10.0.3.2:8080` (the name `tuhin-ai.local` did not resolve here), Bearer key from
+its owner, Qwen3.6-35B-A3B (vision), llama.cpp-style server. **The key is not stored anywhere in this
+repo; do not add it.** Verified with this pipeline: key accepted, wrong key 401, image + JSON schema
++ thinking off returns a valid page. `blocks.py` now reads optional environment variables so every
+script can use it: `IDOX_API_KEY`, `IDOX_THINKING` (off/on), `IDOX_MAX_IMAGE_SIDE`, `IDOX_TIMEOUT`,
+`IDOX_MODEL`. With none set, the request is unchanged (checked). Also: a JPEG is now labelled
+`image/jpeg` (it was always sent as `image/png`), a 401 gives a clear message, and an empty reply is an
+explicit error. `DEFAULT_BASE_URL` was NOT changed (still the dead `10.0.3.33`); the owner has not been
+asked yet.
+
+**Speed (measured, this pipeline, alone on the API):** `hi.png` to Word 26.7 s; one digital page to
+text 61.7 s cold and 25.2 s on an immediate repeat. Three jobs at once: 80 / 110 / 202 s (shared
+laptop, 2 run at a time). The local 2B does `hi.png` in about 27 s. **The API is not faster; its
+accuracy relative to the 2B was not measured.**
+
+**The app.** `idox_app.py` + `idox_app.html`. Run `.venv/bin/python idox_app.py`, open
+`http://127.0.0.1:8765`. A page cannot run Python, so the server runs the existing scripts as
+subprocesses (one folder per job under `~/.local/share/idox/jobs/`), with a queue (2 model jobs at once
+on the API, 1 local, 3 others), cancel, log, per-file and .zip download, and Settings (engine, address,
+key, thinking, image size, wait limit, "Test connection", "Read a test image"). The key is held in
+memory only and reaches scripts via the environment; verified absent from job files, the app log, the
+repo, command lines and `/api/config`. Localhost only, Host and Origin checks, fixed route list, safe
+file names. 14 conversions. Standard library only.
+**Details and the full list of what was and was not tested: handover doc section 5.6 and 7.8.**
+
+**Bugs found while building it, all fixed:** the settings radio reset itself (the handler redrew from
+saved settings); failed jobs showed the reason twice plus raw log noise; download buttons were
+underlined; a `pkill -f` in my own test command killed my shell again (use `pgrep` with the `[x]`
+trick, in a separate command).
+**Known:** the TIFF route can show "Done, please check" because its OCR word check fails pages with
+white-on-dark text (see 19); the key must be re-entered after each restart unless `TUHIN_AI_KEY` is set.
+
+---
+
+## 23. Test: End-of-Day report, PDF -> Word, local 2B (2026-09-30)
+
+`pdf_to_word_input/End-of-Day_Report___Day_7.pdf` (2 dense digital pages, 3,516 + 2,307 characters of text)
+through `test_pdf.py --docx`, local 2B at 512 image tokens, run from a scratch folder. Outputs were
+written as `pdf_to_word_output/End-of-Day_Report___Day_7_local2b.docx` and `.md` (new names; the Sep 21
+files were not touched). **The result is bad.**
+
+| | Page 1 | Page 2 |
+|---|---|---|
+| Model reading (prefill) | 13.7 s | 12.8 s |
+| Model writing | 23.2 s, 249 tokens (10.7 tok/s) | **544.2 s, 4,000 tokens (7.35 tok/s)**, hit the cap |
+| Total | 37.2 s | **557.0 s, no usable output** |
+| Result | model returned only 5 blocks | **skipped; absent from the Word file** |
+
+Wall clock **595.5 s (9 min 56 s)**. Checks and the Word write took 0.13 s.
+
+**What went wrong, each verified:**
+1. **Page 1:** the model collapsed the six long numbered items into a 3-word-per-item list and dropped the
+   rest (coverage 12%). `repair_missing_lines` then restored 40 lines from the PDF text, one paragraph per
+   visual line, inserted by position estimates. The Word file has all the words of page 1 but the order is
+   scrambled (a paragraph's lines interleaved with other items) and the list is broken into fragments.
+2. **Page 2:** the model ran until the 4,000-token cap (known runaway at temperature 0) and the page was
+   skipped. **The Word file contains only page 1, yet `test_pdf.py` printed "content check: 100% of the PDF's
+   words are in the .docx"**, because a failed page is left out of the source text the check compares
+   against. This is the gap already listed in 10.2, now shown on a real file.
+3. **The tool's own timing summary said TOTAL 37.28 s.** It does not count a failed page's time, so it
+   understated the real 595.5 s by about nine minutes.
+
+**Lesson:** a dense, text-only digital page is the worst case for the model route and the best case for a
+route that uses the text layer directly. Building the Word file from the PDF's own text (the "skip the model
+on digital pages" lever, still unbuilt) would take about a second for this file and cannot drop or reorder.
+**Not done, awaiting the owner:** fix the timing summary to include failed pages; make a skipped page fail
+the verdict; retry once when a page hits the token cap; try the tuhin-ai API on this file.

@@ -36,6 +36,9 @@ PDFs never mix and a multi-page PDF stays together:
                                                               page_002.jpg
                                                               ...
 
+JPG and JPEG are the same format; only the file ending differs. The default is
+.jpg; --ext jpeg names the files page_001.jpeg instead. The pictures are identical.
+
 Usage:
     .venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/report.pdf
     .venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/*.pdf
@@ -172,7 +175,7 @@ def check_page(page, jpg_path: str, pix_w: int, pix_h: int, page_dpi: int,
 
 
 def run(pdf_path: str, out_dir: str, dpi: int, quality: int, pages: str,
-        use_ocr: bool = True) -> bool:
+        use_ocr: bool = True, ext: str = "jpg") -> bool:
     name = os.path.splitext(os.path.basename(pdf_path))[0]
     print("=" * 72)
     print(pdf_path)
@@ -213,7 +216,7 @@ def run(pdf_path: str, out_dir: str, dpi: int, quality: int, pages: str,
                   f"{page.rect.height / 72:.1f}in is very large -- drawn at "
                   f"{page_dpi} dpi instead of {dpi}")
 
-        path = os.path.join(pdf_out, f"page_{pno + 1:03d}.jpg")
+        path = os.path.join(pdf_out, f"page_{pno + 1:03d}.{ext}")
         try:
             # alpha=False: JPEG has no transparency, so the page is drawn on
             # white rather than failing or coming out black.
@@ -282,6 +285,9 @@ parser.add_argument("--quality", type=int, default=90,
                     help="JPG quality 1-100 (default 90)")
 parser.add_argument("--pages", default="all",
                     help="e.g. 1, 1-3, 2,4 (default: all)")
+parser.add_argument("--ext", choices=("jpg", "jpeg"), default="jpg",
+                    help="file ending for the pages (default jpg). The format is "
+                         "the same either way.")
 parser.add_argument("--no-ocr", action="store_true",
                     help="skip the OCR word check (the other checks still run)")
 args = parser.parse_args()
@@ -302,7 +308,7 @@ for path in paths:
         print(f"skipping {path}: not found")
         continue
     if run(path, args.outdir, args.dpi, args.quality, args.pages,
-           use_ocr=not args.no_ocr):
+           use_ocr=not args.no_ocr, ext=args.ext):
         ok += 1
     else:
         fail += 1

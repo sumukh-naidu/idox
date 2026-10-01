@@ -51,6 +51,7 @@ must commit to a count before transcribing. If it sees 5 rows and writes 4, the
 mismatch is detectable.
 """
 
+import os
 import re
 from typing import List, Literal, Union
 
@@ -1352,6 +1353,33 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
     return page, timing
 
 
+def _mime_of(raw: bytes) -> str:
+    """The image's real type. The request used to label every image image/png,
+    even a JPEG; a strict server may refuse a mislabelled one."""
+    if raw[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    return "image/png"
+
+
+def _fit_max_side(image_path: str, max_side: int):
+    """PNG bytes of the image shrunk so its longest side is max_side, or None
+    when it is already that small (the caller then sends the file untouched)."""
+    import io
+
+    from PIL import Image
+
+    with Image.open(image_path) as im:
+        w, h = im.size
+        if max(w, h) <= max_side:
+            return None
+        scale = max_side / max(w, h)
+        small = im.convert("RGB").resize(
+            (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+    buf = io.BytesIO()
+    small.save(buf, "PNG")
+    return buf.getvalue()
+
+
 def _extract_page_raw_server(image_path: str, base_url: str,
                              num_ctx: int, num_predict: int,
                              return_timing: bool, include_look: bool = True):
@@ -1361,27 +1389,52 @@ def _extract_page_raw_server(image_path: str, base_url: str,
     prompt, same user prompt, same JSON schema as the Ollama path -- only the
     transport and the base64 image-embedding differ, since a raw llama-server
     has no equivalent of Ollama's images=[path] convenience.
+
+    REMOTE, AUTHENTICATED SERVERS. Four optional settings are read from the
+    environment, so every script picks them up without a new flag. With none of
+    them set the request is exactly what it always was (the local server case).
+
+        IDOX_API_KEY          sent as "Authorization: Bearer <key>". Never
+                              printed, logged or written anywhere by this code.
+        IDOX_THINKING         "off" or "on": sent as chat_template_kwargs
+                              {"enable_thinking": ...}. Off is right for
+                              extraction; on can add minutes per page.
+        IDOX_MAX_IMAGE_SIDE   shrink the image so its longest side is at most
+                              this many pixels before sending (e.g. 1600).
+        IDOX_TIMEOUT          seconds to wait for a reply (default 600).
+        IDOX_MODEL            the "model" field (default "manual"; ignored by
+                              llama-server).
     """
     import base64
     import time as _time
 
     import requests
 
-    with open(image_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode()
+    api_key = os.environ.get("IDOX_API_KEY", "").strip()
+    thinking = os.environ.get("IDOX_THINKING", "").strip().lower()
+    max_side = int(os.environ.get("IDOX_MAX_IMAGE_SIDE", "0") or 0)
+    timeout = int(os.environ.get("IDOX_TIMEOUT", "600") or 600)
+
+    raw = _fit_max_side(image_path, max_side) if max_side > 0 else None
+    if raw is None:
+        with open(image_path, "rb") as f:
+            raw = f.read()
+    img_b64 = base64.b64encode(raw).decode()
+    mime = _mime_of(raw)
 
     schema_cls = Page if include_look else PageNoLook
     started = _time.time()
     resp = requests.post(
         f"{base_url.rstrip('/')}/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
         json={
-            "model": "manual",
+            "model": os.environ.get("IDOX_MODEL", "manual") or "manual",
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": [
                     {"type": "text", "text": USER_PROMPT},
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                     "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
                 ]},
             ],
             "response_format": {
@@ -1394,11 +1447,18 @@ def _extract_page_raw_server(image_path: str, base_url: str,
             # already-written blocks verbatim instead of stopping the array.
             "repeat_penalty": 1.15,
             "n_predict": num_predict,
+            **({"chat_template_kwargs": {"enable_thinking": thinking == "on"}}
+               if thinking in ("on", "off") else {}),
         },
-        timeout=600,
+        timeout=timeout,
     )
     wall_elapsed = _time.time() - started
-    resp.raise_for_status()
+    if resp.status_code == 401:
+        raise RuntimeError("the server rejected the API key (401): the key is "
+                           "missing or wrong")
+    if not resp.ok:
+        raise RuntimeError(f"the server answered {resp.status_code}: "
+                           f"{resp.text[:200].strip()}")
     d = resp.json()
 
     finish_reason = d["choices"][0].get("finish_reason")
@@ -1406,9 +1466,15 @@ def _extract_page_raw_server(image_path: str, base_url: str,
         raise ValueError(
             f"model hit the {num_predict}-token generation limit without "
             f"finishing -- output was truncated and cannot be parsed."
+            + (" Thinking is on, which spends those tokens before the answer."
+               if thinking == "on" else "")
         )
 
-    page = schema_cls.model_validate_json(d["choices"][0]["message"]["content"])
+    content = d["choices"][0]["message"].get("content") or ""
+    if not content.strip():
+        raise RuntimeError("the model returned no text (thinking may be on, "
+                           "or the answer was cut off)")
+    page = schema_cls.model_validate_json(content)
     if not include_look:
         page = _add_look_placeholders(page)
 

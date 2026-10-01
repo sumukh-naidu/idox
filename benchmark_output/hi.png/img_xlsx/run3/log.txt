@@ -1,0 +1,11 @@
+========================================================================
+in/hi.png  (base_url http://127.0.0.1:8090)
+========================================================================
+  extracted 2 blocks in 11.4s  (load 0.0s, prefill 0.2s /1170tok, generate 11.2s /131tok)
+    [paragraph] Hello, this is a demo!
+    [paragraph] Generated as a PNG image with text
+
+  NO TABLE DETECTED -- this image does not appear to contain tabular data.
+  Excel conversion needs a table to be meaningful; nothing will be written.
+  Please check the image and re-upload one that contains a real table, or use image_to_word.py instead if this is meant to be a text document, not a spreadsheet.
+

@@ -16,6 +16,9 @@ this update, apart from the edits to this file and `memory.md`.
 
 ## Model in use right now
 
+- **Benchmark (2026-10-01):** `benchmark.py` ran every conversion on four fixed inputs, 3 runs each, local 2B. Results in
+  `benchmark_output/report.md` and `results.csv`; summary and caveats in `memory.md` §24.
+
 - **NEW 2026-09-30: `idox_app.py`** is a local web app for uploading a file and converting it, and it can
   use the **tuhin-ai API** (`http://10.0.3.2:8080`, needs its key) or the local 2B. See `memory.md` §22.
 

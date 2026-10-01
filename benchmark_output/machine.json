@@ -1,0 +1,90 @@
+{
+ "when": "2026-10-01 14:43:31 +0530",
+ "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+ "logical_cpus": 8,
+ "lscpu": {
+  "Thread(s) per core": "2",
+  "Core(s) per socket": "4",
+  "CPU max MHz": "4700.0000",
+  "CPU min MHz": "400.0000",
+  "L3 cache": "12 MiB (1 instance)"
+ },
+ "ram_total_mb": 14622,
+ "ram_available_mb_at_start": 6072,
+ "governor": "powersave",
+ "os": "Linux 7.0.0-34-generic",
+ "llama_server": "version: 0.5.0-dev (build 11247, commit 0bc845d35) | built with GNU 11.4.0 for Linux x86_64",
+ "server_flags": [
+  "/home/sumukh/.local/opt/llama.cpp/llama-b11247/llama-server",
+  "--model",
+  "Qwen3VL-2B-Instruct-Q4_K_M.gguf",
+  "--mmproj",
+  "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf",
+  "--port",
+  "8090",
+  "--host",
+  "127.0.0.1",
+  "--no-webui",
+  "--ctx-size",
+  "8192",
+  "--image-min-tokens",
+  "512",
+  "--image-max-tokens",
+  "512",
+  "--parallel",
+  "1"
+ ],
+ "server_threads": "server default (the log reports the number it chose)",
+ "model_files": {
+  "Qwen3VL-2B-Instruct-Q4_K_M.gguf": {
+   "bytes": 1107409952,
+   "sha256": "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae"
+  },
+  "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf": {
+   "bytes": 445053216,
+   "sha256": "f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82"
+  }
+ },
+ "inputs": {
+  "text_only_1page.pdf": {
+   "path": "pdf_to_word_input/text_only_1page.pdf",
+   "bytes": 3664,
+   "sha256": "8178d16b5ad44fbe609e39d70b5e33525ba6b40c82a98d7f0fed4cea0d5cb831"
+  },
+  "sample.pdf": {
+   "path": "pdf_to_word_input/sample.pdf",
+   "bytes": 2229,
+   "sha256": "e4564b2c1f656c8b852959caef5c9e498bff303d3722b4eb45af958c1cf5e996"
+  },
+  "hi.png": {
+   "path": "image_to_word_input/hi.png",
+   "bytes": 18649,
+   "sha256": "f26fed4eb5fd5a49c5bda16c3a604ba126363b8707a13502865cb3056a963299"
+  },
+  "sample_125dpi.png": {
+   "path": "benchmark_input/sample_125dpi.png",
+   "bytes": 57578,
+   "sha256": "9297a62569eb7f75f628df40514f596f6236f3dd57bda14c03a240e9da64db1e"
+  }
+ },
+ "python": "3.13.15",
+ "libs": {
+  "pymupdf": "1.28.2",
+  "python-docx": "1.2.0",
+  "openpyxl": "3.1.5",
+  "python-pptx": "1.0.2",
+  "pillow": "12.3.0",
+  "pytesseract": "0.3.13",
+  "pydantic": "2.13.5",
+  "requests": "2.34.2"
+ },
+ "tesseract": "tesseract 5.5.0",
+ "libreoffice": "LibreOffice 26.2.5.2 620(Build:2)",
+ "load_average_at_start": [
+  0.4931640625,
+  0.6787109375,
+  0.5205078125
+ ],
+ "pkg_temp_c_at_start": 61,
+ "throttle_count_at_start": 4
+}

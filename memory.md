@@ -1124,3 +1124,52 @@ route that uses the text layer directly. Building the Word file from the PDF's o
 on digital pages" lever, still unbuilt) would take about a second for this file and cannot drop or reorder.
 **Not done, awaiting the owner:** fix the timing summary to include failed pages; make a skipped page fail
 the verdict; retry once when a page hits the token cap; try the tuhin-ai API on this file.
+
+---
+
+## 24. Benchmark: every conversion on four fixed inputs (2026-10-01)
+
+Built `benchmark.py` and ran it on this machine so the results can be compared with another machine's.
+Results are in `benchmark_output/` (report.md, results.csv, runs.jsonl, scores.jsonl, machine.json,
+server.log, and every output file under `<input>/<conversion>/run<N>/out/`). The inputs are
+`text_only_1page.pdf`, `sample.pdf`, `hi.png`, and `benchmark_input/sample_125dpi.png` (sample.pdf rendered at
+125 dpi). 30 conversions x 3 runs = 90 runs, 30.7 minutes.
+
+**Conditions:** local Qwen3-VL-2B (Q4_K_M + Q8_0 mmproj, sha256 recorded), llama.cpp b11247 CPU build,
+512 image tokens, ONE slot (`--parallel 1`, the earlier server used the default), context 8192, threads at
+the server default, i7-1165G7 (4 cores/8 threads), 14.6 GB RAM, governor powersave. The server was
+**restarted before each of the 14 model conversions**, so run 1 is cold and runs 2-3 reuse the cached image.
+**Not controlled:** other programs were open (VS Code, Kilo); the CPU **throttled 46 times** during the run
+(counter 4 -> 50); package temperature 64-73 C. Token speed was steady anyway.
+
+**Latency (the server's own log):** generation **11.5 tok/s on average (10.5-12.3)** over 42 model runs.
+A cold first read of the image costs **17.0-20.1 s (about 61 tok/s over 1,133-1,170 tokens)**; a cached run
+reads in under 0.2 s. All 28 repeat runs were cache hits, so they understate a first read by about 18 s.
+Typical whole-script times, cold / cached: text_only_1page.pdf ~78 / ~56 s (about 650 tokens written);
+sample.pdf ~45 / ~28 s (311 tokens); sample_125dpi.png ~57 / ~40 s (431 tokens); hi.png ~31 / ~12 s (131
+tokens). Time is dominated by writing, not reading. The 48 no-model runs took 0.3-2.4 s each. No run hit
+the 4,000-token cap.
+
+**Accuracy (method in the benchmark.py docstring; ground truth = PDF text layer, hi.png read by a person):**
+- `hi.png` and `sample.pdf` (Word, Excel, PowerPoint, PDF): word recall and precision **100%**, figures exact, table
+  cells 100%. `sample.pdf` TXT 98.6% sequence (100% recall).
+- `sample_125dpi.png` (Word, PDF, Excel): recall/precision 100%, sequence 98.6%, table cells 100%.
+- **`text_only_1page.pdf` is the weak case.** Word/Excel/PowerPoint: recall 100% but sequence only **77-78%**
+  and precision 97.5%: the file holds **362 words against 278**, because lines the model dropped were re-inserted
+  by the repair step beside the originals (the known `test_pdf.py` flaw; `pdf_to_txt.py` avoids it and scored
+  91-98.6%). A misread (`faking` -> `taking`) also appears. 5 of the 10 bullets became real Word bullets.
+- **The same input gave different output between runs:** run 1 (cold) differed from runs 2-3 (identical to
+  each other) for text_only_1page in Word (78.4% vs 76.4%) and TXT (98.6% vs 91.0%). Report per-run, not only means.
+- **Bullets in `sample.pdf` -> Word:** all three came out as ONE paragraph with typed hyphens, not Word list items.
+- hi.png -> Excel: all 3 runs refused (no table in the image); the model still ran (31 s cold, 12 s cached).
+- No-model conversions: TIFF pixel-exact, picture-only Word keeps the image byte-identical, TIFF->PDF picture exact,
+  Word->PDF keeps 100% of the Word file's words. JPG PSNR vs a fresh render: 51.5 dB (sample.pdf), 44.3 dB
+  (text_only_1page.pdf); OCR of the JPG recovers 95% / 100% of the words. TIFF->PDF text layer (OCR): 97.5% /
+  99.4% recall, table rows 75% on sample.pdf.
+
+**For the other machine:** run `benchmark.py run` (options `--llama-server`, `--model`, `--mmproj`, `--port`,
+`--out`) after copying `benchmark_input/sample_125dpi.png`; or score someone else's output folder, which must keep
+the `<input>/<conversion>/run<N>/out/` layout, with `benchmark.py score DIR`. Compare `results.csv` rows by
+(input, conversion, run).
+**Mistakes of mine while building it, caught by testing:** the TIFF dpi was not JSON-serialisable; the server
+version printed on stderr and was blank; the load-average line implied other programs and was reworded.

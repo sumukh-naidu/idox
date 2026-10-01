@@ -1,0 +1,13 @@
+========================================================================
+text_only_1page.docx
+========================================================================
+  .docx: 24 paragraphs, 0 table(s), 0 image(s)
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+  PDF  : 1 page(s), 0 image(s), 51 KB -> out/text_only_1page.pdf
+
+  word coverage      100.0%
+  paragraphs kept    22/24
+  table cells kept   0/0
+  verdict            FAIL
+    - PARAGRAPHS: 2 missing entirely: 'Discover → Crawl → Clean → Classify → Extract'; 'Pipeline Discover → Crawl → Clean → Classify '
+

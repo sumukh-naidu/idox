@@ -1,0 +1,14 @@
+========================================================================
+in/hi.png  (base_url http://127.0.0.1:8090)
+========================================================================
+  extracted 2 blocks in 30.4s  (load 0.0s, prefill 19.7s /1170tok, generate 10.7s /131tok)
+    [paragraph] Hello, this is a demo!
+    [paragraph] Generated as a PNG image with text
+
+  --- checks ---
+  1. self-consistency:       PASS
+  2. OCR grounding:          PASS   (2/2 strings verified against an independent OCR reading)
+  4. OCR coverage:           PASS   (100% of what OCR read was extracted)
+  NOTE: still not ground truth -- OCR is a reading of the pixels, not the document itself. Agreement is real evidence; a disagreement means look at it, not the model is wrong.
+  -> out/hi.pdf
+

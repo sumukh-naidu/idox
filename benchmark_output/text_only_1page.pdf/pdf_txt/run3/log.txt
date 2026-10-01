@@ -1,0 +1,19 @@
+========================================================================
+in/text_only_1page.pdf
+========================================================================
+  1 page(s), converting 1: 1 digital, 0 scanned, 0 blank (digital and scanned pages both go to the model)
+  model: http://127.0.0.1:8090
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+  page 1: digital, 18 blocks in 57.3s (prefill 0.1s, generate 57.0s / 637 tok)
+       ! corrected 5 misread passage(s)/cell(s) to the PDF's exact text (e.g. 'Sumukh Naidu H M | Al Engineer | We' -> 'Sumukh Naidu H M | AI Engineer | We')
+       ! restored 4 dropped line(s) from the PDF's text
+  wrote 2.0 KB -> out/text_only_1page.txt
+
+  --- verification (read back from the saved .txt) ---
+  page 1: 100% of 167 PDF words present, 0 extra, 0 line(s) missing, size 1.03x the PDF  [PASS]
+
+  pages written:    1/1
+  pages verified:   1/1
+  57.3s total (57.3s on the model)
+  VERDICT: PASS -- every page converted, digital pages verified
+

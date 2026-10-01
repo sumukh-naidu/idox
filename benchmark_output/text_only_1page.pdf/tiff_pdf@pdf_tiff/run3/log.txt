@@ -1,0 +1,14 @@
+========================================================================
+in/text_only_1page.tiff
+========================================================================
+  1 frame(s) -> out/text_only_1page.pdf  (OCR on 4 page(s) at a time)
+  wrote 411 KB in 1.7s -- now reading it back to verify
+  page 1: 612x792pt, picture pixel-exact, text layer 100% of 166 OCR words  [PASS]
+
+  --- verification (read back from the saved PDF) ---
+  pages in PDF:     1 (TIFF has 1 frame(s))  [PASS]
+  pages verified:   1/1
+  note: the text layer is Tesseract's reading. It can miss text printed white on dark backgrounds and turns accented letters into plain ones; the picture on every page is exact regardless.
+  411 KB total, 2.0s
+  VERDICT: PASS -- every frame converted and verified
+

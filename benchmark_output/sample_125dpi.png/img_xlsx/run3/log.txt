@@ -1,0 +1,31 @@
+========================================================================
+in/sample_125dpi.png  (base_url http://127.0.0.1:8090)
+========================================================================
+  extracted 7 blocks in 38.0s  (load 0.0s, prefill 0.1s /1133tok, generate 37.8s /436tok)
+    [heading] Sample PDF Document
+    [paragraph] This is a sample one-page PDF generated for demonstration pu
+    [heading] About this document
+    [paragraph] This file shows basic PDF elements such as headings, body te
+    [heading] Key points
+    [paragraph] - Generated programmatically using Python
+- Formatted as a s
+    [table] 3x2 with header
+        H | Item | Value
+          | Pages | 1
+          | Format | PDF
+          | Purpose | Sample/Demo
+
+  --- checks ---
+  1. self-consistency:       PASS
+  2. OCR grounding:          FAIL   (12/14 strings verified against an independent OCR reading)
+       - block[6] kind=table: 2 cell(s) not in PDF text: 'Item', 'Value'
+  4. OCR coverage:           FAIL   (100% of what OCR read was extracted)
+       - 4 line(s) of the PDF are missing entirely: '+ Generated programmatically using Python'; '+ Formatted as a standard Letter-size page'; '+ Contains text, a list, and a table'; 'Sample table'
+       ! 4 line(s) OCR found but the model did not -- NOT auto-restored (OCR is a reading, not the document):
+           '+ Generated programmatically using Python'
+           '+ Formatted as a standard Letter-size page'
+           '+ Contains text, a list, and a table'
+           'Sample table'
+  NOTE: still not ground truth -- OCR is a reading of the pixels, not the document itself. Agreement is real evidence; a disagreement means look at it, not the model is wrong.
+  -> out/sample_125dpi.xlsx
+

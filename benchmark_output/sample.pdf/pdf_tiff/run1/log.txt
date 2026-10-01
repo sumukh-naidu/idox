@@ -1,0 +1,13 @@
+========================================================================
+in/sample.pdf
+========================================================================
+  1 page(s), converting 1 at 300 dpi, LZW compression -> out/sample.tiff
+  wrote 311 KB in 0.2s -- now reading it back to verify
+  page 1: 2550x3300px, pixel-exact, text lines 18/18 on ink, OCR 98% of PDF words  [PASS]
+
+  --- verification (read back from the saved TIFF) ---
+  frames in file:   1 (expected 1)  [PASS]
+  pages verified:   1/1
+  311 KB total, 1.0s
+  VERDICT: PASS -- every page converted and verified
+

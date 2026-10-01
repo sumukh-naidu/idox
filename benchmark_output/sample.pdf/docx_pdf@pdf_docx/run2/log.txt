@@ -1,0 +1,12 @@
+========================================================================
+sample.docx
+========================================================================
+  .docx: 7 paragraphs, 1 table(s), 0 image(s)
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+  PDF  : 1 page(s), 0 image(s), 29 KB -> out/sample.pdf
+
+  word coverage      100.0%
+  paragraphs kept    7/7
+  table cells kept   8/8
+  verdict            PASS
+

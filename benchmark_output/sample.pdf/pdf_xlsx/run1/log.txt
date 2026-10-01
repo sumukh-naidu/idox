@@ -1,0 +1,51 @@
+in/sample.pdf -- 1 pages, testing 1: [1]
+rendering at 125 dpi into render/
+
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+========================================================================
+PAGE 1
+========================================================================
+Tier 0 -- text layer: 435 chars, tables detected: 1
+Tier 1 -- 7 blocks in 43.8s
+
+  [0] heading  Sample PDF Document
+  [1] paragraph  This is a sample one-page PDF generated for demonstration purposes.
+  [2] heading  About this document
+  [3] paragraph  This file shows basic PDF elements such as headings, body text, a bulleted list, and a s...
+  [4] heading  Key points
+  [5] paragraph  - Generated programmatically using Python - Formatted as a standard Letter-size page - C...
+  [6] table  3 data rows x 2 cols (with header)
+        H | Item | Value
+          | Pages | 1
+          | Format | PDF
+          | Purpose | Sample/Demo
+
+  --- checks ---
+  1. self-consistency:       PASS
+  2. text-layer grounding:   PASS   (14/14 strings verified against the PDF)
+  3. geometry (advisory):    agrees
+  4. content coverage:       FAIL   (100% of the PDF's text was extracted)
+       - 1 line(s) of the PDF are missing entirely: 'Sample table'
+  >>> PHASE 2 (validation, 4 checks) took 0.016s
+       + RESTORED from the PDF: 'Sample table' (14pt vs 10pt body -> heading) inserted at position 6
+       => coverage after repair: 100%
+
+
+  layout: appearance of 7 block(s) measured from the text layer, replacing the model's estimates
+========================================================================
+clean extraction written to out/sample.md
+Excel file written to out/sample.xlsx  (one sheet, all pages, values kept as text)
+  content check: 100% of the PDF's words are in the .xlsx
+rendered page images in render/ -- open these to see what the model actually saw
+
+========================================================================
+LATENCY BREAKDOWN (summed across all pages processed)
+========================================================================
+  PHASE 1  extraction  (PDF -> data)      43.82s  (100.0%)
+      model load:                           0.00s  ( 0.0% of phase 1)
+      reading page (prefill):              18.40s  (42.1% of phase 1)  -- 1133 tokens
+      generating (writing output):         25.36s  (57.9% of phase 1)  -- 300 tokens
+  PHASE 2  validation  (4 checks)           0.02s  ( 0.0%)
+  PHASE 3  conversion  (data -> .docx)      0.00s  ( 0.0%)
+  --------------------------------------------------------------------
+  TOTAL                                    43.83s

@@ -1,0 +1,66 @@
+in/text_only_1page.pdf -- 1 pages, testing 1: [1]
+rendering at 125 dpi into render/
+
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+========================================================================
+PAGE 1
+========================================================================
+Tier 0 -- text layer: 1936 chars, tables detected: 0
+Tier 1 -- 14 blocks in 79.1s
+
+  [0] heading  Daily Work Report
+  [1] paragraph  Sumukh Naidu H M | AI Engineer | Wednesday, September 09, 2026
+  [2] paragraph  Project Corporate Intelligence Extraction POC
+  [3] paragraph  Pipeline Discover → Crawl → Clean → Classify → Resolve → Deliver
+  [4] list  - Built out the CWI-09 benchmark / evaluation harness for the extraction pipeline, struc...
+  [5] paragraph  Harness reads only the existing data/cleaned.json output — zero network calls — and scor...
+  [6] list  - Implemented CLI commands (label and run) for labeling ground truth and executing scori...
+  [7] paragraph  Implemented six-outcome scoring logic: correct, incorrect, missing, false_positive, corr...
+  [8] list  - Added per-field match-type rules (exact / fuzzy / phone / URL) so comparisons account ...
+  [9] paragraph  Added a naive, eval-only-per-company merge step to stand in for the not-yet-built Resolv...
+  [10] list  - Wrote and passed all 43 unit tests covering the harness (test_labels, test_merge, test...
+  [11] heading  Upcoming Work
+  [12] list  - Starting on work on Odoo CRM integration based on a requirement document that has been...
+  [13] paragraph  Will review Odoo's open-source codebase to identify which existing CRM features are actu...
+
+  --- checks ---
+  1. self-consistency:       PASS
+       ~ analysis expected 10 blocks, 14 extracted ['heading', 'paragraph', 'paragraph', 'paragraph', 'list', 'paragraph', 'list', 'paragraph', 'list', 'paragraph', 'list', 'heading', 'list', 'paragraph'] -- see check 4 for whether anything was actually lost
+  2. text-layer grounding:   FAIL   (13/14 strings verified against the PDF)
+       - block[5] kind=paragraph: text not found in PDF (88% of words matched)
+  3. geometry (advisory):    agrees
+  4. content coverage:       FAIL   (94% of the PDF's text was extracted)
+       - only 94% of the PDF's text was extracted -- 10 words missing: building, data/cleaned/*.json, data/labels/*.json., faking, generated, goal, rather, scratch. (+2 more)
+       - 10 line(s) of the PDF are missing entirely: 'Discover → Crawl → Clean → Classify → Extract → Re'; "Today's Work"; 'Harness reads only the existing data/cleaned/*.jso'; 'against hand-labeled ground truth stored per compa' (+6 more)
+  >>> PHASE 2 (validation, 4 checks) took 0.048s
+       + RESTORED from the PDF: 'Generated report — Corporate Intelligence Extracti' (8pt vs 10pt body -> caption) inserted at position 14
+       + RESTORED from the PDF: 'Goal is to shortlist only the features genuinely n' (10pt vs 10pt body -> paragraph) inserted at position 13
+       + RESTORED from the PDF: 'to the stated requirement, rather than building fr' (10pt vs 10pt body -> paragraph) inserted at position 14
+       + RESTORED from the PDF: 'Starting work on Odoo CRM integration based on a r' (10pt vs 10pt body -> paragraph) inserted at position 13
+       + RESTORED from the PDF: 'yet — avoided faking a number for an unmeasured me' (10pt vs 10pt body -> paragraph) inserted at position 12
+       + RESTORED from the PDF: 'Added a naive, eval-only per-company merge step to' (10pt vs 10pt body -> paragraph) inserted at position 11
+       + RESTORED from the PDF: 'against hand-labeled ground truth stored per compa' (10pt vs 10pt body -> paragraph) inserted at position 5
+       + RESTORED from the PDF: 'Harness reads only the existing data/cleaned/*.jso' (10pt vs 10pt body -> paragraph) inserted at position 5
+       + RESTORED from the PDF: "Today's Work" (13pt vs 10pt body -> heading) inserted at position 2
+       + RESTORED from the PDF: 'Discover → Crawl → Clean → Classify → Extract → Re' (10pt vs 10pt body -> paragraph) inserted at position 2
+       => coverage after repair: 100%
+
+
+  layout: appearance of 17 block(s) measured from the text layer, replacing the model's estimates
+========================================================================
+clean extraction written to out/text_only_1page.md
+Excel file written to out/text_only_1page.xlsx  (one sheet, all pages, values kept as text)
+  content check: 100% of the PDF's words are in the .xlsx
+rendered page images in render/ -- open these to see what the model actually saw
+
+========================================================================
+LATENCY BREAKDOWN (summed across all pages processed)
+========================================================================
+  PHASE 1  extraction  (PDF -> data)      79.12s  (99.9%)
+      model load:                           0.00s  ( 0.0% of phase 1)
+      reading page (prefill):              18.50s  (23.4% of phase 1)  -- 1133 tokens
+      generating (writing output):         60.56s  (76.6% of phase 1)  -- 693 tokens
+  PHASE 2  validation  (4 checks)           0.05s  ( 0.1%)
+  PHASE 3  conversion  (data -> .docx)      0.00s  ( 0.0%)
+  --------------------------------------------------------------------
+  TOTAL                                    79.16s

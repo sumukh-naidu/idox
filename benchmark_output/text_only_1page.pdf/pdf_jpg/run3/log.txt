@@ -1,0 +1,12 @@
+========================================================================
+in/text_only_1page.pdf
+========================================================================
+  1 page(s), converting 1 at 150 dpi, JPG quality 90 -> out/text_only_1page/
+  page 1: 1275x1650px, 277 KB, text lines 40/40 on ink, OCR 100% of PDF words  [PASS]
+
+  --- verification (read back from the saved JPGs) ---
+  pages converted:  1/1
+  pages verified:   1/1
+  277 KB total, 1.0s
+  VERDICT: PASS -- every page converted and verified
+

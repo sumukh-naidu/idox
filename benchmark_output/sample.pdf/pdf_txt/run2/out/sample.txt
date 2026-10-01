@@ -1,0 +1,23 @@
+----- Page 1 -----
+
+Sample PDF Document
+
+This is a sample one-page PDF generated for demonstration purposes.
+
+About this document
+
+This file shows basic PDF elements such as headings, body text, a bulleted list, and a small table, all fitted onto a single page.
+
+Key points
+
+- Generated programmatically using Python
+- Formatted as a standard Letter-size page
+- Contains text, a list, and a table
+
+Sample table
+
+Item     Value
+-------  -----------
+Pages    1
+Format   PDF
+Purpose  Sample/Demo

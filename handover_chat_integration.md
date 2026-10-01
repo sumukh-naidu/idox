@@ -540,6 +540,8 @@ Also listed in `memory.md` §16.
 
 **Web app:** `idox_app.py` (server) and `idox_app.html` (page), see §7.8.
 
+**Benchmark:** `benchmark.py` (run or score), inputs in `benchmark_input/`, results in `benchmark_output/` (`report.md`, `results.csv`). Measured latency and accuracy of all 30 conversion variants on four fixed inputs, 3 runs each, local 2B at 512 image tokens: generation 11.5 tokens/s, a cold image read 17-20 s, whole-page conversions 12-80 s depending on length, no-model conversions under 2.5 s; accuracy 100% word recall everywhere, with one weak case (a dense text-only PDF to Word/Excel/PowerPoint scores 77% on word order because of duplicated lines). Details: `memory.md` §24.
+
 **Core modules (importable):** `blocks.py` (schema, prompts, model call, checks, repairs, about 1,700 lines), `to_docx.py`, `to_xlsx.py`, `to_pptx.py`, `ocr.py`.
 
 **Conversion scripts (CLI, not importable):** `test_pdf.py` (PDF → Word/Excel/PPT/MD, 1,269 lines), `image_to_word.py`, `image_to_pdf.py`, `image_to_excel.py`, `word_to_pdf.py`, `pdf_to_jpg.py`, `pdf_to_tiff.py`, `tiff_to_pdf.py`, `pdf_to_txt.py`.

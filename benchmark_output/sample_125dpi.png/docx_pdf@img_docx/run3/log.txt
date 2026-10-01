@@ -1,0 +1,12 @@
+========================================================================
+sample_125dpi.docx
+========================================================================
+  .docx: 6 paragraphs, 1 table(s), 0 image(s)
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+  PDF  : 1 page(s), 0 image(s), 28 KB -> out/sample_125dpi.pdf
+
+  word coverage      100.0%
+  paragraphs kept    6/6
+  table cells kept   8/8
+  verdict            PASS
+

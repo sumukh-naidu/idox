@@ -1,0 +1,18 @@
+========================================================================
+in/sample.pdf
+========================================================================
+  1 page(s), converting 1: 1 digital, 0 scanned, 0 blank (digital and scanned pages both go to the model)
+  model: http://127.0.0.1:8090
+Consider using the pymupdf_layout package for a greatly improved page layout analysis.
+  page 1: digital, 8 blocks in 29.1s (prefill 0.1s, generate 28.8s / 316 tok)
+       ! restored 1 dropped line(s) from the PDF's text
+  wrote 0.5 KB -> out/sample.txt
+
+  --- verification (read back from the saved .txt) ---
+  page 1: 100% of 40 PDF words present, 0 extra, 0 line(s) missing, size 1.00x the PDF  [PASS]
+
+  pages written:    1/1
+  pages verified:   1/1
+  29.1s total (29.1s on the model)
+  VERDICT: PASS -- every page converted, digital pages verified
+

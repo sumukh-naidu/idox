@@ -1,0 +1,54 @@
+# Extracted from text_only_1page.pdf
+
+
+---
+
+*(page 1)*
+
+Sumukh Naidu H M  |  AI Engineer  |  Wednesday, September 09, 2026
+
+## Daily Work Report
+
+Discover → Crawl → Clean → Classify → Extract → Resolve → Deliver
+
+Sumukh Naidu H M | Al Engineer | Wednesday, September 09, 2026
+
+## Today's Work
+
+Project Corporate Intelligence Extraction POC
+
+Pipeline Discover → Crawl → Clean → Classify → Resolve → Deliver
+
+Harness reads only the existing data/cleaned/*.json output — zero network calls — and scores
+
+- Built out the CWI-09 benchmark / evaluation harness for the extraction pipeline, structured as its own top-level benchmark/package (schema.py, normalize.py, merge.py, labels.py, scorer.py, report.py, cli.py).
+
+against hand-labeled ground truth stored per company in data/labels/*.json.
+
+Harness reads only the existing data/cleaned.json output — zero network calls — and scores against hand-labeled ground truth stored per company in data/labels/.json.
+
+- Implemented CLI commands (label and run) for labeling ground truth and executing scoring runs.
+
+Implemented six-outcome scoring logic: correct, incorrect, missing, false_positive, correctly_abstained, and unlabeled — computing precision, coverage, and false-population-rate metrics, with safe null handling on zero-denominator cases.
+
+- Added per-field match-type rules (exact / fuzzy / phone / URL) so comparisons account for how each field type should reasonably be matched.
+
+Added a naive, eval-only-per-company merge step to stand in for the not-yet-built Resolve stage, plus explicit "pending" sentinels for citation_validity, since CWI-10 (citation verification) has not been built yet — avoided taking a number for an unmeasured metric.
+
+Added a naive, eval-only per-company merge step to stand in for the not-yet-built Resolve stage, plus
+
+- Wrote and passed all 43 unit tests covering the harness (test_labels, test_merge, test_normalize, test_scorer).
+
+yet — avoided faking a number for an unmeasured metric.
+
+## Upcoming Work
+
+- Starting work on Odoo CRM integration based on a requirement document that has been provided.
+
+Goal is to shortlist only the features genuinely needed for the requirement, avoiding unnecessary scope
+
+to the stated requirement, rather than building from scratch.
+
+Will review Odoo's open-source codebase to identify which existing CRM features are actually relevant to the stated requirement, avoiding unnecessary scope from Odoo's full CRM feature set.
+
+*Generated report — Corporate Intelligence Extraction POC*

@@ -731,6 +731,12 @@ parser.add_argument("--pptx", metavar="FILE.pptx",
 parser.add_argument("--no-ocr", action="store_true",
                     help="skip OCR verification on scanned pages, leaving "
                          "checks 2 and 4 reporting N/A as before")
+parser.add_argument("--no-layout", action="store_true",
+                    help="scanned pages only: skip the OCR layout step and keep the model's own "
+                         "alignment and sizes (the old behaviour)")
+parser.add_argument("--refine-layout", action="store_true",
+                    help="scanned PDFs: after writing the .docx, render it with LibreOffice, compare every block with "
+                         "the scan and correct the gaps (2 passes; needs soffice; slower, most faithful)")
 parser.add_argument("--scan-mode", choices=("text", "image", "both"),
                     default="text",
                     help="what to do with a page that has NO text layer. "
@@ -759,6 +765,8 @@ page_image_sets = []          # one list of extracted images per page (often [])
 scan_image_sets = []          # scanned-page images destined for a SEPARATE file
 source_texts = []             # the PDF's own text, for verifying that .docx
 source_layout = None          # page size/margins/font, so Word matches the PDF
+layout_ratios = {}            # scanned pages: extracted_pages index -> heading size ratios from the OCR layout step
+scan_info = {}                # scanned pages: extracted_pages index -> (page number, rendered page image)
 
 # Latency breakdown: these accumulate across every page in the loop, then get
 # printed as one total at the very end. Each is the standard
@@ -1113,6 +1121,25 @@ for pno in targets:
         if fixed:
             print(f"\n  layout: appearance of {fixed} block(s) measured from "
                   f"the text layer, replacing the model's estimates")
+    elif not image_only and not args.no_layout and ocr.have_tesseract():
+        # A scanned page has no text layer, so nothing here knows where the lines really sit and the model's
+        # align/size are guesses (it centres left-aligned headings). Tesseract's line positions on the page image
+        # are measured instead. Text is never changed; any failure keeps the model's own formatting.
+        try:
+            import ocr_layout
+            layout_started = time.time()
+            page, layout_rows, layout_sizes, _layout_info = ocr_layout.apply_ocr_layout(page, img_path)
+            layout_ratios[len(extracted_pages)] = layout_sizes
+            scan_info[len(extracted_pages)] = (pno, img_path)
+            print(f"\n  layout: scanned page measured with OCR ({time.time() - layout_started:.1f}s)")
+            for bi, kind, text, m_al, o_al, ratio in layout_rows:
+                if kind == "table":
+                    print(f"       table: {text}")
+                elif not o_al.startswith("(") and m_al != o_al:
+                    print(f"       {kind} {text!r}: model said {m_al}, page shows {o_al}")
+        except Exception as exc:
+            print(f"\n  ! OCR layout step failed ({type(exc).__name__}: {exc}); "
+                  f"keeping the model's own formatting")
 
     extracted_pages.append(page)
     page_image_sets.append(page_images)
@@ -1138,10 +1165,33 @@ print(f"clean extraction written to {args.out}")
 # extracted and validated above -- NOT once per page.
 if args.docx and extracted_pages:
     conversion_started = time.time()
-    problems = build_docx(
-        extracted_pages, args.docx, title=os.path.basename(args.pdf),
-        layout=source_layout, image_sets=page_image_sets,
-    )
+    problems = None
+    if scan_info and len(scan_info) == len(extracted_pages):
+        # Every page is a scan: lay the document out like the scans (margins, paragraph gaps, inserted pictures,
+        # all measured). A PDF that mixes scanned and digital pages keeps the ordinary path below.
+        try:
+            import ocr_layout
+            order = sorted(scan_info)
+            sane = _sane_page_rect(doc[scan_info[order[0]][0]])
+            declared = doc[scan_info[order[0]][0]].rect
+            problems = ocr_layout.build_scanned_docx(
+                [extracted_pages[i] for i in order], [layout_ratios[i] for i in order],
+                [scan_info[i][1] for i in order], doc, [scan_info[i][0] for i in order], args.docx, args.dpi,
+                (sane.width, sane.height), scale=sane.width / declared.width, image_dir=IMAGE_DIR,
+                refine=args.refine_layout)
+        except Exception as exc:
+            print(f"  ! scanned-page layout failed ({type(exc).__name__}: {exc}); using the ordinary layout")
+            problems = None
+    if problems is None:
+        problems = build_docx(
+            extracted_pages, args.docx, title=os.path.basename(args.pdf),
+            layout=source_layout, image_sets=page_image_sets,
+        )
+        if layout_ratios:
+            import ocr_layout
+            ocr_layout.apply_sizes_pages(
+                args.docx, [(extracted_pages[i], r) for i, r in sorted(layout_ratios.items())],
+                body_pt=(source_layout or {}).get("body_pt", 11))
     total_conversion_time += time.time() - conversion_started
     print(f"Word document written to {args.docx}")
     if source_layout:

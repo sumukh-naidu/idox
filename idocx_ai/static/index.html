@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iDocx Test Bench</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --ink: #15181d; --muted: #67707c; --line: #e1e4e9;
+    --accent: #2f6df6; --user: #e9f0ff; --ok: #177a46; --bad: #c2382f; --code: #f1f3f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121418; --panel: #1b1f25; --ink: #e7e9ec; --muted: #9aa3ae; --line: #2b313a;
+      --accent: #6d9bff; --user: #1f2b44; --ok: #6bd59a; --bad: #ff7b72; --code: #232830;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121418; --panel: #1b1f25; --ink: #e7e9ec; --muted: #9aa3ae; --line: #2b313a;
+    --accent: #6d9bff; --user: #1f2b44; --ok: #6bd59a; --bad: #ff7b72; --code: #232830;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 16px; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .status { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--bad); }
+  header .spacer { flex: 1; }
+  button { font: inherit; font-size: 13.5px; font-weight: 550; cursor: pointer; border: 0; border-radius: 8px;
+           padding: 8px 14px; background: var(--accent); color: #fff; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+
+  .cols { flex: 1; display: grid; grid-template-columns: 300px 1fr; gap: 14px; min-height: 0; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } .wrap { height: auto; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+           display: flex; flex-direction: column; min-height: 0; }
+  .panel h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+              margin: 0 0 10px; font-weight: 600; }
+
+  #drop { border: 1.5px dashed var(--line); border-radius: 9px; padding: 22px 12px; text-align: center;
+          color: var(--muted); cursor: pointer; font-size: 13.5px; }
+  #drop.hot { border-color: var(--accent); }
+  #files { list-style: none; margin: 12px 0 0; padding: 0; overflow-y: auto; }
+  #files li { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  #files .name { font-weight: 550; word-break: break-all; }
+  #files .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  #files .tag { font-size: 11px; padding: 0 6px; border-radius: 10px; border: 1px solid var(--line); }
+  a { color: var(--accent); }
+
+  #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+  .msg { max-width: 88%; padding: 9px 12px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.bot { align-self: flex-start; border: 1px solid var(--line); }
+  .event { align-self: flex-start; font-size: 12.5px; color: var(--muted); max-width: 88%; }
+  .event summary { cursor: pointer; }
+  .event .ok { color: var(--ok); } .event .bad { color: var(--bad); }
+  .event pre { background: var(--code); padding: 8px; border-radius: 7px; overflow-x: auto; font-size: 11.5px;
+               margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+  .err { align-self: flex-start; color: var(--bad); font-size: 13px; }
+  .stats { align-self: flex-start; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); font-size: 13.5px; margin: auto; text-align: center; }
+
+  form { display: flex; gap: 8px; margin-top: 12px; }
+  textarea { flex: 1; font: inherit; resize: none; padding: 9px 11px; border-radius: 8px; color: var(--ink);
+             background: var(--bg); border: 1px solid var(--line); height: 44px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>iDocx test bench</h1>
+    <span class="status"><span class="dot" id="dot"></span><span id="status">checking…</span></span>
+    <span class="spacer"></span>
+    <button class="ghost" id="newchat">New chat</button>
+  </header>
+
+  <div class="cols">
+    <div class="panel">
+      <h2>Files</h2>
+      <div id="drop">Drop PDFs here, or click to choose</div>
+      <input type="file" id="picker" accept=".pdf,application/pdf" multiple hidden>
+      <ul id="files"></ul>
+    </div>
+
+    <div class="panel">
+      <h2>Chat</h2>
+      <div id="log"><div class="empty" id="empty">Upload a PDF, then ask for something —<br>e.g. "how many pages does this have, and are any blank?"</div></div>
+      <form id="form">
+        <textarea id="input" placeholder="Ask iDocx to do something with your PDFs…  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button id="send">Send</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let sessionId = null;
+let busy = false;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function scrollDown() { $("log").scrollTop = $("log").scrollHeight; }
+function add(node) { $("empty")?.remove(); $("log").appendChild(node); scrollDown(); return node; }
+
+async function newSession() {
+  const r = await fetch("/sessions", { method: "POST" });
+  sessionId = (await r.json()).session_id;
+  $("files").innerHTML = "";
+  $("log").innerHTML = "";
+  $("log").appendChild(el("div", "empty", "New chat. Upload a PDF, then ask for something."))
+    .id = "empty";
+}
+
+async function health() {
+  try {
+    const j = await (await fetch("/health")).json();
+    $("dot").className = "dot " + (j.model ? "up" : "down");
+    $("status").textContent = j.model ? j.model : "model server not running";
+  } catch {
+    $("dot").className = "dot down";
+    $("status").textContent = "backend unreachable";
+  }
+}
+
+// ---------------------------------------------------------------- files
+function showFile(f, label) {
+  const li = el("li");
+  li.appendChild(el("div", "name", f.name));
+  const meta = el("div", "meta");
+  meta.appendChild(el("span", null, `${f.pages} page${f.pages === 1 ? "" : "s"}`));
+  meta.appendChild(el("span", null, `${Math.max(1, Math.round(f.size / 1024))} KB`));
+  meta.appendChild(el("span", null, f.id));
+  if (label) meta.appendChild(el("span", "tag", label));
+  const a = el("a", null, "download");
+  a.href = `/files/${encodeURIComponent(f.id)}`;
+  meta.appendChild(a);
+  li.appendChild(meta);
+  $("files").appendChild(li);
+}
+
+// Sessions live in the backend's memory, so a backend restart forgets them.
+async function recoverSession() {
+  await newSession();
+  add(el("div", "err", "The backend was restarted and forgot this chat, so a new one was started."));
+}
+
+async function upload(fileList) {
+  for (const file of fileList) {
+    const post = () => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("session_id", sessionId);
+      return fetch("/files", { method: "POST", body: fd });
+    };
+    let r = await post();
+    if (r.status === 404) { await recoverSession(); r = await post(); }
+    const j = await r.json();
+    if (!r.ok) { add(el("div", "err", `Upload failed for ${file.name}: ${j.detail}`)); continue; }
+    showFile(j);
+  }
+}
+
+const drop = $("drop");
+drop.addEventListener("click", () => $("picker").click());
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("hot"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("hot"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("hot"); upload(e.dataTransfer.files); });
+$("picker").addEventListener("change", (e) => { upload(e.target.files); e.target.value = ""; });
+
+// ---------------------------------------------------------------- chat
+function showEvent(ev) {
+  if (ev.type === "text") add(el("div", "msg bot", ev.text));
+  else if (ev.type === "tool_started") {
+    const d = el("details", "event");
+    const s = el("summary");
+    s.appendChild(el("span", null, `⋯ ${ev.tool}`));
+    d.appendChild(s);
+    d.appendChild(el("pre", null, "args: " + JSON.stringify(ev.args, null, 2)));
+    d.dataset.tool = ev.tool;
+    add(d);
+  } else if (ev.type === "tool_finished") {
+    const pending = [...document.querySelectorAll("details.event")].reverse()
+      .find((d) => d.dataset.tool === ev.tool && !d.dataset.done);
+    const d = pending || add(el("details", "event"));
+    d.dataset.done = "1";
+    const s = d.querySelector("summary") || d.appendChild(el("summary"));
+    s.textContent = "";
+    s.appendChild(el("span", ev.ok ? "ok" : "bad", ev.ok ? "✓ " : "✗ "));
+    s.appendChild(el("span", null, `${ev.tool}  ·  ${ev.seconds}s`));
+    d.appendChild(el("pre", null, ev.ok ? JSON.stringify(ev.result, null, 2) : "error: " + ev.error));
+    scrollDown();
+  } else if (ev.type === "file_created") showFile(ev.file, "created");
+  else if (ev.type === "error") add(el("div", "err", ev.message));
+  else if (ev.type === "done") {
+    const s = ev.stats || {};
+    add(el("div", "stats",
+      `${s.model_calls} model call${s.model_calls === 1 ? "" : "s"} · ${s.total_seconds}s total · ` +
+      `${s.prompt_tokens} prompt + ${s.completion_tokens} generated tokens`));
+  }
+}
+
+async function send(text) {
+  busy = true; $("send").disabled = true;
+  add(el("div", "msg user", text));
+  try {
+    const r = await fetch(`/sessions/${sessionId}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (r.status === 404) {
+      await recoverSession();
+      add(el("div", "err", "Upload your files again, then resend the message."));
+      return;
+    }
+    if (!r.ok) { add(el("div", "err", `Request failed: ${(await r.json()).detail}`)); return; }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) showEvent(JSON.parse(line));
+      }
+    }
+  } catch (e) {
+    add(el("div", "err", `Connection error: ${e.message}`));
+  } finally {
+    busy = false; $("send").disabled = false; $("input").focus();
+  }
+}
+
+$("form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("input").value.trim();
+  if (!text || busy) return;
+  $("input").value = "";
+  send(text);
+});
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); }
+});
+$("newchat").addEventListener("click", () => { if (!busy) newSession(); });
+
+newSession();
+health();
+setInterval(health, 10000);
+</script>
+</body>
+</html>

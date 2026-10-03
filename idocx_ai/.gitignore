@@ -2,3 +2,7 @@
 data/
 __pycache__/
 *.log
+# Check results: share only each check's readable report.txt. The generated files are
+# rewritten with new random names on every run; anyone can regenerate them.
+features/*/output/*/*
+!features/*/output/*/report.txt

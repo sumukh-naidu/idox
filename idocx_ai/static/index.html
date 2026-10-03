@@ -295,7 +295,7 @@ function showFile(f, label) {
   const li = el("li");
   li.appendChild(el("div", "name", f.name));
   const meta = el("div", "meta");
-  meta.appendChild(el("span", null, `${f.pages} page${f.pages === 1 ? "" : "s"}`));
+  meta.appendChild(el("span", null, f.ext && f.ext !== "pdf" ? `${f.ext} file` : `${f.pages} page${f.pages === 1 ? "" : "s"}`));
   meta.appendChild(el("span", null, `${Math.max(1, Math.round(f.size / 1024))} KB`));
   meta.appendChild(el("span", null, f.id));
   if (label) meta.appendChild(el("span", "tag", label));

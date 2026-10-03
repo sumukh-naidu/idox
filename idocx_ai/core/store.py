@@ -34,12 +34,19 @@ def _safe_name(name: str) -> str:
     return name[:120]
 
 
-def save_file(data: bytes, name: str, pages: int, source: str, parents=None, page_origin=None) -> dict:
+EXTENSIONS = {"pdf": "application/pdf", "txt": "text/plain; charset=utf-8"}
+
+
+def save_file(data: bytes, name: str, pages: int, source: str, parents=None, page_origin=None,
+              ext: str = "pdf") -> dict:
     """page_origin[i] = [uploaded file id, page number] that page i+1 came from, so a
-    later request can say "original page 6" after other pages were removed."""
+    later request can say "original page 6" after other pages were removed.
+    ext: "pdf", or "txt" for text outputs such as a translation's searchable copy."""
+    if ext not in EXTENSIONS:
+        raise ValueError(f"unsupported file type: {ext}")
     fid = f"f_{uuid.uuid4().hex[:12]}"
-    (FILES / f"{fid}.pdf").write_bytes(data)
-    meta = {"id": fid, "name": _safe_name(name), "pages": pages, "size": len(data),
+    (FILES / f"{fid}.{ext}").write_bytes(data)
+    meta = {"id": fid, "name": _safe_name(name), "pages": pages, "size": len(data), "ext": ext,
             "source": source, "parents": parents or [], "created": time.time(),
             "page_origin": page_origin or [[fid, n] for n in range(1, pages + 1)]}
     (FILES / f"{fid}.json").write_text(json.dumps(meta))
@@ -52,7 +59,8 @@ def get_file(fid: str) -> tuple[dict, Path]:
     meta_path = FILES / f"{fid}.json"
     if not meta_path.exists():
         raise NotFound(f"no file with id {fid}")
-    return json.loads(meta_path.read_text()), FILES / f"{fid}.pdf"
+    meta = json.loads(meta_path.read_text())
+    return meta, FILES / f"{fid}.{meta.get('ext', 'pdf')}"
 
 
 def new_session() -> str:

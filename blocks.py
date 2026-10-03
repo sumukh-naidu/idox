@@ -1424,34 +1424,47 @@ def _extract_page_raw_server(image_path: str, base_url: str,
 
     schema_cls = Page if include_look else PageNoLook
     started = _time.time()
-    resp = requests.post(
-        f"{base_url.rstrip('/')}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
-        json={
-            "model": os.environ.get("IDOX_MODEL", "manual") or "manual",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": [
-                    {"type": "text", "text": USER_PROMPT},
-                    {"type": "image_url",
-                     "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
-                ]},
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "page", "schema": schema_cls.model_json_schema()},
-            },
-            "temperature": 0,
-            # See the matching comment in the Ollama path above -- confirmed
-            # directly on a real page: without this, greedy decoding re-emitted
-            # already-written blocks verbatim instead of stopping the array.
-            "repeat_penalty": 1.15,
-            "n_predict": num_predict,
-            **({"chat_template_kwargs": {"enable_thinking": thinking == "on"}}
-               if thinking in ("on", "off") else {}),
+    body = {
+        "model": os.environ.get("IDOX_MODEL", "manual") or "manual",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text", "text": USER_PROMPT},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
+            ]},
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "page", "schema": schema_cls.model_json_schema()},
         },
-        timeout=timeout,
-    )
+        "temperature": 0,
+        # See the matching comment in the Ollama path above -- confirmed
+        # directly on a real page: without this, greedy decoding re-emitted
+        # already-written blocks verbatim instead of stopping the array.
+        "repeat_penalty": 1.15,
+        "n_predict": num_predict,
+        **({"chat_template_kwargs": {"enable_thinking": thinking == "on"}}
+           if thinking in ("on", "off") else {}),
+    }
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    # IDOX_LIGHT_JSON=1: ask for the same JSON through a grammar that forbids newlines and indentation (one space
+    # after ':' and ','). About 5-11% faster with the same WORD accuracy on the five-route suite, BUT it changed the
+    # block structure on hi.png (cold server: the two lines came back as one block plus an empty one), so it stays
+    # OFF by default and needs a block-structure check before use; see json_grammar.py. A server that rejects
+    # the grammar request is retried once with the normal JSON-schema request.
+    if os.environ.get("IDOX_LIGHT_JSON", "").strip() == "1":
+        from json_grammar import schema_to_gbnf
+        light = {k: v for k, v in body.items() if k != "response_format"}
+        light["grammar"] = schema_to_gbnf(schema_cls.model_json_schema())
+        resp = requests.post(url, headers=headers, json=light, timeout=timeout)
+        if resp.status_code in (400, 422):
+            print("  ! server refused the light-JSON grammar; retrying with the JSON-schema request")
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+    else:
+        resp = requests.post(url, headers=headers, json=body, timeout=timeout)
     wall_elapsed = _time.time() - started
     if resp.status_code == 401:
         raise RuntimeError("the server rejected the API key (401): the key is "

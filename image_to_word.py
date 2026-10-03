@@ -102,7 +102,7 @@ def embed_only(image_path: str, out_dir: str, name: str) -> bool:
 
 
 def run(image_path: str, model: str, out_dir: str, base_url: str = None,
-        mode: str = "text") -> bool:
+        mode: str = "text", layout: bool = True) -> bool:
     name = os.path.splitext(os.path.basename(image_path))[0]
     label = base_url or model
     print("=" * 72)
@@ -117,7 +117,7 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
         # Two separate files, never mixed -- same rule as --scan-mode both.
         ok_image = embed_only(image_path, out_dir, f"{name}_scan")
         ok_text = run(image_path, model, out_dir, base_url=base_url,
-                      mode="text")
+                      mode="text", layout=layout)
         return ok_image and ok_text
 
     started = time.time()
@@ -203,7 +203,26 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
 
     os.makedirs(out_dir, exist_ok=True)
     final_path = os.path.join(out_dir, f"{name}.docx")
-    build_docx([page], final_path)
+
+    # Alignment, heading size and blank table rows are MEASURED from the image's own line geometry (Tesseract)
+    # instead of taken from the model's guess, which centres left-aligned headings. Text is never changed.
+    # Costs about 0.1-1 s; skipped with --no-layout, and any failure falls back to the model's own formatting.
+    layout_page, ratios = page, {}
+    if layout and ocr.have_tesseract():
+        try:
+            import ocr_layout       # imported here so a missing pytesseract only skips this step
+            layout_page, rows, ratios, _info = ocr_layout.apply_ocr_layout(page, image_path)
+            for bi, kind, text, m_al, o_al, ratio in rows:
+                if kind == "table":
+                    print(f"  layout: table {text}")
+                elif not o_al.startswith("(") and m_al != o_al:
+                    print(f"  layout: {kind} {text!r}: model said {m_al}, image shows {o_al}")
+        except Exception as exc:
+            print(f"  ! OCR layout step failed ({type(exc).__name__}: {exc}); using the model's own formatting")
+            layout_page, ratios = page, {}
+    build_docx([layout_page], final_path)
+    if ratios:
+        ocr_layout.apply_sizes(final_path, layout_page, ratios)
 
     print(f"  -> {final_path}")
     print()
@@ -228,6 +247,8 @@ parser.add_argument("--mode", choices=("text", "image", "both"), default="text",
                          "all -- fast, but not editable. 'both' writes both, "
                          "as two SEPARATE files (name.docx and "
                          "name_scan.docx), never mixed into one.")
+parser.add_argument("--no-layout", action="store_true",
+                    help="skip the OCR layout step and keep the model's own alignment and sizes")
 args = parser.parse_args()
 
 paths = []
@@ -241,7 +262,7 @@ for path in paths:
         print(f"skipping {path}: not found")
         continue
     if run(path, args.model, args.outdir, base_url=args.base_url,
-           mode=args.mode):
+           mode=args.mode, layout=not args.no_layout):
         ok += 1
     else:
         fail += 1

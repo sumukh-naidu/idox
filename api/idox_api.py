@@ -18,7 +18,10 @@ so every conversion endpoint answers 202 with a job, and the caller polls it.
 
 ENDPOINTS
     GET    /health                      model server and tool status
-    POST   /convert/pdf-to-word         upload a PDF -> job (202)
+    POST   /convert/pdf-to-word         upload a PDF -> job (202), result .docx
+    POST   /convert/pdf-to-powerpoint   upload a PDF -> job (202), result .pptx
+    POST   /convert/pdf-to-jpg          upload a PDF -> job (202), one .jpg per page (no model)
+    POST   /convert/jpg-to-pdf          upload a JPG -> job (202), result .pdf (model + LibreOffice)
     GET    /jobs/{id}                   state, page progress, summary, files
     GET    /jobs/{id}/files/{name}      download one output file
     GET    /jobs/{id}/log               the converter's full output, as text
@@ -93,7 +96,21 @@ PAGES_RE = re.compile(r"^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$")
 ROUTES = {
     "pdf_docx": dict(script="test_pdf.py", model=True, exts=(".pdf",), magic=(b"%PDF-",),
                      out_ext="docx"),
+    "pdf_pptx": dict(script="test_pdf.py", model=True, exts=(".pdf",), magic=(b"%PDF-",),
+                     out_ext="pptx"),
+    "pdf_jpg": dict(script="pdf_to_jpg.py", model=False, exts=(".pdf",), magic=(b"%PDF-",),
+                    out_ext="jpg"),
+    "jpg_pdf": dict(script="image_to_pdf.py", model=True, exts=(".jpg", ".jpeg"),
+                    magic=(b"\xff\xd8\xff",), out_ext="pdf", needs=("soffice",)),
 }
+
+# External programs a route cannot run without, and how to check for each.
+TOOLS = {"soffice": lambda: bool(shutil.which("soffice") or shutil.which("libreoffice")),
+         "tesseract": lambda: bool(shutil.which("tesseract"))}
+TOOL_NAMES = {"soffice": "LibreOffice", "tesseract": "Tesseract"}
+
+# test_pdf.py writes one Office format per flag; the routes that use it differ only here.
+TEST_PDF_FLAGS = {"pdf_docx": "--docx", "pdf_pptx": "--pptx"}
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -106,13 +123,25 @@ def build_command(job: dict) -> list:
     """The argument list for one job, run from the job's folder. Never a shell string."""
     o, stem = job["options"], job["stem"]
     inp = f"in/{stem}{job['ext']}"
-    if job["route"] == "pdf_docx":
+    if job["route"] in TEST_PDF_FLAGS:
+        out_ext = ROUTES[job["route"]]["out_ext"]
         cmd = [PY, "-u", str(REPO / "test_pdf.py"), inp, "--base-url", BASE_URL,
-               "--docx", f"out/{stem}.docx", "--out", f"out/{stem}.md",
+               TEST_PDF_FLAGS[job["route"]], f"out/{stem}.{out_ext}", "--out", f"out/{stem}.md",
                "--scan-mode", o.get("scan_mode", "text")]
         if o.get("pages"):
             cmd += ["--pages", o["pages"]]
         return cmd
+    if job["route"] == "pdf_jpg":
+        # pdf_to_jpg.py makes out/<stem>/page_001.jpg, page_002.jpg, ...
+        cmd = [PY, "-u", str(REPO / "pdf_to_jpg.py"), inp, "--outdir", "out",
+               "--dpi", str(o["dpi"]), "--quality", str(o["quality"])]
+        if o.get("pages"):
+            cmd += ["--pages", o["pages"]]
+        return cmd
+    if job["route"] == "jpg_pdf":
+        # image_to_pdf.py makes out/<stem>.pdf
+        return [PY, "-u", str(REPO / "image_to_pdf.py"), inp,
+                "--base-url", BASE_URL, "--outdir", "out"]
     raise ValueError(f"no command for route {job['route']}")
 
 
@@ -169,9 +198,13 @@ def list_outputs(jid: str) -> list:
 
 def progress_of(job: dict, text: str):
     """{done, total} pages, read from the converter's own progress lines, or None."""
-    if ROUTES[job["route"]]["script"] == "test_pdf.py":
+    script = ROUTES[job["route"]]["script"]
+    if script == "test_pdf.py":
         m = re.search(r"testing (\d+):", text)
         done = len(re.findall(r"^Tier 1 (?:--|FAILED)", text, re.M))
+    elif script == "pdf_to_jpg.py":
+        m = re.search(r"converting (\d+) at", text)
+        done = len(re.findall(r"^  page \d+: (?:\d+x\d+px|FAILED)", text, re.M))
     else:
         return None
     total = int(m.group(1)) if m else None
@@ -190,21 +223,37 @@ def summarize(text: str) -> list:
 
 
 PAGE_HEAD = re.compile(r"^PAGE (\d+)$", re.M)
-CHECK_LINE = re.compile(r"^  (\d)\. ([a-z -]+?)(?: \(advisory\))?:\s+(PASS|FAIL|N/A|differs|matches)\b[ \t]*(.*)$",
+CHECK_LINE = re.compile(r"^  (\d)\. ([A-Za-z -]+?)(?: \(advisory\))?:\s+(PASS|FAIL|N/A|differs|matches)\b[ \t]*(.*)$",
                         re.M)
 CHECK_KEYS = {"self-consistency": "self_consistency", "text-layer grounding": "grounding",
-              "geometry": "geometry", "content coverage": "coverage"}
+              "geometry": "geometry", "content coverage": "coverage",
+              # image_to_*.py: the same checks, against OCR because an image has no text layer
+              "OCR grounding": "grounding", "OCR coverage": "coverage"}
+CHECKED_SCRIPTS = ("test_pdf.py", "image_to_pdf.py")
+# image_to_*.py, when OCR read nothing or is missing: "  2/4. OCR grounding/coverage: N/A (why)"
+OCR_NA_LINE = re.compile(r"^  2/4\. OCR grounding/coverage:\s+N/A\s*\((.+)\)\s*$", re.M)
 
 
 def page_checks(log: str) -> list:
-    """test_pdf.py's four checks, per page, from its "--- checks ---" lines.
+    """The model checks, per page, from the converter's "--- checks ---" lines.
 
     Check 3 (geometry) is advisory in test_pdf.py itself and never makes a job need
-    review. On a scanned page, checks 2 and 4 compare against an OCR reading of the
-    page, not a real text layer, so a FAIL there can be OCR misreading the scan as
-    much as the model missing text -- it still needs a person to look.
+    review. On a scanned page or an image, checks 2 and 4 compare against an OCR
+    reading, not a real text layer, so a FAIL there can be OCR misreading the picture
+    as much as the model missing text -- it still needs a person to look.
     """
     heads = list(PAGE_HEAD.finditer(log))
+    if not heads:
+        # image_to_*.py: one image, no PAGE headings, always checked against OCR.
+        checks = {CHECK_KEYS.get(m.group(2).strip(), m.group(2).strip()):
+                  {"result": m.group(3), "detail": m.group(4).strip(" ()") or None}
+                  for m in CHECK_LINE.finditer(log)}
+        na = OCR_NA_LINE.search(log)
+        if na:
+            # Not a failure, but the text was NOT compared with anything -- say so.
+            for key in ("grounding", "coverage"):
+                checks[key] = {"result": "N/A", "detail": na.group(1)}
+        return [{"page": 1, "scanned": True, "checks": checks}] if checks else []
     pages = []
     for i, h in enumerate(heads):
         chunk = log[h.end():heads[i + 1].start() if i + 1 < len(heads) else len(log)]
@@ -222,7 +271,7 @@ def check_problems(pages: list) -> list:
     for p in pages:
         for key, c in p["checks"].items():
             if key != "geometry" and c["result"] == "FAIL":
-                against = "an OCR reading of the scan" if p["scanned"] else "the PDF's text layer"
+                against = "an OCR reading of the picture" if p["scanned"] else "the PDF's text layer"
                 out.append(f"Page {p['page']}: {key.replace('_', ' ')} check failed "
                            f"({c['detail'] or 'no detail'}), compared against {against}.")
     return out
@@ -239,7 +288,7 @@ def finish_job(job: dict, rc, timed_out: bool) -> None:
     log = read_log(job["id"])
     outputs = list_outputs(job["id"])
     problems = [msg for rx, msg in PROBLEMS if rx.search(log)]
-    pages = page_checks(log) if ROUTES[job["route"]]["script"] == "test_pdf.py" else []
+    pages = page_checks(log) if ROUTES[job["route"]]["script"] in CHECKED_SCRIPTS else []
     problems += check_problems(pages)
     job.update(outputs=outputs, summary=summarize(log), problems=problems, pages=pages,
                finished=time.time(), exit_code=rc)
@@ -382,6 +431,17 @@ def get_job(jid: str) -> dict:
     return JOBS[jid]
 
 
+def page_option(pages: str) -> dict:
+    """{"pages": "1-3"} for a page range, {} for all pages; 422 for anything else."""
+    pages = (pages or "").replace(" ", "").lower()
+    if not pages or pages == "all":
+        return {}
+    if not PAGES_RE.match(pages):
+        raise HTTPException(422, f"pages should be all, or look like 1, 1-3 or 2,4 "
+                                 f"(got {pages[:20]!r})")
+    return {"pages": pages}
+
+
 def safe_stem(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name or "").stem).strip("._")
     return stem[:80] or "document"
@@ -389,6 +449,10 @@ def safe_stem(name: str) -> str:
 
 async def create_job(route_id: str, upload: UploadFile, options: dict) -> dict:
     route = ROUTES[route_id]
+    missing = [TOOL_NAMES[t] for t in route.get("needs", ()) if not TOOLS[t]()]
+    if missing:
+        raise HTTPException(503, f"This conversion needs {', '.join(missing)}, which is not "
+                                 f"installed on the server.")
     ext = Path(upload.filename or "").suffix.lower()
     if ext not in route["exts"]:
         raise HTTPException(415, f"Expected a {' or '.join(route['exts'])} file.")
@@ -449,8 +513,7 @@ def health():
         for j in JOBS.values():
             counts[j["state"]] = counts.get(j["state"], 0) + 1
     return {"model_server": model,
-            "tools": {"soffice": bool(shutil.which("soffice") or shutil.which("libreoffice")),
-                      "tesseract": bool(shutil.which("tesseract"))},
+            "tools": {name: ok() for name, ok in TOOLS.items()},
             "jobs": counts}
 
 
@@ -472,14 +535,70 @@ async def pdf_to_word(
     failed, then download the .docx from the job's files. A Markdown copy of what the
     model read (.md) is also produced.
     """
-    options = {"scan_mode": scan_mode}
-    pages = (pages or "").replace(" ", "").lower()
-    if pages and pages != "all":
-        if not PAGES_RE.match(pages):
-            raise HTTPException(422, f"pages should be all, or look like 1, 1-3 or 2,4 "
-                                     f"(got {pages[:20]!r})")
-        options["pages"] = pages
+    options = {"scan_mode": scan_mode, **page_option(pages)}
     return await create_job("pdf_docx", file, options)
+
+
+@app.post("/convert/pdf-to-powerpoint", status_code=202)
+async def pdf_to_powerpoint(
+    file: UploadFile = File(..., description="The PDF to convert."),
+    pages: str = Form("all", description="all, or e.g. 1, 1-3 or 2,4."),
+    # No 'both' here: test_pdf.py writes the separate _scan file only for Word, so
+    # for a deck 'both' would silently behave like 'text'.
+    scan_mode: Literal["text", "image"] = Form(
+        "text", description="Pages with no text layer (scans): 'text' reads them with the "
+                            "model into editable slide text; 'image' puts the page picture "
+                            "on the slide, no model, not editable."),
+):
+    """PDF -> PowerPoint (.pptx). One slide per page; the first heading on a page
+    becomes its slide title. Every page is read by the vision model, digital and scanned.
+
+    Returns a job at once (202). Poll GET /jobs/{id} until state is done, review or
+    failed, then download the .pptx from the job's files. A Markdown copy of what the
+    model read (.md) is also produced.
+    """
+    options = {"scan_mode": scan_mode, **page_option(pages)}
+    return await create_job("pdf_pptx", file, options)
+
+
+@app.post("/convert/pdf-to-jpg", status_code=202)
+async def pdf_to_jpg(
+    file: UploadFile = File(..., description="The PDF to convert."),
+    pages: str = Form("all", description="all, or e.g. 1, 1-3 or 2,4."),
+    dpi: int = Form(150, ge=30, le=600,
+                    description="Resolution. 150 is screen quality; 300 is print quality "
+                                "(about 4x the file size)."),
+    quality: int = Form(90, ge=1, le=100,
+                        description="JPG quality, 1-100. Higher is sharper and larger."),
+):
+    """PDF -> JPG images, one per page. No model: each page is drawn exactly as a PDF
+    viewer shows it, so digital and scanned PDFs work the same and take about a second
+    per page.
+
+    Returns a job at once (202). The files are <name>/page_001.jpg, page_002.jpg, ...
+    Each JPG is read back and checked against the PDF (size, not blank, every text
+    line on ink, and an OCR word check), so a job is 'review' if a page fails.
+    """
+    options = {"dpi": dpi, "quality": quality, **page_option(pages)}
+    return await create_job("pdf_jpg", file, options)
+
+
+@app.post("/convert/jpg-to-pdf", status_code=202)
+async def jpg_to_pdf(
+    file: UploadFile = File(..., description="The JPG / JPEG image to convert."),
+):
+    """JPG -> PDF, with editable text. The vision model reads the image (text, headings,
+    tables) and the page is rebuilt from that reading as a text PDF, via Word and
+    LibreOffice. About 30 s to a few minutes per image on the local 2B.
+
+    This is NOT the picture placed on a page: the PDF contains the model's reading of
+    the image, so it can change letters or miss content. An image has no text layer,
+    so the reading is checked against an OCR reading of the image instead; a failed
+    check makes the job 'review'.
+
+    Returns a job at once (202). The result is <name>.pdf.
+    """
+    return await create_job("jpg_pdf", file, {})
 
 
 @app.get("/jobs/{jid}")

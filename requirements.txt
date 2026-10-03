@@ -24,3 +24,9 @@ pillow==12.3.0
 pytesseract==0.3.13
 requests==2.34.2
 ollama==0.6.2
+
+# The HTTP API (idox_api.py). python-multipart is what lets FastAPI accept file
+# uploads; uvicorn is the server that runs it.
+fastapi==0.142.2
+uvicorn==0.54.0
+python-multipart==0.0.32

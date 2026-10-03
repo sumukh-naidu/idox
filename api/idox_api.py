@@ -47,7 +47,7 @@ CONFIGURATION (environment variables, read at start)
     IDOX_KEEP_HOURS     finished jobs older than this are deleted at start (default 48)
 
 Usage:
-    .venv/bin/uvicorn idox_api:app --host 127.0.0.1 --port 8000
+    .venv/bin/uvicorn api.idox_api:app --host 127.0.0.1 --port 8000   (from the repo root)
     then open http://127.0.0.1:8000/docs for the interactive API page.
 """
 
@@ -69,7 +69,7 @@ import requests
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
-REPO = Path(__file__).resolve().parent
+REPO = Path(__file__).resolve().parent.parent      # the scripts live one folder up
 PY = sys.executable
 
 BASE_URL = os.environ.get("IDOX_BASE_URL", "http://127.0.0.1:8090").rstrip("/")

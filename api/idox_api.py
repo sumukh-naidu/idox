@@ -18,10 +18,26 @@ so every conversion endpoint answers 202 with a job, and the caller polls it.
 
 ENDPOINTS
     GET    /health                      model server and tool status
-    POST   /convert/pdf-to-word         upload a PDF -> job (202), result .docx
-    POST   /convert/pdf-to-powerpoint   upload a PDF -> job (202), result .pptx
-    POST   /convert/pdf-to-jpg          upload a PDF -> job (202), one .jpg per page (no model)
-    POST   /convert/jpg-to-pdf          upload a JPG -> job (202), result .pdf (model + LibreOffice)
+
+    Every POST /convert/... uploads one file and answers 202 with a job.
+    POST   /convert/pdf-to-word         PDF   -> .docx                    (model)
+    POST   /convert/pdf-to-excel        PDF   -> .xlsx                    (model)
+    POST   /convert/pdf-to-powerpoint   PDF   -> .pptx                    (model)
+    POST   /convert/pdf-to-text         PDF   -> .txt                     (model for scanned pages only)
+    POST   /convert/pdf-to-jpg          PDF   -> one .jpg per page        (no model)
+    POST   /convert/pdf-to-jpeg         PDF   -> one .jpeg per page       (no model)
+    POST   /convert/pdf-to-png          PDF   -> one .png per page        (no model)
+    POST   /convert/pdf-to-tiff         PDF   -> one multi-page .tiff     (no model)
+    POST   /convert/image-to-word       PNG/JPG -> editable .docx         (model)
+    POST   /convert/image-to-word-picture  PNG/JPG -> .docx, picture only (no model)
+    POST   /convert/image-to-excel      PNG/JPG -> .xlsx from a table     (model)
+    POST   /convert/jpg-to-pdf          JPG   -> .pdf with editable text  (model + LibreOffice)
+    POST   /convert/jpg-to-png          JPG   -> .png                     (no model)
+    POST   /convert/jpg-to-tiff         JPG   -> .tiff                    (no model)
+    POST   /convert/word-to-pdf         .docx -> .pdf                     (LibreOffice)
+    POST   /convert/tiff-to-pdf         TIFF  -> searchable .pdf          (Tesseract)
+    POST   /convert/tiff-to-pdf-picture TIFF  -> .pdf, picture only       (no model)
+
     GET    /jobs/{id}                   state, page progress, summary, files
     GET    /jobs/{id}/files/{name}      download one output file
     GET    /jobs/{id}/log               the converter's full output, as text
@@ -34,6 +50,11 @@ JOB STATES
                                    "problems" before trusting it
                       -> failed    no file was written; "error" says why
                       -> cancelled
+
+VALIDATION. Each conversion's form is a pydantic model (the "requests" section
+below), so everything is checked before a job exists, and a bad request gets 422
+naming the field: an unknown field, an option out of range, a malformed page range,
+and the file itself -- its type, its size, and that its contents really are that type.
 
 CONFIGURATION (environment variables, read at start)
     IDOX_BASE_URL       the model server (default http://127.0.0.1:8090, the local 2B;
@@ -64,13 +85,15 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, ClassVar, List, Literal, Optional
 
 import requests
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 REPO = Path(__file__).resolve().parent.parent      # the scripts live one folder up
 PY = sys.executable
@@ -91,26 +114,49 @@ PASS_THROUGH = ("IDOX_API_KEY", "IDOX_THINKING", "IDOX_MAX_IMAGE_SIDE", "IDOX_TI
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 PAGES_RE = re.compile(r"^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$")
 
-# One entry per conversion. "magic" is the start of a valid file of that type, so a
-# renamed file is refused at upload rather than failing inside the script.
+# One entry per conversion -- the same 17 the web app (idox_app.py) runs, plus the two
+# JPG scripts it does not offer. "flag" marks test_pdf.py, which writes one Office
+# format per flag; "extra" is fixed arguments; "needs" is programs it cannot run without;
+# "result" is the file that must exist for the job to count, when there are by-products.
 ROUTES = {
-    "pdf_docx": dict(script="test_pdf.py", model=True, exts=(".pdf",), magic=(b"%PDF-",),
-                     out_ext="docx"),
-    "pdf_pptx": dict(script="test_pdf.py", model=True, exts=(".pdf",), magic=(b"%PDF-",),
-                     out_ext="pptx"),
-    "pdf_jpg": dict(script="pdf_to_jpg.py", model=False, exts=(".pdf",), magic=(b"%PDF-",),
-                    out_ext="jpg"),
-    "jpg_pdf": dict(script="image_to_pdf.py", model=True, exts=(".jpg", ".jpeg"),
-                    magic=(b"\xff\xd8\xff",), out_ext="pdf", needs=("soffice",)),
+    "pdf_docx": dict(script="test_pdf.py", model=True, flag="--docx", out_ext="docx"),
+    "pdf_xlsx": dict(script="test_pdf.py", model=True, flag="--xlsx", out_ext="xlsx"),
+    "pdf_pptx": dict(script="test_pdf.py", model=True, flag="--pptx", out_ext="pptx"),
+    # The model reads scanned pages only, but a job is queued as a model job either way.
+    "pdf_txt": dict(script="pdf_to_txt.py", model=True),
+    "pdf_jpg": dict(script="pdf_to_jpg.py", model=False, extra=["--ext", "jpg"]),
+    "pdf_jpeg": dict(script="pdf_to_jpg.py", model=False, extra=["--ext", "jpeg"]),
+    "pdf_png": dict(script="pdf_to_png.py", model=False),
+    "pdf_tiff": dict(script="pdf_to_tiff.py", model=False),
+    "img_docx": dict(script="image_to_word.py", model=True, result="{stem}.docx"),
+    "img_docx_pic": dict(script="image_to_word.py", model=False, extra=["--mode", "image"]),
+    "img_xlsx": dict(script="image_to_excel.py", model=True),
+    "jpg_pdf": dict(script="image_to_pdf.py", model=True, needs=("soffice",)),
+    "jpg_png": dict(script="jpg_to_png.py", model=False),
+    "jpg_tiff": dict(script="jpg_to_tiff.py", model=False),
+    "docx_pdf": dict(script="word_to_pdf.py", model=False, needs=("soffice",)),
+    "tiff_pdf": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",)),
+    "tiff_pdf_pic": dict(script="tiff_to_pdf.py", model=False, extra=["--no-text"]),
 }
+
+# The start of a valid file of each type, so a renamed file is refused at upload
+# rather than failing inside the script.
+MAGIC = {".pdf": (b"%PDF-",),
+         ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
+         ".png": (b"\x89PNG\r\n\x1a\n",),
+         ".tif": (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"),
+         ".tiff": (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"),
+         ".docx": (b"PK\x03\x04",)}
 
 # External programs a route cannot run without, and how to check for each.
 TOOLS = {"soffice": lambda: bool(shutil.which("soffice") or shutil.which("libreoffice")),
          "tesseract": lambda: bool(shutil.which("tesseract"))}
 TOOL_NAMES = {"soffice": "LibreOffice", "tesseract": "Tesseract"}
 
-# test_pdf.py writes one Office format per flag; the routes that use it differ only here.
-TEST_PDF_FLAGS = {"pdf_docx": "--docx", "pdf_pptx": "--pptx"}
+# Validated options and the converter flag each one becomes. scan_mode is test_pdf.py's
+# and is added with its output flags.
+OPTION_FLAGS = {"pages": "--pages", "dpi": "--dpi", "quality": "--quality",
+                "compression": "--compression", "mode": "--mode"}
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -121,28 +167,24 @@ JOBS_LOCK = threading.Lock()
 # ---------------------------------------------------------------------------
 def build_command(job: dict) -> list:
     """The argument list for one job, run from the job's folder. Never a shell string."""
-    o, stem = job["options"], job["stem"]
-    inp = f"in/{stem}{job['ext']}"
-    if job["route"] in TEST_PDF_FLAGS:
-        out_ext = ROUTES[job["route"]]["out_ext"]
-        cmd = [PY, "-u", str(REPO / "test_pdf.py"), inp, "--base-url", BASE_URL,
-               TEST_PDF_FLAGS[job["route"]], f"out/{stem}.{out_ext}", "--out", f"out/{stem}.md",
-               "--scan-mode", o.get("scan_mode", "text")]
-        if o.get("pages"):
-            cmd += ["--pages", o["pages"]]
-        return cmd
-    if job["route"] == "pdf_jpg":
-        # pdf_to_jpg.py makes out/<stem>/page_001.jpg, page_002.jpg, ...
-        cmd = [PY, "-u", str(REPO / "pdf_to_jpg.py"), inp, "--outdir", "out",
-               "--dpi", str(o["dpi"]), "--quality", str(o["quality"])]
-        if o.get("pages"):
-            cmd += ["--pages", o["pages"]]
-        return cmd
-    if job["route"] == "jpg_pdf":
-        # image_to_pdf.py makes out/<stem>.pdf
-        return [PY, "-u", str(REPO / "image_to_pdf.py"), inp,
-                "--base-url", BASE_URL, "--outdir", "out"]
-    raise ValueError(f"no command for route {job['route']}")
+    r, o, stem = ROUTES[job["route"]], job["options"], job["stem"]
+    cmd = [PY, "-u", str(REPO / r["script"]), f"in/{stem}{job['ext']}"]
+    if r["model"]:
+        cmd += ["--base-url", BASE_URL]
+    if "flag" in r:
+        # test_pdf.py: the Office file it is asked for, plus a Markdown copy of what
+        # the model read.
+        cmd += [r["flag"], f"out/{stem}.{r['out_ext']}", "--out", f"out/{stem}.md",
+                "--scan-mode", o.get("scan_mode", "text")]
+    else:
+        # Every other script names its own files inside --outdir: out/<stem>.<ext>, or
+        # out/<stem>/page_001.<ext> for one image per page.
+        cmd += ["--outdir", "out"]
+    cmd += r.get("extra", [])
+    for key, flag in OPTION_FLAGS.items():
+        if key in o:
+            cmd += [flag, str(o[key])]
+    return cmd
 
 
 def job_env() -> dict:
@@ -164,15 +206,20 @@ PROBLEMS = [
     (re.compile(r"COULD NOT OPEN|SKIPPED:"), "The file could not be processed."),
     (re.compile(r"Traceback \(most recent call last\)"), "The script crashed."),
     (re.compile(r"EXTRACTION FAILED"), "The model could not read the file."),
+    (re.compile(r"NO TABLE DETECTED"), "No table was found in the image."),
+    (re.compile(r"CONVERSION FAILED|COULD NOT READ|COULD NOT WRITE"), "The file could not be converted."),
+    # word_to_pdf.py prints its verdict as "  verdict            FAIL"
+    (re.compile(r"^\s+verdict\s+FAIL", re.M), "The script's own verification failed."),
 ]
 SUMMARY_LINES = re.compile(
-    r"(VERDICT|verdict|pages verified|pages written|pages converted|pages in PDF|"
+    r"(VERDICT|verdict|pages verified|pages written|pages converted|pages in PDF|frames in file|"
     r"content check|image check|word coverage|paragraphs kept|table cells kept|"
     r"UNVERIFIED|OCR agreement|self-consistency|OCR grounding|OCR coverage|"
-    r"note:|FAILED|could not be read|dropped|restored|corrected|merged)")
+    r"note:|NO TABLE|FAILED|could not be read|dropped|restored|corrected|merged)")
 FAILURE_REASON = re.compile(
     r"(?:EXTRACTION FAILED|MODEL FAILED|Tier 1 FAILED to produce valid output|"
-    r"COULD NOT OPEN|SKIPPED|Could not start the converter)[:( ]+(.+)")
+    r"COULD NOT OPEN|COULD NOT READ|COULD NOT WRITE|CONVERSION FAILED|NO TABLE DETECTED|"
+    r"SKIPPED|Could not start the converter)[:( -]+(.+)")
 
 
 def job_dir(jid: str) -> Path:
@@ -202,9 +249,12 @@ def progress_of(job: dict, text: str):
     if script == "test_pdf.py":
         m = re.search(r"testing (\d+):", text)
         done = len(re.findall(r"^Tier 1 (?:--|FAILED)", text, re.M))
-    elif script == "pdf_to_jpg.py":
+    elif script in ("pdf_to_jpg.py", "pdf_to_png.py"):
         m = re.search(r"converting (\d+) at", text)
         done = len(re.findall(r"^  page \d+: (?:\d+x\d+px|FAILED)", text, re.M))
+    elif script == "pdf_to_txt.py":
+        m = re.search(r"converting (\d+):", text)
+        done = len(re.findall(r"^  page \d+: (?:digital|scanned|blank)", text, re.M))
     else:
         return None
     total = int(m.group(1)) if m else None
@@ -229,7 +279,7 @@ CHECK_KEYS = {"self-consistency": "self_consistency", "text-layer grounding": "g
               "geometry": "geometry", "content coverage": "coverage",
               # image_to_*.py: the same checks, against OCR because an image has no text layer
               "OCR grounding": "grounding", "OCR coverage": "coverage"}
-CHECKED_SCRIPTS = ("test_pdf.py", "image_to_pdf.py")
+CHECKED_SCRIPTS = ("test_pdf.py", "image_to_pdf.py", "image_to_word.py", "image_to_excel.py")
 # image_to_*.py, when OCR read nothing or is missing: "  2/4. OCR grounding/coverage: N/A (why)"
 OCR_NA_LINE = re.compile(r"^  2/4\. OCR grounding/coverage:\s+N/A\s*\((.+)\)\s*$", re.M)
 
@@ -284,6 +334,15 @@ def save_job(job: dict) -> None:
     tmp.replace(job_dir(job["id"]) / "job.json")
 
 
+def has_result(job: dict, outputs: list) -> bool:
+    """Is the file the caller asked for there, not just a by-product? test_pdf.py always
+    writes its Markdown copy and image_to_word.py --mode both its _scan.docx, even when
+    the model failed and the real result was never written."""
+    r = ROUTES[job["route"]]
+    result = f"{job['stem']}.{r['out_ext']}" if "flag" in r else r.get("result", "").format(stem=job["stem"])
+    return not result or result in {f["name"] for f in outputs}
+
+
 def finish_job(job: dict, rc, timed_out: bool) -> None:
     log = read_log(job["id"])
     outputs = list_outputs(job["id"])
@@ -296,13 +355,13 @@ def finish_job(job: dict, rc, timed_out: bool) -> None:
         job["state"], job["error"] = "cancelled", "Cancelled."
     elif timed_out:
         job["state"], job["error"] = "failed", f"Stopped after {JOB_TIMEOUT_S} s (the time limit)."
-    elif not outputs:
+    elif not outputs or not has_result(job, outputs):
         # test_pdf.py can exit 0 without writing a file, so success is decided by
         # the file existing, not by the exit code.
         job["state"] = "failed"
         why = FAILURE_REASON.search(log)
         if why:
-            job["error"] = why.group(1).strip().rstrip(")")[:240]
+            job["error"] = why.group(1).strip().rstrip(")").lstrip("- ")[:240]
         else:
             job["error"] = problems[0] if problems else "The converter produced no file."
     elif rc != 0 or problems:
@@ -431,15 +490,193 @@ def get_job(jid: str) -> dict:
     return JOBS[jid]
 
 
-def page_option(pages: str) -> dict:
-    """{"pages": "1-3"} for a page range, {} for all pages; 422 for anything else."""
+# ---------------------------------------------------------------------------
+# requests -- one pydantic model per conversion form. extra="forbid" refuses a field
+# the endpoint does not list (a typo such as "dpii" fails loudly instead of being
+# ignored), and the file is checked in the model too, so a request either passes
+# every check or gets 422 naming the field that failed.
+# ---------------------------------------------------------------------------
+def check_upload(f: UploadFile, exts: tuple) -> UploadFile:
+    """The upload has an accepted name, is not empty or too large, and really is that
+    type: its first bytes match, and a .docx is a zip with a Word document inside."""
+    ext = Path(f.filename or "").suffix.lower()
+    if ext not in exts:
+        raise ValueError(f"expected a {' or '.join(exts)} file, got {(f.filename or '')[:60]!r}")
+    f.file.seek(0, os.SEEK_END)
+    size = f.file.tell()
+    f.file.seek(0)
+    if size == 0:
+        raise ValueError("the file is empty")
+    if size > MAX_UPLOAD:
+        raise ValueError(f"the file is larger than {MAX_UPLOAD // (1024 * 1024)} MB")
+    head = f.file.read(16)
+    f.file.seek(0)
+    if not head.startswith(MAGIC[ext]):
+        raise ValueError(f"the file is not a real {ext} file (its contents do not match)")
+    if ext == ".docx":
+        try:
+            ok = "word/document.xml" in zipfile.ZipFile(f.file).namelist()
+        except zipfile.BadZipFile:
+            ok = False
+        f.file.seek(0)
+        if not ok:
+            raise ValueError("the file is not a real .docx file (no Word document inside)")
+    return f
+
+
+def page_range(pages: str) -> str:
+    """'all', or a range such as 1, 1-3 or 2,4 with pages from 1 and ranges running forwards."""
     pages = (pages or "").replace(" ", "").lower()
     if not pages or pages == "all":
-        return {}
+        return "all"
     if not PAGES_RE.match(pages):
-        raise HTTPException(422, f"pages should be all, or look like 1, 1-3 or 2,4 "
-                                 f"(got {pages[:20]!r})")
-    return {"pages": pages}
+        raise ValueError(f"pages should be all, or look like 1, 1-3 or 2,4 (got {pages[:20]!r})")
+    for part in pages.split(","):
+        first, _, last = part.partition("-")
+        if int(first) < 1 or (last and int(last) < int(first)):
+            raise ValueError(f"page range {part!r} is not valid: pages start at 1 and a range runs forwards")
+    return pages
+
+
+# Defaults to "all" rather than empty: the /docs page fills an empty text box with the
+# placeholder "string" and sends it, which is refused as a page range.
+PageRange = Annotated[str, AfterValidator(page_range),
+                      Field(description="all, or e.g. 1, 1-3 or 2,4.")]
+Dpi = Annotated[int, Field(ge=30, le=600, description="Resolution, 30-600. 150 is screen "
+                                                      "quality; 300 is print quality (about 4x the size).")]
+Compression = Annotated[Literal["lzw", "deflate"], Field(
+    description="Lossless compression: 'lzw' opens everywhere; 'deflate' is smaller, but a "
+                "few old viewers cannot open it.")]
+
+
+class Conversion(BaseModel):
+    """One uploaded file; subclasses add the options a conversion takes."""
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+    EXTS: ClassVar[tuple] = ()
+    file: UploadFile
+
+    @field_validator("file")
+    @classmethod
+    def _real_file(cls, f: UploadFile) -> UploadFile:
+        return check_upload(f, cls.EXTS)
+
+    def options(self) -> dict:
+        """The options as a job keeps them. All pages is the converters' own default."""
+        o = self.model_dump(exclude={"file"})
+        if o.get("pages") == "all":
+            del o["pages"]
+        return o
+
+
+class PdfFile(Conversion):
+    EXTS = (".pdf",)
+    file: UploadFile = Field(description="The PDF to convert.")
+
+
+class ImageFile(Conversion):
+    # PNG and JPG only: blocks.py labels any other image as PNG for the model.
+    EXTS = (".png", ".jpg", ".jpeg")
+    file: UploadFile = Field(description="The PNG or JPG image to convert.")
+
+
+class JpgFile(Conversion):
+    EXTS = (".jpg", ".jpeg")
+    file: UploadFile = Field(description="The JPG / JPEG image to convert.")
+
+
+class TiffFile(Conversion):
+    EXTS = (".tif", ".tiff")
+    file: UploadFile = Field(description="The TIFF to convert (one or more frames).")
+
+
+class WordFile(Conversion):
+    EXTS = (".docx",)
+    file: UploadFile = Field(description="The Word document (.docx) to convert.")
+
+
+class PdfToWord(PdfFile):
+    pages: PageRange = "all"
+    scan_mode: Literal["text", "image", "both"] = Field(
+        "text", description="Pages with no text layer (scans): 'text' reads them with the "
+                            "model into editable text; 'image' embeds the page picture, "
+                            "no model, not editable; 'both' writes the text file plus a "
+                            "second <name>_scan.docx with the pictures.")
+
+
+class PdfToOffice(PdfFile):
+    """Excel and PowerPoint. No 'both': test_pdf.py writes the separate _scan file only
+    for Word, so here 'both' would silently behave like 'text'."""
+    pages: PageRange = "all"
+    scan_mode: Literal["text", "image"] = Field(
+        "text", description="Pages with no text layer (scans): 'text' reads them with the "
+                            "model into editable text; 'image' puts the page picture in "
+                            "instead, no model, not editable.")
+
+
+class PdfPages(PdfFile):
+    pages: PageRange = "all"
+
+
+class PdfToJpg(PdfFile):
+    pages: PageRange = "all"
+    dpi: Dpi = 150
+    quality: int = Field(90, ge=1, le=100, description="JPG quality, 1-100. Higher is sharper and larger.")
+
+
+class PdfToPng(PdfFile):
+    pages: PageRange = "all"
+    dpi: Dpi = 150
+
+
+class PdfToTiff(PdfFile):
+    pages: PageRange = "all"
+    dpi: Dpi = 300
+    compression: Compression = "lzw"
+
+
+class ImageToWord(ImageFile):
+    mode: Literal["text", "both"] = Field(
+        "text", description="'text' writes editable text and tables; 'both' also writes "
+                            "<name>_scan.docx with the picture, as a separate file.")
+
+
+class JpgToTiff(JpgFile):
+    compression: Compression = "lzw"
+
+
+# ---------------------------------------------------------------------------
+# responses
+# ---------------------------------------------------------------------------
+class JobFile(BaseModel):
+    name: str
+    size: int
+    url: str
+
+
+class Progress(BaseModel):
+    done: int
+    total: int
+
+
+class Job(BaseModel):
+    id: str
+    route: str
+    filename: str
+    ext: str
+    size: int
+    options: dict
+    model: bool = Field(description="Whether the job uses the model server.")
+    state: Literal["queued", "running", "done", "review", "failed", "cancelled"]
+    created: float
+    started: Optional[float] = None
+    finished: Optional[float] = None
+    error: Optional[str] = None
+    progress: Optional[Progress] = Field(None, description="Pages done, while running.")
+    summary: List[str] = []
+    problems: List[str] = Field([], description="Read these before trusting a 'review' job.")
+    pages: List[dict] = Field([], description="Per-page model checks, for model conversions.")
+    exit_code: Optional[int] = None
+    files: List[JobFile] = []
 
 
 def safe_stem(name: str) -> str:
@@ -447,42 +684,29 @@ def safe_stem(name: str) -> str:
     return stem[:80] or "document"
 
 
-async def create_job(route_id: str, upload: UploadFile, options: dict) -> dict:
+async def create_job(route_id: str, body: Conversion) -> dict:
+    """A queued job for a request its model has already validated."""
     route = ROUTES[route_id]
     missing = [TOOL_NAMES[t] for t in route.get("needs", ()) if not TOOLS[t]()]
     if missing:
         raise HTTPException(503, f"This conversion needs {', '.join(missing)}, which is not "
                                  f"installed on the server.")
-    ext = Path(upload.filename or "").suffix.lower()
-    if ext not in route["exts"]:
-        raise HTTPException(415, f"Expected a {' or '.join(route['exts'])} file.")
+    upload = body.file
+    ext = Path(upload.filename).suffix.lower()
 
     jid = uuid.uuid4().hex[:12]
     jd = job_dir(jid)
     (jd / "in").mkdir(parents=True)
     (jd / "out").mkdir()
     stem = safe_stem(upload.filename)
-    dest = jd / "in" / f"{stem}{ext}"
-    size, head = 0, b""
-    try:
-        with open(dest, "wb") as fh:
-            while chunk := await upload.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_UPLOAD:
-                    raise HTTPException(413, f"The file is larger than {MAX_UPLOAD // (1024 * 1024)} MB.")
-                if len(head) < 16:
-                    head += chunk[:16]
-                fh.write(chunk)
-        if size == 0:
-            raise HTTPException(400, "The file is empty.")
-        if not head.startswith(route["magic"]):
-            raise HTTPException(415, f"The file is not a real {ext} file (its contents do not match).")
-    except HTTPException:
-        shutil.rmtree(jd, ignore_errors=True)
-        raise
+    size = 0
+    with open(jd / "in" / f"{stem}{ext}", "wb") as fh:
+        while chunk := await upload.read(1024 * 1024):
+            size += len(chunk)
+            fh.write(chunk)
 
     job = {"id": jid, "route": route_id, "filename": (upload.filename or "")[:120],
-           "stem": stem, "ext": ext, "size": size, "options": options,
+           "stem": stem, "ext": ext, "size": size, "options": body.options(),
            "model": route["model"], "state": "queued", "created": time.time(),
            "started": None, "finished": None, "error": None,
            "summary": [], "problems": [], "outputs": []}
@@ -517,91 +741,91 @@ def health():
             "jobs": counts}
 
 
-@app.post("/convert/pdf-to-word", status_code=202)
-async def pdf_to_word(
-    file: UploadFile = File(..., description="The PDF to convert."),
-    # Defaults to "all" rather than empty: the /docs page fills an empty text box
-    # with the placeholder "string" and sends it, which is refused as a page range.
-    pages: str = Form("all", description="all, or e.g. 1, 1-3 or 2,4."),
-    scan_mode: Literal["text", "image", "both"] = Form(
-        "text", description="Pages with no text layer (scans): 'text' reads them with the "
-                            "model into editable text; 'image' embeds the page picture, "
-                            "no model, not editable; 'both' writes the text file plus a "
-                            "second <name>_scan.docx with the pictures."),
-):
-    """PDF -> Word (.docx). Every page is read by the vision model, digital and scanned.
-
-    Returns a job at once (202). Poll GET /jobs/{id} until state is done, review or
-    failed, then download the .docx from the job's files. A Markdown copy of what the
-    model read (.md) is also produced.
-    """
-    options = {"scan_mode": scan_mode, **page_option(pages)}
-    return await create_job("pdf_docx", file, options)
+# Every conversion: the form is validated by its request model, then a job is queued.
+# Each returns 202 with the job at once; poll GET /jobs/{id} until state is done,
+# review or failed, then download the result from the job's files.
+JOB_HELP = ("Returns a job at once (202). Poll GET /jobs/{id} until state is done, review "
+            "or failed, then download the result from the job's files.")
 
 
-@app.post("/convert/pdf-to-powerpoint", status_code=202)
-async def pdf_to_powerpoint(
-    file: UploadFile = File(..., description="The PDF to convert."),
-    pages: str = Form("all", description="all, or e.g. 1, 1-3 or 2,4."),
-    # No 'both' here: test_pdf.py writes the separate _scan file only for Word, so
-    # for a deck 'both' would silently behave like 'text'.
-    scan_mode: Literal["text", "image"] = Form(
-        "text", description="Pages with no text layer (scans): 'text' reads them with the "
-                            "model into editable slide text; 'image' puts the page picture "
-                            "on the slide, no model, not editable."),
-):
-    """PDF -> PowerPoint (.pptx). One slide per page; the first heading on a page
-    becomes its slide title. Every page is read by the vision model, digital and scanned.
-
-    Returns a job at once (202). Poll GET /jobs/{id} until state is done, review or
-    failed, then download the .pptx from the job's files. A Markdown copy of what the
-    model read (.md) is also produced.
-    """
-    options = {"scan_mode": scan_mode, **page_option(pages)}
-    return await create_job("pdf_pptx", file, options)
+def conversion(path: str, route_id: str, model: type, summary: str):
+    """Register POST /convert/<path> for one route, its form validated by `model`."""
+    async def endpoint(body: Annotated[model, Form()]):
+        return await create_job(route_id, body)
+    endpoint.__name__ = route_id
+    app.post(f"/convert/{path}", status_code=202, response_model=Job,
+             summary=summary.split(".")[0], description=f"{summary}\n\n{JOB_HELP}")(endpoint)
 
 
-@app.post("/convert/pdf-to-jpg", status_code=202)
-async def pdf_to_jpg(
-    file: UploadFile = File(..., description="The PDF to convert."),
-    pages: str = Form("all", description="all, or e.g. 1, 1-3 or 2,4."),
-    dpi: int = Form(150, ge=30, le=600,
-                    description="Resolution. 150 is screen quality; 300 is print quality "
-                                "(about 4x the file size)."),
-    quality: int = Form(90, ge=1, le=100,
-                        description="JPG quality, 1-100. Higher is sharper and larger."),
-):
-    """PDF -> JPG images, one per page. No model: each page is drawn exactly as a PDF
-    viewer shows it, so digital and scanned PDFs work the same and take about a second
-    per page.
+# --- from PDF ---------------------------------------------------------------
+conversion("pdf-to-word", "pdf_docx", PdfToWord,
+           "PDF -> Word (.docx). Every page is read by the vision model, digital and scanned. "
+           "A Markdown copy of what the model read (.md) is also produced.")
+conversion("pdf-to-excel", "pdf_xlsx", PdfToOffice,
+           "PDF -> Excel (.xlsx). Every page is read by the vision model and goes into one "
+           "sheet: tables as grids, text in column A, every value kept as text. A Markdown "
+           "copy of what the model read (.md) is also produced.")
+conversion("pdf-to-powerpoint", "pdf_pptx", PdfToOffice,
+           "PDF -> PowerPoint (.pptx). One slide per page; the first heading on a page becomes "
+           "its slide title. Every page is read by the vision model, digital and scanned. A "
+           "Markdown copy of what the model read (.md) is also produced.")
+conversion("pdf-to-text", "pdf_txt", PdfPages,
+           "PDF -> plain text (.txt), page by page. Pages with real text are taken from the "
+           "PDF and checked against it; scanned pages are read by the model and marked "
+           "UNVERIFIED, because there is no text layer to check them against.")
+conversion("pdf-to-jpg", "pdf_jpg", PdfToJpg,
+           "PDF -> JPG images, one per page. No model: each page is drawn exactly as a PDF "
+           "viewer shows it, about a second per page. The files are <name>/page_001.jpg, ... "
+           "Each JPG is read back and checked against the PDF (size, not blank, every text "
+           "line on ink, an OCR word check), so a job is 'review' if a page fails.")
+conversion("pdf-to-jpeg", "pdf_jpeg", PdfToJpg,
+           "PDF -> JPEG images, one per page. The same as pdf-to-jpg, with the .jpeg file "
+           "ending: <name>/page_001.jpeg, ... No model.")
+conversion("pdf-to-png", "pdf_png", PdfToPng,
+           "PDF -> PNG images, one per page, lossless. No model. The files are "
+           "<name>/page_001.png, ... Each is checked pixel by pixel against the PDF.")
+conversion("pdf-to-tiff", "pdf_tiff", PdfToTiff,
+           "PDF -> one multi-page TIFF (<name>.tiff), one frame per page, lossless, 300 dpi by "
+           "default. No model. Every frame is checked pixel by pixel against the PDF.")
 
-    Returns a job at once (202). The files are <name>/page_001.jpg, page_002.jpg, ...
-    Each JPG is read back and checked against the PDF (size, not blank, every text
-    line on ink, and an OCR word check), so a job is 'review' if a page fails.
-    """
-    options = {"dpi": dpi, "quality": quality, **page_option(pages)}
-    return await create_job("pdf_jpg", file, options)
+# --- from an image ----------------------------------------------------------
+conversion("image-to-word", "img_docx", ImageToWord,
+           "Image (PNG/JPG) -> Word (.docx) with editable text and tables, read by the vision "
+           "model. An image has no text layer, so the reading is checked against an OCR "
+           "reading instead; a failed check makes the job 'review'.")
+conversion("image-to-word-picture", "img_docx_pic", ImageFile,
+           "Image (PNG/JPG) -> Word (.docx) with the picture placed in unchanged. No model, "
+           "not editable.")
+conversion("image-to-excel", "img_xlsx", ImageFile,
+           "Image (PNG/JPG) of a table -> Excel (.xlsx), read by the vision model and checked "
+           "against an OCR reading. If the image has no table, nothing is written and the "
+           "job fails with 'No table was found'.")
+conversion("jpg-to-pdf", "jpg_pdf", JpgFile,
+           "JPG -> PDF, with editable text. The vision model reads the image (text, headings, "
+           "tables) and the page is rebuilt from that reading as a text PDF, via Word and "
+           "LibreOffice. About 30 s to a few minutes per image on the local 2B. This is NOT "
+           "the picture placed on a page: the PDF contains the model's reading, so it can "
+           "change letters or miss content. The reading is checked against an OCR reading of "
+           "the image; a failed check makes the job 'review'.")
+conversion("jpg-to-png", "jpg_png", JpgFile,
+           "JPG -> PNG (<name>.png). No model. The PNG is read back and checked against the JPG.")
+conversion("jpg-to-tiff", "jpg_tiff", JpgToTiff,
+           "JPG -> TIFF (<name>.tiff), lossless. No model. The TIFF is read back and checked "
+           "against the JPG.")
+
+# --- from Word and TIFF -----------------------------------------------------
+conversion("word-to-pdf", "docx_pdf", WordFile,
+           "Word (.docx) -> PDF, rendered by LibreOffice. No model. The PDF is then checked "
+           "against the Word file: word coverage, paragraphs and table cells kept.")
+conversion("tiff-to-pdf", "tiff_pdf", TiffFile,
+           "TIFF -> searchable PDF. Each frame becomes a page, unchanged, with a hidden text "
+           "layer read by Tesseract OCR so it can be searched and copied. No model.")
+conversion("tiff-to-pdf-picture", "tiff_pdf_pic", TiffFile,
+           "TIFF -> PDF, picture only. Each frame becomes a page, unchanged, with no text "
+           "layer. No model.")
 
 
-@app.post("/convert/jpg-to-pdf", status_code=202)
-async def jpg_to_pdf(
-    file: UploadFile = File(..., description="The JPG / JPEG image to convert."),
-):
-    """JPG -> PDF, with editable text. The vision model reads the image (text, headings,
-    tables) and the page is rebuilt from that reading as a text PDF, via Word and
-    LibreOffice. About 30 s to a few minutes per image on the local 2B.
-
-    This is NOT the picture placed on a page: the PDF contains the model's reading of
-    the image, so it can change letters or miss content. An image has no text layer,
-    so the reading is checked against an OCR reading of the image instead; a failed
-    check makes the job 'review'.
-
-    Returns a job at once (202). The result is <name>.pdf.
-    """
-    return await create_job("jpg_pdf", file, {})
-
-
-@app.get("/jobs/{jid}")
+@app.get("/jobs/{jid}", response_model=Job)
 def job_status(jid: str):
     with JOBS_LOCK:
         return public_job(get_job(jid))

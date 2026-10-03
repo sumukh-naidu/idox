@@ -1173,3 +1173,72 @@ the `<input>/<conversion>/run<N>/out/` layout, with `benchmark.py score DIR`. Co
 (input, conversion, run).
 **Mistakes of mine while building it, caught by testing:** the TIFF dpi was not JSON-serialisable; the server
 version printed on stderr and was blank; the load-average line implied other programs and was reworded.
+
+---
+
+## 25. JPG -> PNG (2026-10-01)
+
+`jpg_to_png.py`. **No model**: Pillow decodes the JPG and writes the same pixels as PNG, about 0.1 s per image.
+Folders `jpg_to_png_input/` and `jpg_to_png_output/`. Built with the defaults the owner approved:
+`photo.jpg` -> `photo.png`; the EXIF orientation is applied to the pixels; default PNG compression; an existing
+file is never overwritten (`photo_2.png`, `photo_3.png`).
+- **Command:** `.venv/bin/python jpg_to_png.py jpg_to_png_input/photo.jpg` (several files or a glob work; `--outdir`).
+- **Honest limits:** the PNG holds exactly the JPG's pixels. It does NOT restore lost detail and is larger: a
+  277 KB page JPG became 782 KB (2.8x). Maximum compression saved almost nothing (778 KB) and took 3x longer.
+- **Edge cases handled:** CMYK JPEGs (a straight save fails: "cannot write mode CMYK as PNG") are converted to RGB
+  and say so; sideways phone photos are turned upright (checked by pixel position: a red top-left square ended
+  top-right after orientation 6); dpi kept (swapped for quarter turns); a colour profile kept only when it applies;
+  EXIF (camera details, possibly GPS) is NOT carried over and the report says so.
+- **Verification** (PNG reopened, JPG decoded again): file signature, size, mode, every pixel, dpi, colour
+  profile. `VERDICT: PASS/FAIL`, exit 1 on any failure. Both decodes use Pillow, so it does not test Pillow's
+  own JPEG decoder.
+- **Refused with a clear message:** a PNG renamed `.jpg`, a truncated JPEG, a non-image `.txt`; a missing file is
+  skipped, like the other scripts.
+- **Tested** on 11 files: a real page JPG, sideways (orientation 6), CMYK, grey, progressive with a colour
+  profile and odd dpi (220x110), 1x1 pixel, a Cyrillic file name with spaces, and the refusal cases. Damage tests
+  (a changed pixel, wrong size, rotated the wrong way, dpi dropped or wrong, wrong mode, a JPEG with a .png name,
+  empty file, missing file, profile dropped, profile wrongly attached) each gave FAIL.
+- **A bug found by the damage tests, and fixed:** for a CMYK JPEG with a colour profile, Pillow quietly re-attached
+  the CMYK profile to the RGB PNG (wrong colours in a viewer that applies it) while my report said "no colour
+  profile carried". Fixed by always passing the profile explicitly (None when there is none), plus a new check that
+  fails if a profile is present that should not be. One of my own damage tests was also not real damage (Pillow
+  re-attached the profile), which is why it looked uncaught; redone properly.
+- **Not added** to the web app (`idox_app.py`) or the benchmark; ask if wanted.
+
+---
+
+## 26. JPG -> TIFF (2026-10-01)
+
+`jpg_to_tiff.py`. **No model**: Pillow decodes the JPG and writes a TIFF. Folders `jpg_to_tiff_input/` and
+`jpg_to_tiff_output/`. Built with the defaults the owner approved: one TIFF per JPG (`photo.tiff`, never
+overwritten: `photo_2.tiff`); **LZW** lossless (`--compression deflate` is smaller but a few old viewers cannot
+read it; TIFF's own JPEG compression is deliberately not offered because it compresses a second time); EXIF
+rotation applied; CMYK converted to RGB (like the PNG route); dpi and colour profile kept; EXIF not carried over.
+`--combine NAME` writes all inputs, in order, as the pages of ONE multi-page TIFF (each page keeps its own size,
+mode, dpi and profile; an unreadable input is left out, reported, and the verdict is FAIL).
+- **Command:** `.venv/bin/python jpg_to_tiff.py jpg_to_tiff_input/photo.jpg --outdir jpg_to_tiff_output`
+- **Measured:** a 277 KB page JPG -> 788 KB (LZW, 2.8x), 694 KB (Deflate), 6,163 KB uncompressed, 1,020 KB for
+  the lossy JPEG-in-TIFF (pixels change). A flat-colour 1,566 KB JPG -> 944 KB LZW (smaller than the JPG), 672 KB
+  Deflate. Size depends on the picture. Conversion 50-330 ms; the 4704x4040 JPG took 0.9 s including verification.
+- **Verification** (TIFF reopened, every JPG decoded again, per page): TIFF signature, page count, size, mode, every
+  pixel, resolution, colour profile, and the compression actually used (the Compression tag). Both decodes use
+  Pillow, so it does not test Pillow's JPEG decoder.
+- **Tested** on 8 single files (page JPG, sideways orientation 6, CMYK, CMYK with a profile, grey, progressive
+  with profile and 220x110 dpi, 1x1 pixel, Cyrillic name), a 6-page mixed TIFF, Deflate, a combine with a bad
+  file (exit 1, rest kept), refusals (PNG renamed .jpg, truncated, .txt: exit 1; missing: skipped, exit 0), the
+  no-overwrite rule, and two of the owner's JPGs. Independent pixel checks: rotation (red top-left -> top-right,
+  blue -> bottom-left), CMYK red stays red. **19 deliberate-damage cases (17 broken, 2 controls): all 17 caught**
+  (changed pixel, not rotated, rotated wrong way, resolution dropped / wrong / invented, wrong mode, LZW asked but
+  Deflate or uncompressed written and the reverse, a page missing, pages in the wrong order, profile dropped or
+  wrongly attached, a JPEG named .tiff, empty file, missing file).
+- **Pillow multi-page TIFF traps found (Pillow 12.3.0), all fixed:**
+  1. A page with no resolution **inherits the previous page's dpi** when dpi is passed as a save option (a page with
+     no dpi came out at 150). Fix: write each page's tags explicitly (`tiffinfo`: XResolution, YResolution, unit,
+     profile).
+  2. Pillow also writes the profile still attached to the decoded image (the CMYK profile of a converted CMYK JPEG).
+     Fix: remove it from the image and pass the profile explicitly. Same trap as in `jpg_to_png.py` (§25).
+  3. **Reading** a TIFF with `.n_frames` leaves the LAST page's profile and dpi in `.info`, so every page then
+     appears to carry them. My first verifier trusted `.info` and raised a false alarm; it now reads each page's own
+     tags (`tag_v2`). Lesson: read tags, not `.info`, when checking multi-page TIFFs (this also applies to
+     `pdf_to_tiff.py` and `tiff_to_pdf.py`, which were not changed).
+- **Not added** to the web app or the benchmark.

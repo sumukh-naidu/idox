@@ -16,6 +16,10 @@ this update, apart from the edits to this file and `memory.md`.
 
 ## Model in use right now
 
+- **JPG -> TIFF** (`jpg_to_tiff.py`, 2026-10-01): no model, one file each or `--combine` into a multi-page TIFF; verified per page. `memory.md` §26.
+
+- **JPG -> PNG** (`jpg_to_png.py`, 2026-10-01): no model, verified pixel for pixel. `memory.md` §25.
+
 - **Benchmark (2026-10-01):** `benchmark.py` ran every conversion on four fixed inputs, 3 runs each, local 2B. Results in
   `benchmark_output/report.md` and `results.csv`; summary and caveats in `memory.md` §24.
 

@@ -32,9 +32,9 @@
 | | |
 |---|---|
 | **What it is** | A **local, fully offline** pipeline that converts documents between formats. A vision-language model reads pixels only where nothing else can; everything else is deterministic code. |
-| **Features built** | **11 conversion routes** (12 outputs if you count the Markdown file the PDF converter always writes). Details in §2–§3. |
+| **Features built** | **13 conversion routes** (14 outputs if you count the Markdown file the PDF converter always writes). Details in §2–§3. |
 | **Routes that need the AI model** | 7 (PDF→Word, PDF→Excel, PDF→PowerPoint, PDF→TXT, Image→Word, Image→PDF, Image→Excel). |
-| **Routes with no AI model** | 4 (Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF), plus the "image" mode of Image→Word. |
+| **Routes with no AI model** | 6 (Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF, JPG→PNG, JPG→TIFF), plus the "image" mode of Image→Word. |
 | **AI models** | **One model family: Qwen3-VL, plus one other model on the tuhin-ai API.** Local **Qwen3-VL-2B** on this machine. **tuhin-ai API**: a remote **Qwen3.6-35B-A3B** (vision) on a colleague's laptop, authenticated by an API key, **verified working with this pipeline** (§5.6). The older remote 8B at `10.0.3.33` is **down**. Also **Tesseract 5.5.0** (OCR, not a language model). |
 | **Speed** | Model routes are **slow: roughly 25 s to several minutes per page** on this CPU-only laptop (§6). Non-model routes take **under a few seconds to ~20 s**. |
 | **Exposed to other services?** | **Partly.** There is still no API for other services, but there is now a **local web app** (`idox_app.py` + `idox_app.html`, localhost only) where a person uploads a file, picks a conversion, and downloads the result. It runs the same scripts as subprocesses, one job folder each, with a queue, cancel and downloads. It is a working reference for the job-service pattern in §7 (§7.8). |
@@ -90,6 +90,8 @@ All commands are run from the repo root with `.venv/bin/python`. "Model?" means 
 | 9 | **PDF → TIFF** (one multi-page file) | `pdf_to_tiff.py` | **No** | **Yes** (pixel-exact) | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
 | 10 | **TIFF → PDF** (searchable) | `tiff_to_pdf.py` | **No** (Tesseract OCR only) | **Yes** (pixel-exact picture) | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
 | 11 | **PDF → TXT** | `pdf_to_txt.py` | **Yes**, per digital or scanned page | **Yes** for digital pages (read back, word by word against the PDF's text); scanned pages are reported **unverified** | `VERDICT: PASS / FAIL`; exit 1 on FAIL. |
+| 12 | **JPG → PNG** | `jpg_to_png.py` | **No** | **Yes** (PNG reopened, JPG decoded again: size, mode, every pixel, dpi, colour profile) | `VERDICT: PASS/FAIL`; exit 1 on FAIL. |
+| 13 | **JPG → TIFF** | `jpg_to_tiff.py` | **No** | **Yes** (TIFF reopened: page count, size, mode, every pixel, dpi, profile, compression) | `VERDICT: PASS/FAIL`; exit 1 on FAIL. `--combine NAME` makes one multi-page TIFF. |
 
 **JPG → PDF:** there is no dedicated script. `image_to_pdf.py` accepts any image format, including JPG, and was tested on a JPG. The folders `jpg_to_pdf_input/` and `jpg_to_pdf_output/` exist for it (run with `--outdir jpg_to_pdf_output`). Two questions are still open for the owner (§10.3).
 
@@ -144,10 +146,10 @@ All commands are run from the repo root with `.venv/bin/python`. "Model?" means 
 
 | Category | Count | Items |
 |---|---|---|
-| **Conversion routes built and working** | **11** | PDF→Word, PDF→Excel, PDF→PowerPoint, PDF→TXT (digital pages), Image→Word, Image→PDF (covers JPG→PDF), Image→Excel, Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF |
+| **Conversion routes built and working** | **13** | PDF→Word, PDF→Excel, PDF→PowerPoint, PDF→TXT (digital pages), Image→Word, Image→PDF (covers JPG→PDF), Image→Excel, Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF, JPG→PNG, JPG→TIFF |
 | By-product outputs | 1 | Markdown from `test_pdf.py` |
 | **Of those, using the AI model** | **7** | PDF→Word, PDF→Excel, PDF→PowerPoint, PDF→TXT, Image→Word, Image→PDF, Image→Excel |
-| **Of those, with no AI model** | **4** | Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF |
+| **Of those, with no AI model** | **6** | Word→PDF, PDF→JPG, PDF→TIFF, TIFF→PDF, JPG→PNG, JPG→TIFF |
 | Planned, not built | 4 | CSV, Image→PPT, Image→XML, review report |
 | Dedicated JPG→PDF script | 0 | works through `image_to_pdf.py`; a dedicated script is an open question |
 
@@ -544,7 +546,7 @@ Also listed in `memory.md` §16.
 
 **Core modules (importable):** `blocks.py` (schema, prompts, model call, checks, repairs, about 1,700 lines), `to_docx.py`, `to_xlsx.py`, `to_pptx.py`, `ocr.py`.
 
-**Conversion scripts (CLI, not importable):** `test_pdf.py` (PDF → Word/Excel/PPT/MD, 1,269 lines), `image_to_word.py`, `image_to_pdf.py`, `image_to_excel.py`, `word_to_pdf.py`, `pdf_to_jpg.py`, `pdf_to_tiff.py`, `tiff_to_pdf.py`, `pdf_to_txt.py`.
+**Conversion scripts (CLI, not importable):** `test_pdf.py` (PDF → Word/Excel/PPT/MD, 1,269 lines), `image_to_word.py`, `image_to_pdf.py`, `image_to_excel.py`, `word_to_pdf.py`, `pdf_to_jpg.py`, `pdf_to_tiff.py`, `tiff_to_pdf.py`, `pdf_to_txt.py`, `jpg_to_png.py`, `jpg_to_tiff.py`.
 
 **Dev tools:** `bench.py`, `show_docx.py`, `test.py`, `test_json.py`.
 

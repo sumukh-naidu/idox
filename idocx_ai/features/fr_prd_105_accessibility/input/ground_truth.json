@@ -1,0 +1,91 @@
+{
+  "_comment": "FR-PRD-105 accessibility test set. All content invented. Pages are 1-based.",
+  "access_report.pdf": {
+    "pages": 2,
+    "before": {
+      "tagged": "fail",
+      "language": "fail",
+      "title": "fail",
+      "fonts_embedded": "fail",
+      "image_descriptions": "fail",
+      "real_text": "pass",
+      "reading_order": "fail",
+      "bookmarks": "n/a",
+      "assistive_access": "pass"
+    },
+    "after_fix": {
+      "language": "pass",
+      "title": "pass",
+      "tagged": "fail",
+      "fonts_embedded": "fail",
+      "reading_order": "fail"
+    },
+    "expected_title": "ACME Test Ltd - Quarterly Operations Summary",
+    "expected_language": "en",
+    "image_keywords": [
+      {
+        "page": 1,
+        "all_of": [
+          "Q1",
+          "Q4"
+        ],
+        "any_of": [
+          "bar",
+          "chart"
+        ]
+      },
+      {
+        "page": 2,
+        "all_of": [
+          "Order",
+          "Pack",
+          "Ship"
+        ],
+        "any_of": []
+      }
+    ]
+  },
+  "access_scanned.pdf": {
+    "pages": 2,
+    "before": {
+      "tagged": "fail",
+      "language": "fail",
+      "title": "fail",
+      "fonts_embedded": "n/a",
+      "image_descriptions": "n/a",
+      "real_text": "fail",
+      "reading_order": "fail",
+      "bookmarks": "n/a",
+      "assistive_access": "pass"
+    },
+    "after_fix": {
+      "real_text": "pass",
+      "language": "pass",
+      "title": "pass",
+      "fonts_embedded": "pass",
+      "tagged": "fail",
+      "reading_order": "fail"
+    },
+    "expected_title": "Site Inspection Report (Sample)",
+    "expected_language": "en",
+    "text_after_fix": [
+      "fire exits were clear",
+      "Replace the safety labels"
+    ]
+  },
+  "access_tagged.pdf": {
+    "pages": 1,
+    "before": {
+      "tagged": "pass",
+      "language": "pass",
+      "title": "pass",
+      "fonts_embedded": "pass",
+      "image_descriptions": "pass",
+      "real_text": "pass",
+      "reading_order": "pass",
+      "bookmarks": "n/a",
+      "assistive_access": "pass"
+    },
+    "note": "tags are a minimal hand-made structure, enough for the structural checks only"
+  }
+}

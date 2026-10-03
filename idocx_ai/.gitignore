@@ -2,4 +2,3 @@
 data/
 __pycache__/
 *.log
-features/*/output/

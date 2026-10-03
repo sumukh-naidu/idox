@@ -1,0 +1,34 @@
+==============================================================================
+cleanup_digital.pdf
+> Clean this PDF by removing blank pages and duplicate pages.
+  plan: clean_pdf(remove_blank=True, remove_duplicates=True, strip_metadata=False)
+  reply: The PDF has been cleaned. Here's what was done: **Removed pages:** - Page 3: empty page - Page 5: identical to page 2 - Page 7: whitespace-only - Page 8: "intentionally left blank" notice - Page 10: identical to page 4 **Pages requiring your confirmation:** - Page 9: nearly empty (1 line: "Approved 
+  2 model calls, 11.8s
+  PASS  final file holds original pages [1, 2, 4, 6, 9, 11, 12], expected [1, 2, 4, 6, 9, 11, 12]; metadata left: {'author': 'Test User', 'subject': 'Internal draft - not for circulation', 'keywords': 'operations, draft, internal', 'creator': 'Microsoft Word for Fakes 16.0', 'producer': 'fake-pdf-lib 3.2', 'creationDate': "D:20260115093000+05'30'", 'modDate': "D:20260928181500+05'30'"}
+==============================================================================
+cleanup_scanned.pdf
+> Clean up this scanned document and remove unnecessary metadata where supported.
+  plan: clean_pdf(remove_blank=True, remove_duplicates=True, strip_metadata=True)
+  reply: The document has been cleaned up: - **Removed 2 pages automatically:** - Page 2: scanned page with nothing on it - Page 5: identical duplicate of page 3 - **Metadata removed:** author, creation date, creator, modification date, and producer - **Result:** 4 pages (down from 6) There are 2 pages that 
+  2 model calls, 14.0s
+> Yes, remove pages 4 and 6 as well.
+  plan: clean_pdf(remove_pages=[4, 6], numbering=original)
+  reply: Done. Pages 4 and 6 have been removed. The final document now has **2 pages** (down from the original 6). **Summary of all changes:** - Removed 4 pages total (2 blank/duplicate, 2 confirmed by you) - Stripped metadata (author, dates, creator, producer) - Final file: `cleanup_scanned-cleaned-cleaned.
+  2 model calls, 10.7s
+  PASS  final file holds original pages [1, 3], expected [1, 3]; metadata left: {}
+==============================================================================
+cleanup_control.pdf
+> Automatically identify and apply the available document cleanup actions.
+  plan: clean_pdf(remove_blank=True, remove_duplicates=True, strip_metadata=True)
+  reply: The cleanup is complete. The document had no blank pages, no duplicate pages, and no metadata to strip, so no changes were made. The original file remains unchanged.
+  2 model calls, 6.8s
+  PASS  final file holds original pages [1, 2, 3], expected [1, 2, 3]; metadata left: n/a (no new file)
+==============================================================================
+cleanup_digital.pdf
+> Automatically identify and apply the available document cleanup actions.
+  plan: clean_pdf(remove_blank=True, remove_duplicates=True, strip_metadata=True)
+  reply: I've automatically cleaned up your document. Here's what was done: **Removed pages:** - Page 3: Empty page - Page 5: Duplicate of page 2 - Page 7: Text layer holds only whitespace - Page 8: "Intentionally left blank" notice only - Page 10: Duplicate of page 4 **Metadata removed:** - Author, creation
+  2 model calls, 14.9s
+  PASS  final file holds original pages [1, 2, 4, 6, 9, 11, 12], expected [1, 2, 4, 6, 9, 11, 12]; metadata left: {}
+
+4/4 conversations ended with the expected pages

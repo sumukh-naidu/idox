@@ -1,0 +1,23 @@
+merge -> remove blank -> compress (doc example 1)
+  PASS  merged A then B, in order  -- 6 pages: 1-3 from A, 4-6 from B
+  PASS  blank page found in the merged file
+  PASS  compressed and verified  -- 258 KB -> 69 KB (73% saved)
+  PASS  compressing an already-compressed file writes nothing
+split, extract, rotate, reorder, rename (contract_12p.pdf)
+  PASS  split into three named parts with the right pages  -- Definitions.pdf (3p), Payment Terms.pdf (3p), Schedules.pdf (6p)
+  PASS  split reports pages left out  -- 4-6, 10-12
+  PASS  extract keeps the order asked for
+  PASS  rotate turns only the chosen page
+  PASS  reorder moves the last page to the front
+  PASS  reorder must list every page once  -- order must list every page exactly once; missing 6, repeated 5
+  PASS  rename makes a copy under the new name
+  PASS  page 13 of a 12-page file is refused  -- pages [13] do not exist; this file has pages 1-12
+  PASS  merging one file is refused  -- give at least two file IDs, in the order they should be merged
+reading and task verification
+  PASS  read_document returns the memo's text layer
+  PASS  read_document OCRs the scanned notice  -- source OCR, 298 characters
+  PASS  verify_tasks keeps a real quote
+  PASS  verify_tasks drops an invented quote and a reformatted deadline  -- quote not found in the document; copy it exactly; the deadline does not appear in the quote; copy it as written
+  PASS  verify_tasks works on OCR text
+
+ALL PASS

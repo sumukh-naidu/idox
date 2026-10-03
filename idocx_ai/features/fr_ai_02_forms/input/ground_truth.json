@@ -1,0 +1,134 @@
+{
+  "_comment": "FR-AI-02 test set. Every value is FAKE.",
+  "forms": {
+    "application_form.pdf": {
+      "fields": [
+        "full_name",
+        "date_of_birth",
+        "address",
+        "policy_number",
+        "plan_type",
+        "sum_insured",
+        "nominee_name",
+        "phone",
+        "email",
+        "declaration"
+      ],
+      "never_fill": [
+        "declaration"
+      ]
+    },
+    "payment_form.pdf": {
+      "fields": [
+        "payee_name",
+        "payee_gstin",
+        "gst_registered",
+        "invoice_number",
+        "invoice_date",
+        "due_date",
+        "amount_payable",
+        "bank_account",
+        "ifsc",
+        "payment_mode",
+        "approver_signature"
+      ],
+      "never_fill": [
+        "approver_signature"
+      ]
+    }
+  },
+  "fills": [
+    {
+      "source": "policy_schedule.pdf",
+      "form": "application_form.pdf",
+      "expected": {
+        "full_name": "Meera Testcase",
+        "date_of_birth": "22/03/1985",
+        "address": "45, Sample Nagar, 2nd Cross, Pune 411001",
+        "policy_number": "POL/2026/004512",
+        "plan_type": "Family Floater",
+        "sum_insured": "5,00,000",
+        "nominee_name": "Arjun Testcase"
+      },
+      "must_stay_empty": [
+        "phone",
+        "email"
+      ],
+      "never_fill": [
+        "declaration"
+      ],
+      "traps": {
+        "nominee_name": "not Meera",
+        "full_name": "not Kiran Agentname or Arjun",
+        "date_of_birth": "not 28/10/2026 or 01/11/2026"
+      }
+    },
+    {
+      "source": "invoice.pdf",
+      "form": "payment_form.pdf",
+      "expected": {
+        "payee_name": "ACME Test Supplies Pvt Ltd",
+        "payee_gstin": "27ABCPE1234F1ZB",
+        "gst_registered": true,
+        "invoice_number": "INV-2026-0187",
+        "invoice_date": "05/10/2026",
+        "due_date": "04/11/2026",
+        "amount_payable": "19,470.00",
+        "bank_account": "001234567890",
+        "ifsc": "TEST0001234",
+        "payment_mode": "NEFT"
+      },
+      "must_stay_empty": [],
+      "never_fill": [
+        "approver_signature"
+      ],
+      "traps": {
+        "amount_payable": "not the subtotal 16,500.00",
+        "payee_gstin": "not the buyer's 29AAACX9876K1ZC",
+        "payee_name": "not Example Buyer Pvt Ltd"
+      }
+    }
+  ],
+  "extraction": {
+    "source": "invoice.pdf",
+    "table": [
+      [
+        "Description",
+        "Qty",
+        "Rate",
+        "Amount"
+      ],
+      [
+        "A4 paper (ream)",
+        "20",
+        "250.00",
+        "5,000.00"
+      ],
+      [
+        "Printer toner",
+        "4",
+        "2,500.00",
+        "10,000.00"
+      ],
+      [
+        "Stapler",
+        "10",
+        "150.00",
+        "1,500.00"
+      ]
+    ],
+    "totals": {
+      "subtotal": "16,500.00",
+      "cgst": "1,485.00",
+      "sgst": "1,485.00",
+      "total": "19,470.00"
+    }
+  },
+  "pages": {
+    "application_form.pdf": 1,
+    "payment_form.pdf": 1,
+    "policy_schedule.pdf": 1,
+    "invoice.pdf": 1,
+    "invoice_scanned.pdf": 1
+  }
+}

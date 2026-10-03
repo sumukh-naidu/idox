@@ -42,6 +42,14 @@ def check(label, ok, detail=""):
     log(f"  {'PASS' if ok else 'FAIL'}  {label}{'  -- ' + detail if detail else ''}")
 
 
+def cleanup_error(fn):
+    try:
+        fn()
+    except ToolError as e:
+        return e
+    return None
+
+
 for name, gt in truth.items():
     if name.startswith("_"):
         continue
@@ -85,6 +93,30 @@ for name, gt in truth.items():
             check("metadata stripped and verified", not left and not doc.get_xml_metadata(),
                   f"removed {len(md['removed'])} item(s), kept {md['kept']}")
     log(f"  ({secs:.1f}s for blank + duplicate detection)")
+
+
+log("one-click cleanup (clean_pdf detects, removes the safe pages, strips metadata, one file)")
+for name, keep, ask in [("cleanup_digital.pdf", [1, 2, 4, 6, 9, 11, 12], [9, 12]),
+                        ("cleanup_scanned.pdf", [1, 3, 4, 6], [4, 6]),
+                        ("cleanup_control.pdf", None, [])]:
+    fid = store.save_file((INPUT / name).read_bytes(), name, truth[name]["pages"], "test")["id"]
+    c = cleanup.clean_pdf(fid, remove_blank=True, remove_duplicates=True, strip_metadata=True)
+    asked = [x["page"] for x in c["ask_user_first"]]
+    if keep is None:
+        check(f"{name}: nothing to clean, no file", c.get("nothing_to_do") is True and asked == ask)
+        continue
+    _, path = store.get_file(c["new_file_id"])
+    with pymupdf.open(path) as d:
+        left = {k: v for k, v in d.metadata.items() if v and k not in ("format", "title")}
+    origin = [p for _, p in store.get_file(c["new_file_id"])[0]["page_origin"]]
+    check(f"{name}: safe pages removed, metadata stripped, one file, the right pages asked about",
+          len(c["files_created"]) == 1 and origin == keep and not left and asked == ask,
+          f"{c['pages_before']} -> {c['pages_after']} pages, asks about {asked}")
+    if name == "cleanup_scanned.pdf":
+        c2 = cleanup.clean_pdf(c["new_file_id"], remove_pages=ask, numbering="original")
+        check("confirmed pages removed later by their original numbers",
+              [p for _, p in store.get_file(c2["new_file_id"])[0]["page_origin"]] == [1, 3])
+check("nothing asked: refused", "nothing to do" in str(cleanup_error(lambda: cleanup.clean_pdf(fid))))
 
 
 def image_hashes(fid):

@@ -11,8 +11,9 @@ import re
 
 import pymupdf
 
-from core.pdfutil import (STANDARD_INFO_KEYS, ToolError, derived_name, info_keys, open_pdf, origin_of,
-                          page_ranges, render_gray, save_new)
+from core.pages import pages_from_original
+from core.pdfutil import (STANDARD_INFO_KEYS, ToolError, check_pages, derived_name, info_keys, open_pdf,
+                          origin_of, page_ranges, render_gray, save_new)
 
 DPI = 60
 BORDER = 0.03        # ignore the outer 3%: scanner edge shadows live there
@@ -22,6 +23,8 @@ BLANK_INK = 0.0003   # below 0.03% inked pixels, nothing is visibly on the page
 NEARLY_EMPTY_LINES = 2     # a page with this few lines of text is shown to the user, never auto-removed
 NEARLY_EMPTY_INK = 0.005   # a scan under 0.5% inked is nearly empty (scanned text pages measure ~1.7-1.9%)
 SIMILAR_THUMB = 6.0  # mean abs grey difference (0-255) between page thumbnails
+# In the result, not only the prompt: without it the model listed safe pages and then waited.
+NEXT_STEP = ("to remove them, call clean_pdf with remove_blank / remove_duplicates (and strip_metadata if asked): it removes only the safe pages and reports the ones to ask about")
 SAME_OCR_TEXT = 0.90 # difflib ratio for two scans to count as the same page
 
 NOTICE = re.compile(r"^(this\s+)?page\s+(is\s+|has\s+been\s+)?(intentionally|deliberately)?\s*(left\s+)?blank\.?$")
@@ -121,7 +124,8 @@ def find_blank_pages(file_id: str) -> dict:
         ask = [b["page"] for b in found if b["needs_confirmation"]] + [s["page"] for s in sparse]
         return {"file_id": file_id, "pages": doc.page_count, "blank_pages": found,
                 "nearly_empty_pages": sparse,
-                "safe_to_remove": page_ranges(sure), "ask_user_first": page_ranges(ask)}
+                "safe_to_remove": page_ranges(sure), "ask_user_first": page_ranges(ask),
+                "next_step": NEXT_STEP}
 
 
 def _thumb(im):
@@ -185,51 +189,118 @@ def find_duplicate_pages(file_id: str) -> dict:
         ask = [f["page"] for f in found if f["needs_confirmation"]]
         return {"file_id": file_id, "pages": doc.page_count, "duplicate_pages": found,
                 "safe_to_remove": page_ranges(sure), "ask_user_first": page_ranges(ask),
-                "note": "blank pages are excluded here; see find_blank_pages"}
+                "note": "blank pages are excluded here; see find_blank_pages", "next_step": NEXT_STEP}
 
 
 METADATA_KEY = re.compile(r"/(Author|Creator|Producer|Subject|Keywords|CreationDate|ModDate)\b")
 
 
-def strip_metadata(file_id: str, keep_title: bool = True) -> dict:
-    meta, doc = open_pdf(file_id)
-    with doc:
-        before = {k: v for k, v in (doc.metadata or {}).items() if v and k != "format"}
-        custom = [k for k in info_keys(doc) if k not in STANDARD_INFO_KEYS]
-        had_xmp = bool(doc.get_xml_metadata())
-        title = before.get("title") if keep_title else None
-        cat_info = doc.xref_get_key(doc.pdf_catalog(), "Info")[0] != "null"
-        if not (set(before) - ({"title"} if title else set())) and not custom and not had_xmp and not cat_info:
-            return {"nothing_to_remove": True, "kept": ["title"] if title else [],
-                    "note": "no metadata to strip; no new file was written"}
-
-        doc.del_xml_metadata()
-        # Rewrite the Info dictionary outright: setting keys to null leaves "/Author null" behind.
-        kind, val = doc.xref_get_key(-1, "Info")
-        if kind == "xref":
-            doc.update_object(int(val.split()[0]),
-                              f"<</Title{pymupdf.get_pdf_str(title)}>>" if title else "<<>>")
-        # Documents created by MuPDF carry a non-standard /Info inside the catalog too.
+def _strip(doc, keep_title: bool) -> tuple[list[str], str | None]:
+    """Strip metadata in place. Returns (what was removed, the title kept)."""
+    before = {k: v for k, v in (doc.metadata or {}).items() if v and k != "format"}
+    custom = [k for k in info_keys(doc) if k not in STANDARD_INFO_KEYS]
+    had_xmp = bool(doc.get_xml_metadata())
+    title = before.get("title") if keep_title else None
+    cat_info = doc.xref_get_key(doc.pdf_catalog(), "Info")[0] != "null"
+    removed = sorted(set(before) - ({"title"} if title else set())) + custom + (["XMP metadata"] if had_xmp else [])
+    if not removed and not cat_info:
+        return [], title
+    doc.del_xml_metadata()
+    # Rewrite the Info dictionary outright: setting keys to null leaves "/Author null" behind.
+    kind, val = doc.xref_get_key(-1, "Info")
+    if kind == "xref":
+        doc.update_object(int(val.split()[0]), f"<</Title{pymupdf.get_pdf_str(title)}>>" if title else "<<>>")
+    # Documents created by MuPDF carry a non-standard /Info inside the catalog too.
+    if cat_info:
         cat = doc.pdf_catalog()
-        if cat_info:
-            doc.xref_set_key(cat, "Info", "null")
-            doc.update_object(cat, re.sub(r"/Info\s*null", "", doc.xref_object(cat, compressed=True)))
-        out = save_new(doc, derived_name(meta["name"], "no-metadata"), [file_id], "strip_metadata",
-                       page_origin=origin_of(meta))
+        doc.xref_set_key(cat, "Info", "null")
+        doc.update_object(cat, re.sub(r"/Info\s*null", "", doc.xref_object(cat, compressed=True)))
+    return removed or ["MuPDF producer stamp"], title
 
-    _, check = open_pdf(out["id"])
+
+def _verify_no_metadata(file_id: str) -> None:
+    _, check = open_pdf(file_id)
     with check:
-        left = {k: v for k, v in (check.metadata or {}).items() if v and k != "format" and k != "title"}
+        left = {k: v for k, v in (check.metadata or {}).items() if v and k not in ("format", "title")}
         leaked = [x for x in range(1, check.xref_length())
                   if METADATA_KEY.search(check.xref_object(x, compressed=True) or "")]
         if left or check.get_xml_metadata() or leaked:
             raise ToolError(f"verification failed: metadata still present {left or ''} "
                             f"{'XMP' if check.get_xml_metadata() else ''} objects {leaked}")
-    return {
-        "new_file_id": out["id"],
-        "removed": sorted(set(before) - ({"title"} if title else set())) + custom +
-                   (["XMP metadata"] if had_xmp else []),
-        "kept": ["title"] if title else [],
-        "verified": "reopened the new file: no metadata fields, custom fields or XMP left",
-        "files_created": [out],
-    }
+
+
+def strip_metadata(file_id: str, keep_title: bool = True) -> dict:
+    meta, doc = open_pdf(file_id)
+    with doc:
+        removed, title = _strip(doc, keep_title)
+        if not removed:
+            return {"nothing_to_remove": True, "kept": ["title"] if title else [],
+                    "note": "no metadata to strip; no new file was written"}
+        out = save_new(doc, derived_name(meta["name"], "no-metadata"), [file_id], "strip_metadata",
+                       page_origin=origin_of(meta))
+    _verify_no_metadata(out["id"])
+    return {"new_file_id": out["id"], "removed": removed, "kept": ["title"] if title else [],
+            "verified": "reopened the new file: no metadata fields, custom fields or XMP left",
+            "files_created": [out]}
+
+
+def clean_pdf(file_id: str, remove_blank: bool = False, remove_duplicates: bool = False,
+              strip_metadata: bool = False, remove_pages: list[int] | None = None,
+              numbering: str = "this_file", keep_title: bool = True) -> dict:
+    """One-click cleanup: detect, remove the safe pages, strip metadata, ONE new file.
+
+    Detection runs inside, so what the reply says was checked is what the code ran: given
+    separate find/apply tools, the model once skipped the finders and still reported
+    "no blank pages found". One call also avoids two half-cleaned files from parallel calls.
+    """
+    if not (remove_blank or remove_duplicates or strip_metadata or remove_pages):
+        raise ToolError("nothing to do: set remove_blank, remove_duplicates, strip_metadata or remove_pages")
+    removed, ask = [], []
+    if remove_blank:
+        b = find_blank_pages(file_id)
+        removed += [(x["page"], x["reason"]) for x in b["blank_pages"] if not x["needs_confirmation"]]
+        ask += [(x["page"], x["reason"]) for x in b["blank_pages"] + b["nearly_empty_pages"] if x["needs_confirmation"]]
+    if remove_duplicates:
+        d = find_duplicate_pages(file_id)
+        for x in d["duplicate_pages"]:
+            item = (x["page"], f"{x['how']} of page {x['duplicate_of']}")
+            (ask if x["needs_confirmation"] else removed).append(item)
+    meta, doc = open_pdf(file_id)
+    with doc:
+        n, origin = doc.page_count, origin_of(meta)
+        given = []
+        if remove_pages:
+            given = pages_from_original(meta, remove_pages) if numbering == "original" else check_pages(remove_pages, n)
+        drop = sorted({p for p, _ in removed} | set(given))
+        if len(drop) == n:
+            raise ToolError("that would remove every page; nothing would be left")
+        removed_md, title = _strip(doc, keep_title) if strip_metadata else ([], None)
+        findings = {"ask_user_first": [{"page": p, "reason": r} for p, r in sorted(ask)],
+                    "checked": [k for k, on in (("blank pages", remove_blank), ("duplicate pages", remove_duplicates),
+                                                ("metadata", strip_metadata)) if on]}
+        if not drop and not removed_md:
+            return {"nothing_to_do": True, **findings,
+                    "note": "nothing safe to remove and no metadata to strip; no new file was written"}
+        keep = [i for i in range(n) if i + 1 not in drop]
+        if drop:
+            doc.select(keep)
+        out = save_new(doc, derived_name(meta["name"], "cleaned"), [file_id], "clean_pdf",
+                       page_origin=[origin[i] for i in keep])
+    if out["pages"] != n - len(drop):
+        raise ToolError(f"verification failed: expected {n - len(drop)} pages, got {out['pages']}")
+    if removed_md:
+        _verify_no_metadata(out["id"])
+    reasons = dict(removed)
+    # Page numbers of the file given. A merged file's "original" page numbers would point into
+    # different uploads, so they are only added when the file has a single source.
+    single_source = len({root for root, _ in origin}) == 1
+    result = {"new_file_id": out["id"], "pages_before": n, "pages_after": out["pages"],
+              "removed_pages": [{"page": p, **({"original_page": origin[p - 1][1]} if single_source else {}),
+                                 "reason": reasons.get(p, "asked by the user")} for p in drop],
+              "metadata_removed": removed_md or ("nothing to remove" if strip_metadata else "not asked"),
+              **findings, "verified": "page count and metadata checked on the new file", "files_created": [out]}
+    if ask:
+        result["next_step"] = ("first finish every other step the user asked for (e.g. compressing) on this new file; "
+                               "then, at the end, ask about each ask_user_first page. Remove confirmed ones with "
+                               "clean_pdf(remove_pages=[...], numbering='original') on the latest file.")
+    return result

@@ -1,0 +1,28 @@
+redaction_form.pdf
+  PASS  page 1: every planted item found with the right type  -- 13/13 found
+  PASS  page 1: nothing else flagged
+  PASS  page 2: every planted item found with the right type  -- 10/10 found
+  PASS  page 2: nothing else flagged
+  PASS  every item located on the page (needed to redact it)
+  PASS  no decoy flagged (failed checksums, no context, plain words)  -- 9 decoys ignored
+  PASS  masked values never reveal the full value
+redaction_scanned.pdf
+  PASS  page 1: every planted item found with the right type  -- 13/13 found
+  PASS  page 1: nothing else flagged
+  PASS  every item located on the page (needed to redact it)
+  PASS  masked values never reveal the full value
+  PASS  read by OCR  -- OCR pages [1]
+proposal and preview (rules only; names/addresses need the model)
+  PASS  a pending proposal holds every item; raw values only in its private part  -- 23 items: {'personal': 1, 'government_id': 5, 'contact': 3, 'financial': 4, 'secret': 10}
+  PASS  preview highlights every located item  -- 29 highlights
+  PASS  the original file is untouched
+applying an approved proposal
+  PASS  approve all: every value gone from the text, verified  -- re-read the new file: every redacted value is gone from the text, and every box on a scanned page is black
+  PASS  text next to the redactions is untouched (the decoys are all still there)  -- 9 decoys still readable
+  PASS  same page count
+  PASS  approving twice is refused  -- this proposal was already applied
+  PASS  approve some: only the chosen items are redacted  -- 3 redacted, 20 left
+  PASS  approving after a reject is refused  -- this proposal was already rejected
+  PASS  scan: every box blacked out, and OCR of the redacted page finds none of the values  -- 13 items; still readable by OCR: none
+
+ALL PASS

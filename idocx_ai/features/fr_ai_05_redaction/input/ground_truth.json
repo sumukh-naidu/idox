@@ -1,0 +1,201 @@
+{
+  "_comment": "FR-AI-05 test set. Every value is FAKE: IDs pass their checksums, decoys fail them.",
+  "redaction_form.pdf": {
+    "pages": 2,
+    "expected": {
+      "1": [
+        [
+          "date of birth",
+          "14/08/1991"
+        ],
+        [
+          "Aadhaar number",
+          "8158 8139 9866"
+        ],
+        [
+          "Aadhaar VID",
+          "9879 7309 1141 7073"
+        ],
+        [
+          "PAN",
+          "ABCPE1234F"
+        ],
+        [
+          "passport number",
+          "P1234567"
+        ],
+        [
+          "phone number",
+          "+91 98765 43210"
+        ],
+        [
+          "phone number",
+          "022-2345 6789"
+        ],
+        [
+          "email address",
+          "ravi.testcase@example.com"
+        ],
+        [
+          "bank account number",
+          "001234567890"
+        ],
+        [
+          "IFSC code",
+          "TEST0001234"
+        ],
+        [
+          "UPI ID",
+          "ravi.test@okaxis"
+        ],
+        [
+          "card number",
+          "4111 1111 1111 1111"
+        ],
+        [
+          "GSTIN",
+          "27ABCPE1234F1ZB"
+        ]
+      ],
+      "2": [
+        [
+          "AWS access key",
+          {
+            "sha256": "2eb6c6020c2290c8d9020b570bd9d6ef7577109b2d51c2510b61674ca782ee18"
+          }
+        ],
+        [
+          "GitHub token",
+          {
+            "sha256": "c5f531f8c35da8153595a272adab44d8ec486a60ba39cac4434d5837f4a893ad"
+          }
+        ],
+        [
+          "API secret key",
+          {
+            "sha256": "82ffcb4343ef0f4f1abdebba8e04db4209575207fd134c47f3dab978e8f72814"
+          }
+        ],
+        [
+          "Google API key",
+          {
+            "sha256": "4ff2404bde619e507d80e2d3962cbafcfa46811ac0354038cbdbd8ad871b0f60"
+          }
+        ],
+        [
+          "Slack token",
+          {
+            "sha256": "93991afb4a7dff7fe8ca10c0f8c4ee48f7f95c057a7e076b512e68b8c2b97cf0"
+          }
+        ],
+        [
+          "JWT / access token",
+          {
+            "sha256": "b2204afc5419299cc96602de746536f05c9dcfe7f89f486470d7bc0d4ec692f2"
+          }
+        ],
+        [
+          "bearer token",
+          {
+            "sha256": "a978d971d05456e60ea85de4f75fbae3e09695e41fc1273014bbad606d44bd3e"
+          }
+        ],
+        [
+          "password or secret",
+          {
+            "sha256": "5965a7c769c87fe86e6f06b45e3a4a049c7615a9e3a17b4475b5fd9135567dae"
+          }
+        ],
+        [
+          "password in a connection string",
+          {
+            "sha256": "45b1648a78b7dce74ad70ea262058e65c93b1c31c4b69c7a0e2f41417193c024"
+          }
+        ],
+        [
+          "private key",
+          "PRIVATE KEY"
+        ]
+      ]
+    },
+    "must_not_flag": [
+      "8158 8139 9867",
+      "4111 1111 1111 1112",
+      "123456789012",
+      "01/10/2026",
+      "K7654321",
+      "560001",
+      "required",
+      "9fceb02d0ae598e95dc970b74767f19372d61af8",
+      "550e8400-e29b-41d4-a716-446655440000"
+    ],
+    "for_the_model": {
+      "names": [
+        "Ravi Kumar Testcase"
+      ],
+      "addresses": [
+        "Flat 12, Test Residency, MG Road, Bengaluru 560001"
+      ]
+    }
+  },
+  "redaction_scanned.pdf": {
+    "pages": 1,
+    "text_layer": false,
+    "expected": {
+      "1": [
+        [
+          "date of birth",
+          "14/08/1991"
+        ],
+        [
+          "Aadhaar number",
+          "8158 8139 9866"
+        ],
+        [
+          "Aadhaar VID",
+          "9879 7309 1141 7073"
+        ],
+        [
+          "PAN",
+          "ABCPE1234F"
+        ],
+        [
+          "passport number",
+          "P1234567"
+        ],
+        [
+          "phone number",
+          "+91 98765 43210"
+        ],
+        [
+          "phone number",
+          "022-2345 6789"
+        ],
+        [
+          "email address",
+          "ravi.testcase@example.com"
+        ],
+        [
+          "bank account number",
+          "001234567890"
+        ],
+        [
+          "IFSC code",
+          "TEST0001234"
+        ],
+        [
+          "UPI ID",
+          "ravi.test@okaxis"
+        ],
+        [
+          "card number",
+          "4111 1111 1111 1111"
+        ],
+        [
+          "GSTIN",
+          "27ABCPE1234F1ZB"
+        ]
+      ]
+    }
+  }
+}

@@ -31,12 +31,46 @@ def open_pdf(file_id: str):
     return meta, pymupdf.open(path)
 
 
-def save_new(doc, name: str, parents: list[str], source: str, page_origin: list) -> dict:
+def save_new(doc, name: str, parents: list[str], source: str, page_origin: list, **save_opts) -> dict:
     """Write doc as a NEW file. garbage=4 drops orphaned objects, so removed
     metadata or pages are gone from the bytes, not merely unreferenced."""
-    data = doc.tobytes(garbage=4, deflate=True)
+    data = doc.tobytes(**{"garbage": 4, "deflate": True, **save_opts})
     return store.save_file(data, name, pages=doc.page_count, source=source, parents=parents,
                            page_origin=page_origin)
+
+
+def parse_page_spec(spec, page_count: int) -> list[int]:
+    """Pages as the model sends them: [3, 7] or "1-3, 7, 9-end". Returns 1-based
+    page numbers in the order given (order matters for extract and reorder)."""
+    if isinstance(spec, list):
+        return [p for p in _ints(spec, page_count)]
+    if not isinstance(spec, str) or not spec.strip():
+        raise ToolError('pages must be a list like [3, 7] or a string like "1-3, 7, 9-end"')
+    out = []
+    for part in spec.replace(" ", "").split(","):
+        lo, _, hi = part.partition("-")
+        try:
+            a = int(lo)
+            b = page_count if hi.lower() in ("end", "last") else int(hi) if hi else a
+        except ValueError:
+            raise ToolError(f"cannot read page range '{part}'")
+        if a > b:
+            raise ToolError(f"page range '{part}' runs backwards")
+        out.extend(range(a, b + 1))
+    return _ints(out, page_count)
+
+
+def _ints(pages, page_count: int) -> list[int]:
+    try:
+        nums = [int(p) for p in pages]
+    except (TypeError, ValueError):
+        raise ToolError(f"page numbers must be integers, got {pages}")
+    if not nums:
+        raise ToolError("no pages given")
+    bad = sorted({p for p in nums if not 1 <= p <= page_count})
+    if bad:
+        raise ToolError(f"pages {bad} do not exist; this file has pages 1-{page_count}")
+    return nums
 
 
 def origin_of(meta: dict) -> list:

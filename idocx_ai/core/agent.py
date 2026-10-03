@@ -5,20 +5,13 @@ error, done.
 """
 
 import json
-import os
-import threading
 import time
-import urllib.request
 
-from core import store, tools
+from core import llm, store, tools
 
-LLAMA = os.environ.get("LLAMA_ENDPOINT", "http://localhost:8080")
 MAX_STEPS = 8
 MAX_TOKENS = 1024
-TOOL_RESULT_CHARS = 6000
-
-# One model request at a time: llama-server runs a single slot, shared with IDP.
-_model_lock = threading.Lock()
+TOOL_RESULT_CHARS = 12000   # read_document returns up to 10,000 characters of text
 
 SYSTEM = """You are the iDocx assistant. The user uploads PDF files and asks you to work on them.
 
@@ -28,47 +21,42 @@ Rules:
 - If a request needs an operation no tool provides, say plainly that it is not available yet. Never claim to have done something a tool did not do.
 - Only PDF files are supported.
 - Keep replies short and factual.
+- Never show tool names (like fix_accessibility) to the user; describe what you did or can do in plain words.
 - When a step creates a new file, later steps work on that new file's ID.
 - When the user later confirms more pages to remove, remove them from the LATEST file, passing the page numbers you showed them with numbering='original'."""
 
 
 def _system_prompt(session: dict) -> str:
-    lines = []
+    lines, names = [], {}
     for fid in session["files"]:
         try:
             meta, _ = store.get_file(fid)
-            lines.append(f'- {fid}  "{meta["name"]}"  ({meta["pages"]} pages)')
         except store.NotFound:
             continue
+        names[fid] = meta["name"]
+        # Say where each file came from: otherwise "the latest version" can mean a copy a tool made.
+        if meta["source"] in ("upload", "test"):
+            origin = "uploaded by the user"
+        else:
+            parents = ", ".join(f'"{names.get(p, p)}"' for p in meta["parents"])
+            origin = f"made by {meta['source']} from {parents}"
+        lines.append(f'- {fid}  "{meta["name"]}"  ({meta["pages"]} pages, {origin})')
     files = "\n".join(lines) if lines else "(none uploaded yet)"
     features = "\n\n".join(tools.PROMPTS)
     return f"{SYSTEM}\n\n{features}\n\nFiles in this session:\n{files}"
 
 
 def _call_model(messages: list[dict]) -> dict:
-    body = json.dumps({
-        "messages": messages,
-        "tools": tools.schemas(),
-        "tool_choice": "auto",
-        "temperature": 0,          # same request, same plan: test runs must be reproducible
-        "max_tokens": MAX_TOKENS,
-    }).encode()
-    req = urllib.request.Request(f"{LLAMA}/v1/chat/completions", body,
-                                 {"Content-Type": "application/json"})
-    with _model_lock, urllib.request.urlopen(req, timeout=600) as r:
-        return json.load(r)
-
-
-def model_name() -> str | None:
-    try:
-        with urllib.request.urlopen(f"{LLAMA}/v1/models", timeout=3) as r:
-            return json.load(r)["data"][0]["id"].split("/")[-1].removesuffix(".gguf")
-    except Exception:
-        return None
+    # temperature 0 keeps plans as repeatable as the server allows; runs still vary a little.
+    return llm.chat(messages, tools=tools.schemas(), tool_choice="auto", temperature=0, max_tokens=MAX_TOKENS)
 
 
 def run_turn(session: dict, user_text: str):
-    session["messages"].append({"role": "user", "content": user_text})
+    # Things that happened outside the chat (e.g. the user approved a proposal in the
+    # review card) reach the model as a note on their next message.
+    notes = session.pop("notes", [])
+    content = ("[" + " ".join(notes) + "]\n\n" + user_text) if notes else user_text
+    session["messages"].append({"role": "user", "content": content})
     stats = {"model_calls": 0, "model_seconds": 0.0, "prompt_tokens": 0, "completion_tokens": 0,
              "repeated_calls": 0}
     started = time.perf_counter()
@@ -127,6 +115,8 @@ def run_turn(session: dict, user_text: str):
             for f in (out.get("result") or {}).get("files_created", []) if out["ok"] else []:
                 store.attach(session, f["id"])
                 yield {"type": "file_created", "file": f}
+            if out["ok"] and isinstance(out.get("result"), dict) and out["result"].get("proposal"):
+                yield {"type": "proposal", "proposal": out["result"]["proposal"]}
             yield {"type": "tool_finished", "tool": name, "ok": out["ok"], "seconds": secs,
                    "result": out.get("result"), "error": out.get("error")}
 

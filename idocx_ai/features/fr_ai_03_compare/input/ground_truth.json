@@ -1,0 +1,62 @@
+{
+  "_comment": "FR-AI-03 comparison test set. All content invented.",
+  "contract_v1.pdf": {
+    "pages": 3
+  },
+  "contract_v2.pdf": {
+    "pages": 3
+  },
+  "contract_v2_scanned.pdf": {
+    "pages": 3,
+    "text_layer": false
+  },
+  "changes": [
+    {
+      "clause": "Payment",
+      "type": "modified",
+      "material": true,
+      "old": "30",
+      "new": "45"
+    },
+    {
+      "clause": "Liability",
+      "type": "modified",
+      "material": true,
+      "old": "12 months",
+      "new": "6 months"
+    },
+    {
+      "clause": "Exclusivity",
+      "type": "removed",
+      "material": true
+    },
+    {
+      "clause": "Data Protection",
+      "type": "added",
+      "material": true
+    },
+    {
+      "clause": "Termination",
+      "type": "modified",
+      "material": false,
+      "note": "'with' -> 'by giving': same meaning"
+    },
+    {
+      "clause": "Governing Law",
+      "type": "moved",
+      "material": false,
+      "note": "moved before Termination; only its final full stop differs, which is not a wording change"
+    }
+  ],
+  "unchanged": [
+    "Parties",
+    "Term",
+    "Confidentiality"
+  ],
+  "must_ignore": [
+    "running header 'Version 1' vs 'Version 2'",
+    "page numbers",
+    "clause renumbering after Exclusivity was removed",
+    "Governing Law's missing full stop"
+  ]
+}

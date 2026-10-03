@@ -3,7 +3,7 @@
 from core.pdfutil import ToolError, check_pages, derived_name, open_pdf, origin_of, page_ranges, save_new
 
 
-def _from_original(meta: dict, pages) -> list[int]:
+def pages_from_original(meta: dict, pages) -> list[int]:
     """Translate page numbers of the uploaded file into this file's page numbers."""
     origin = origin_of(meta)
     roots = {r for r, _ in origin}
@@ -26,7 +26,7 @@ def remove_pages(file_id: str, pages: list[int], numbering: str = "this_file") -
         raise ToolError("numbering must be 'this_file' or 'original'")
     with doc:
         before = doc.page_count
-        drop = _from_original(meta, pages) if numbering == "original" else check_pages(pages, before)
+        drop = pages_from_original(meta, pages) if numbering == "original" else check_pages(pages, before)
         if len(drop) == before:
             raise ToolError("that would remove every page; nothing would be left")
         keep = [i for i in range(before) if i + 1 not in drop]

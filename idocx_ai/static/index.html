@@ -7,22 +7,25 @@
 <style>
   :root {
     --bg: #f5f6f8; --panel: #ffffff; --ink: #15181d; --muted: #67707c; --line: #e1e4e9;
-    --accent: #2f6df6; --user: #e9f0ff; --ok: #177a46; --bad: #c2382f; --code: #f1f3f6;
+    --accent: #2f6df6; --accent-soft: #e9f0ff; --user: #e9f0ff; --ok: #177a46; --ok-soft: #e6f4ec;
+    --bad: #c2382f; --code: #f1f3f6;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #121418; --panel: #1b1f25; --ink: #e7e9ec; --muted: #9aa3ae; --line: #2b313a;
-      --accent: #6d9bff; --user: #1f2b44; --ok: #6bd59a; --bad: #ff7b72; --code: #232830;
+      --accent: #6d9bff; --accent-soft: #1f2b44; --user: #1f2b44; --ok: #6bd59a; --ok-soft: #15281e;
+      --bad: #ff7b72; --code: #232830;
     }
   }
   :root[data-theme="dark"] {
     --bg: #121418; --panel: #1b1f25; --ink: #e7e9ec; --muted: #9aa3ae; --line: #2b313a;
-    --accent: #6d9bff; --user: #1f2b44; --ok: #6bd59a; --bad: #ff7b72; --code: #232830;
+    --accent: #6d9bff; --accent-soft: #1f2b44; --user: #1f2b44; --ok: #6bd59a; --ok-soft: #15281e;
+    --bad: #ff7b72; --code: #232830;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 14.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 16px; height: 100vh; display: flex; flex-direction: column; }
+  .wrap { max-width: 1480px; margin: 0 auto; padding: 18px 16px; height: 100vh; display: flex; flex-direction: column; }
   header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
   h1 { font-size: 18px; margin: 0; }
   .status { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
@@ -32,25 +35,53 @@
   button { font: inherit; font-size: 13.5px; font-weight: 550; cursor: pointer; border: 0; border-radius: 8px;
            padding: 8px 14px; background: var(--accent); color: #fff; }
   button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button.small { font-size: 12px; padding: 3px 10px; }
   button:disabled { opacity: .45; cursor: default; }
 
-  .cols { flex: 1; display: grid; grid-template-columns: 300px 1fr; gap: 14px; min-height: 0; }
-  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } .wrap { height: auto; } }
+  .cols { flex: 1; display: grid; grid-template-columns: 230px 330px 1fr; gap: 14px; min-height: 0; }
+  @media (max-width: 1050px) { .cols { grid-template-columns: 1fr; } .wrap { height: auto; } #log { min-height: 360px; } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
-           display: flex; flex-direction: column; min-height: 0; }
+           display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
   .panel h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
               margin: 0 0 10px; font-weight: 600; }
+  .panel h3 { font-size: 12px; color: var(--muted); margin: 16px 0 8px; font-weight: 600; }
 
-  #drop { border: 1.5px dashed var(--line); border-radius: 9px; padding: 22px 12px; text-align: center;
-          color: var(--muted); cursor: pointer; font-size: 13.5px; }
+  /* sidebar */
+  .feat { display: block; width: 100%; text-align: left; background: transparent; color: var(--ink);
+          border: 1px solid transparent; border-radius: 8px; padding: 9px 10px; margin-bottom: 4px; font-weight: 500; }
+  .feat:hover { background: var(--bg); }
+  .feat.active { background: var(--accent-soft); border-color: var(--accent); }
+  .feat .t { display: block; font-size: 13.5px; font-weight: 600; }
+  .feat .m { display: flex; gap: 6px; align-items: center; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+  .pill { font-size: 10.5px; padding: 0 7px; border-radius: 10px; border: 1px solid var(--line); white-space: nowrap; }
+  .pill.ready { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+  .pill.progress { color: var(--accent); border-color: var(--accent); }
+  .sidenote { font-size: 11.5px; color: var(--muted); margin-top: auto; padding-top: 12px; }
+
+  /* test kit */
+  .card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card-title b { font-size: 15px; }
+  .desc { font-size: 13px; margin: 6px 0 0; }
+  .sample { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px;
+            padding: 5px 0; border-bottom: 1px solid var(--line); word-break: break-all; }
+  .example { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; margin-bottom: 8px; font-size: 12.5px; }
+  .example .p { font-weight: 550; }
+  .example .f { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .example .e { color: var(--muted); margin: 5px 0 7px; }
+  .example .e b { color: var(--ink); font-weight: 600; }
+  .none { color: var(--muted); font-size: 12.5px; }
+
+  #drop { border: 1.5px dashed var(--line); border-radius: 9px; padding: 14px 10px; text-align: center;
+          color: var(--muted); cursor: pointer; font-size: 13px; }
   #drop.hot { border-color: var(--accent); }
-  #files { list-style: none; margin: 12px 0 0; padding: 0; overflow-y: auto; }
-  #files li { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  #files { list-style: none; margin: 8px 0 0; padding: 0; }
+  #files li { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   #files .name { font-weight: 550; word-break: break-all; }
   #files .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
   #files .tag { font-size: 11px; padding: 0 6px; border-radius: 10px; border: 1px solid var(--line); }
   a { color: var(--accent); }
 
+  /* chat */
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
   .msg { max-width: 88%; padding: 9px 12px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; }
   .msg.user { align-self: flex-end; background: var(--user); }
@@ -63,10 +94,24 @@
   .err { align-self: flex-start; color: var(--bad); font-size: 13px; }
   .stats { align-self: flex-start; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .empty { color: var(--muted); font-size: 13.5px; margin: auto; text-align: center; }
-
+  .review { align-self: stretch; border: 1.5px solid var(--accent); border-radius: 10px; padding: 12px 14px;
+            background: var(--panel); font-size: 13px; }
+  .review .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .review .head b { font-size: 14px; }
+  .review .head span, .review .sel { color: var(--muted); font-size: 12px; }
+  .review .sel a { cursor: pointer; margin-right: 10px; }
+  .review h4 { margin: 12px 0 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .review label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; cursor: pointer; }
+  .review .k { min-width: 170px; }
+  .review .v { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .review .m { color: var(--muted); font-size: 11.5px; margin-left: auto; white-space: nowrap; }
+  .review .warn { color: var(--bad); }
+  .review .foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .review .outcome { margin-top: 10px; }
+  .review .done { color: var(--ok); }
   form { display: flex; gap: 8px; margin-top: 12px; }
   textarea { flex: 1; font: inherit; resize: none; padding: 9px 11px; border-radius: 8px; color: var(--ink);
-             background: var(--bg); border: 1px solid var(--line); height: 44px; }
+             background: var(--bg); border: 1px solid var(--line); height: 58px; }
 </style>
 </head>
 <body>
@@ -79,8 +124,16 @@
   </header>
 
   <div class="cols">
+    <nav class="panel">
+      <h2>Features</h2>
+      <div id="features"></div>
+      <div class="sidenote">Picking a different feature starts a new chat, so test files from one feature don't mix with another's.</div>
+    </nav>
+
     <div class="panel">
-      <h2>Files</h2>
+      <h2>Test kit</h2>
+      <div id="card"></div>
+      <h3>Files in this chat</h3>
       <div id="drop">Drop PDFs here, or click to choose</div>
       <input type="file" id="picker" accept=".pdf,application/pdf" multiple hidden>
       <ul id="files"></ul>
@@ -88,7 +141,7 @@
 
     <div class="panel">
       <h2>Chat</h2>
-      <div id="log"><div class="empty" id="empty">Upload a PDF, then ask for something —<br>e.g. "how many pages does this have, and are any blank?"</div></div>
+      <div id="log"></div>
       <form id="form">
         <textarea id="input" placeholder="Ask iDocx to do something with your PDFs…  (Enter to send, Shift+Enter for a new line)"></textarea>
         <button id="send">Send</button>
@@ -101,6 +154,11 @@
 const $ = (id) => document.getElementById(id);
 let sessionId = null;
 let busy = false;
+let features = [];
+let current = null;
+let chatUsed = false;
+let messagesSent = false;
+const chatFileNames = new Set();
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -108,17 +166,28 @@ function el(tag, cls, text) {
   if (text !== undefined) e.textContent = text;
   return e;
 }
+const PILL = { "ready": "ready", "in progress": "progress" };
+function pill(status) { return el("span", "pill " + (PILL[status] || ""), status); }
 
 function scrollDown() { $("log").scrollTop = $("log").scrollHeight; }
-function add(node) { $("empty")?.remove(); $("log").appendChild(node); scrollDown(); return node; }
+function add(node) { $("log").querySelector(".empty")?.remove(); $("log").appendChild(node); scrollDown(); return node; }
 
 async function newSession() {
   const r = await fetch("/sessions", { method: "POST" });
   sessionId = (await r.json()).session_id;
+  chatUsed = false;
+  messagesSent = false;
+  chatFileNames.clear();
   $("files").innerHTML = "";
   $("log").innerHTML = "";
-  $("log").appendChild(el("div", "empty", "New chat. Upload a PDF, then ask for something."))
-    .id = "empty";
+  $("log").appendChild(el("div", "empty",
+    "New chat. Add a test file from the test kit (or upload your own), then ask for something."));
+}
+
+// Sessions live in the backend's memory, so a backend restart forgets them.
+async function recoverSession() {
+  await newSession();
+  add(el("div", "err", "The backend was restarted and forgot this chat, so a new one was started."));
 }
 
 async function health() {
@@ -130,6 +199,95 @@ async function health() {
     $("dot").className = "dot down";
     $("status").textContent = "backend unreachable";
   }
+}
+
+// ---------------------------------------------------------------- features
+async function loadFeatures() {
+  try {
+    features = await (await fetch("/features")).json();
+  } catch {
+    $("features").appendChild(el("div", "none", "Could not load the feature list."));
+    return;
+  }
+  for (const f of features) {
+    const b = el("button", "feat");
+    b.dataset.id = f.id;
+    b.appendChild(el("span", "t", f.title));
+    const m = el("span", "m");
+    m.appendChild(el("span", null, f.id));
+    m.appendChild(pill(f.status));
+    b.appendChild(m);
+    b.addEventListener("click", () => selectFeature(f));
+    $("features").appendChild(b);
+  }
+  current = features.find((f) => f.status === "ready") || features[0];
+  renderFeature();
+}
+
+async function selectFeature(f) {
+  if (busy || f === current) return;
+  current = f;
+  if (chatUsed) await newSession();
+  renderFeature();
+}
+
+function renderFeature() {
+  document.querySelectorAll(".feat").forEach((b) => b.classList.toggle("active", b.dataset.id === current.id));
+  const card = $("card");
+  card.innerHTML = "";
+  const t = el("div", "card-title");
+  t.appendChild(el("b", null, current.title));
+  t.appendChild(pill(current.status));
+  card.appendChild(t);
+  card.appendChild(el("p", "desc", current.description));
+
+  card.appendChild(el("h3", null, "Test files"));
+  if (!current.samples.length) card.appendChild(el("div", "none", "No test files yet."));
+  for (const name of current.samples) {
+    const row = el("div", "sample");
+    row.appendChild(el("span", null, name));
+    const b = el("button", "small ghost", "Add to chat");
+    b.addEventListener("click", () => addSample(name));
+    row.appendChild(b);
+    card.appendChild(row);
+  }
+
+  card.appendChild(el("h3", null, "Example requests"));
+  if (!current.examples.length) card.appendChild(el("div", "none", "No examples yet."));
+  for (const ex of current.examples) {
+    const box = el("div", "example");
+    box.appendChild(el("div", "p", `“${ex.prompt}”`));
+    const files = exampleFiles(ex);
+    if (files.length) box.appendChild(el("div", "f", `with ${files.join(" + ")}`));
+    const e = el("div", "e");
+    e.appendChild(el("b", null, "Expected: "));
+    e.appendChild(document.createTextNode(ex.expect));
+    box.appendChild(e);
+    const b = el("button", "small", "Try it");
+    b.addEventListener("click", () => tryExample(ex));
+    box.appendChild(b);
+    card.appendChild(box);
+  }
+}
+
+async function addSample(name) {
+  const r = await fetch(`/features/${encodeURIComponent(current.id)}/samples/${encodeURIComponent(name)}`);
+  if (!r.ok) { add(el("div", "err", `Could not load test file ${name}`)); return; }
+  await upload([new File([await r.blob()], name, { type: "application/pdf" })]);
+}
+
+function exampleFiles(ex) { return [ex.file, ...(ex.also || [])].filter(Boolean); }
+
+async function tryExample(ex) {
+  if (busy) return;
+  // Each example runs in a clean chat: files and answers left from an earlier example
+  // made "these two versions" or "the latest version" point at the wrong files.
+  if (messagesSent) await newSession();
+  for (const name of exampleFiles(ex)) {
+    if (!chatFileNames.has(name)) await addSample(name);
+  }
+  $("input").value = ex.prompt;
+  $("input").focus();
 }
 
 // ---------------------------------------------------------------- files
@@ -148,12 +306,6 @@ function showFile(f, label) {
   $("files").appendChild(li);
 }
 
-// Sessions live in the backend's memory, so a backend restart forgets them.
-async function recoverSession() {
-  await newSession();
-  add(el("div", "err", "The backend was restarted and forgot this chat, so a new one was started."));
-}
-
 async function upload(fileList) {
   for (const file of fileList) {
     const post = () => {
@@ -166,6 +318,8 @@ async function upload(fileList) {
     if (r.status === 404) { await recoverSession(); r = await post(); }
     const j = await r.json();
     if (!r.ok) { add(el("div", "err", `Upload failed for ${file.name}: ${j.detail}`)); continue; }
+    chatUsed = true;
+    chatFileNames.add(file.name);
     showFile(j);
   }
 }
@@ -200,6 +354,7 @@ function showEvent(ev) {
     d.appendChild(el("pre", null, ev.ok ? JSON.stringify(ev.result, null, 2) : "error: " + ev.error));
     scrollDown();
   } else if (ev.type === "file_created") showFile(ev.file, "created");
+  else if (ev.type === "proposal") showProposal(ev.proposal);
   else if (ev.type === "error") add(el("div", "err", ev.message));
   else if (ev.type === "done") {
     const s = ev.stats || {};
@@ -209,8 +364,169 @@ function showEvent(ev) {
   }
 }
 
+// ---------------------------------------------------------------- review card
+// The model can only PROPOSE. Applying is this card's Apply button calling the backend
+// directly: review before finalising is enforced in code, not by asking the model.
+const CATEGORY = [["secret", "Secrets"], ["government_id", "Government IDs"], ["financial", "Bank and card"],
+                  ["contact", "Contact details"], ["personal", "Personal"]];
+
+// Form filling: every value is editable before anything is written.
+function showFormFill(p) {
+  const card = el("div", "review");
+  const head = el("div", "head");
+  head.appendChild(el("b", null, "Review before filling the form"));
+  head.appendChild(el("span", null, "edit any value · nothing is filled until you click Fill form"));
+  card.appendChild(head);
+
+  const inputs = [];
+  for (const it of p.items) {
+    const row = el("label");
+    row.appendChild(el("span", "k", it.label));
+    let input;
+    if (it.status === "user only") {
+      row.appendChild(el("span", "v", "—"));
+      row.appendChild(el("span", "m", "for you to complete in the filled form"));
+      card.appendChild(row);
+      continue;
+    }
+    if (it.type === "checkbox") {
+      input = el("input"); input.type = "checkbox"; input.checked = it.value === true;
+    } else if (it.type === "choice") {
+      input = el("select");
+      for (const o of ["", ...(it.options || [])]) { const opt = el("option", null, o || "(none)"); opt.value = o; input.appendChild(opt); }
+      input.value = it.value || "";
+    } else {
+      input = el("input"); input.type = "text"; input.value = it.value ?? ""; input.style.flex = "1";
+      input.placeholder = "empty";
+    }
+    input.dataset.id = it.id;
+    inputs.push(input);
+    row.appendChild(input);
+    const ocr = it.read_by === "OCR";        // read from a scan: say so, so the reviewer checks it
+    const st = it.status === "found" ? `found on p${it.page}${ocr ? " (OCR: check)" : ""}` : it.status === "empty" ? "not in the source"
+             : it.status.startsWith("check") ? `p${it.page} · read from image: check` : `unverified: ${it.why || "check"}`;
+    row.appendChild(el("span", "m" + ((it.status === "found" && !ocr) || it.status === "empty" ? "" : " warn"), st));
+    card.appendChild(row);
+  }
+
+  const foot = el("div", "foot");
+  const fill = el("button", null, "Fill form");
+  const reject = el("button", "ghost", "Reject");
+  foot.appendChild(fill); foot.appendChild(reject);
+  card.appendChild(foot);
+  const outcome = el("div", "outcome");
+  card.appendChild(outcome);
+
+  const lock = () => { inputs.forEach((i) => (i.disabled = true)); fill.disabled = reject.disabled = true; };
+  fill.addEventListener("click", async () => {
+    const edits = {};
+    for (const i of inputs) edits[i.dataset.id] = i.type === "checkbox" ? i.checked : i.value.trim();
+    const ids = Object.keys(edits).filter((k) => edits[k] !== "" && edits[k] !== false);
+    fill.disabled = reject.disabled = true;
+    outcome.textContent = "Filling and verifying…";
+    const r = await fetch(`/proposals/${encodeURIComponent(p.id)}/approve`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: ids, edits, session_id: sessionId }),
+    });
+    const j = await r.json();
+    if (!r.ok) { outcome.textContent = ""; outcome.appendChild(el("span", "warn", j.detail)); fill.disabled = reject.disabled = false; return; }
+    lock();
+    outcome.textContent = "";
+    outcome.appendChild(el("div", "done", `✓ ${j.filled} field(s) filled and verified. ${j.verified}.`));
+    if (j.user_only.length) outcome.appendChild(el("div", null, `Still for you to complete: ${j.user_only.join(", ")}.`));
+    const a = el("a", null, `download ${j.file.name}`);
+    a.href = `/files/${encodeURIComponent(j.file.id)}`;
+    outcome.appendChild(a);
+    showFile(j.file, "filled");
+  });
+  reject.addEventListener("click", async () => {
+    const r = await fetch(`/proposals/${encodeURIComponent(p.id)}/reject`, { method: "POST" });
+    if (r.ok) { lock(); outcome.textContent = "Rejected. Nothing was filled."; }
+  });
+  add(card);
+}
+
+function showProposal(p) {
+  if (p.kind === "form_fill") return showFormFill(p);
+  const card = el("div", "review");
+  const head = el("div", "head");
+  head.appendChild(el("b", null, "Review before redacting"));
+  head.appendChild(el("span", null, `${p.items.length} items · nothing is redacted until you click Apply`));
+  card.appendChild(head);
+
+  const sel = el("div", "sel");
+  const all = el("a", null, "select all"), none = el("a", null, "select none");
+  sel.appendChild(all); sel.appendChild(none);
+  card.appendChild(sel);
+
+  const boxes = [];
+  for (const [cat, label] of CATEGORY) {
+    const items = p.items.filter((i) => i.category === cat);
+    if (!items.length) continue;
+    card.appendChild(el("h4", null, `${label} (${items.length})`));
+    for (const it of items) {
+      const row = el("label");
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.checked = it.located;
+      cb.disabled = !it.located;
+      cb.dataset.id = it.id;
+      boxes.push(cb);
+      row.appendChild(cb);
+      row.appendChild(el("span", "k", it.kind));
+      row.appendChild(el("span", "v", it.masked));
+      const notes = [`p${it.page}`];
+      if (it.confidence !== "high") notes.push("check");
+      if (it.read_by === "OCR") notes.push("OCR");
+      if (!it.located) notes.push("cannot be located");
+      row.appendChild(el("span", "m" + (it.located ? "" : " warn"), notes.join(" · ")));
+      card.appendChild(row);
+    }
+  }
+
+  const foot = el("div", "foot");
+  const apply = el("button");
+  const reject = el("button", "ghost", "Reject");
+  foot.appendChild(apply); foot.appendChild(reject);
+  card.appendChild(foot);
+  const outcome = el("div", "outcome");
+  card.appendChild(outcome);
+
+  const count = () => { const n = boxes.filter((b) => b.checked).length; apply.textContent = `Apply redaction (${n})`; apply.disabled = !n; };
+  boxes.forEach((b) => b.addEventListener("change", count));
+  all.addEventListener("click", () => { boxes.forEach((b) => { if (!b.disabled) b.checked = true; }); count(); });
+  none.addEventListener("click", () => { boxes.forEach((b) => (b.checked = false)); count(); });
+  count();
+
+  const lock = () => { boxes.forEach((b) => (b.disabled = true)); apply.disabled = reject.disabled = true; sel.remove(); };
+  apply.addEventListener("click", async () => {
+    apply.disabled = reject.disabled = true;
+    outcome.textContent = "Redacting and verifying…";
+    const ids = boxes.filter((b) => b.checked).map((b) => b.dataset.id);
+    const r = await fetch(`/proposals/${encodeURIComponent(p.id)}/approve`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: ids, session_id: sessionId }),
+    });
+    const j = await r.json();
+    if (!r.ok) { outcome.textContent = ""; outcome.appendChild(el("span", "warn", j.detail)); count(); reject.disabled = false; return; }
+    lock();
+    outcome.textContent = "";
+    outcome.appendChild(el("div", "done", `✓ ${j.redacted} item(s) redacted and verified. ${j.verified}.`));
+    if (j.left_unredacted) outcome.appendChild(el("div", null, `${j.left_unredacted} item(s) left as they were, by your choice.`));
+    const a = el("a", null, `download ${j.file.name}`);
+    a.href = `/files/${encodeURIComponent(j.file.id)}`;
+    outcome.appendChild(a);
+    showFile(j.file, "redacted");
+  });
+  reject.addEventListener("click", async () => {
+    const r = await fetch(`/proposals/${encodeURIComponent(p.id)}/reject`, { method: "POST" });
+    if (r.ok) { lock(); outcome.textContent = "Rejected. Nothing was redacted."; }
+  });
+  add(card);
+}
+
 async function send(text) {
-  busy = true; $("send").disabled = true;
+  busy = true; $("send").disabled = true; chatUsed = true; messagesSent = true;
   add(el("div", "msg user", text));
   try {
     const r = await fetch(`/sessions/${sessionId}/messages`, {
@@ -256,7 +572,7 @@ $("input").addEventListener("keydown", (e) => {
 });
 $("newchat").addEventListener("click", () => { if (!busy) newSession(); });
 
-newSession();
+newSession().then(loadFeatures);
 health();
 setInterval(health, 10000);
 </script>

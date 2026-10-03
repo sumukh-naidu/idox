@@ -7,9 +7,14 @@ To add a feature: give it a tools.py with TOOLS and PROMPT, and list it in FEATU
 
 from core import pages
 from core.pdfutil import STANDARD_INFO_KEYS, ToolError, info_keys, open_pdf, page_ranges
+from features.fr_ai_01_workflow import tools as fr_ai_01
+from features.fr_ai_02_forms import tools as fr_ai_02
+from features.fr_ai_03_compare import tools as fr_ai_03
+from features.fr_ai_05_redaction import tools as fr_ai_05
 from features.fr_prd_104_cleanup import tools as fr_prd_104
+from features.fr_prd_105_accessibility import tools as fr_prd_105
 
-FEATURES = [fr_prd_104]
+FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02]
 
 FILE_ID = {"type": "string", "description": "ID of the PDF, e.g. f_1a2b3c4d5e6f"}
 
@@ -43,16 +48,13 @@ CORE_TOOLS = {
     },
     "remove_pages": {
         "fn": pages.remove_pages,
-        "description": "Write a NEW PDF without the given pages; the original is kept. Remove all pages "
-                       "you can in a SINGLE call. After a removal, page numbers in the new file shift; to "
-                       "remove more pages from a file that already had pages removed, pass the page numbers "
-                       "of the uploaded file with numbering='original' and the tool translates them.",
+        "description": "Write a NEW PDF without the given pages (original kept). Remove all pages in ONE "
+                       "call: numbers shift afterwards. For later removals from an already-edited file, give "
+                       "the uploaded file's page numbers with numbering='original'.",
         "parameters": {"type": "object", "properties": {
             "file_id": FILE_ID,
-            "pages": {"type": "array", "items": {"type": "integer"}, "description": "pages to remove, e.g. [3, 7]"},
-            "numbering": {"type": "string", "enum": ["this_file", "original"],
-                          "description": "'this_file' (default): page numbers of file_id. 'original': page "
-                                         "numbers of the uploaded file the user has been talking about."},
+            "pages": {"type": "array", "items": {"type": "integer"}, "description": "e.g. [3, 7]"},
+            "numbering": {"type": "string", "enum": ["this_file", "original"]},
         }, "required": ["file_id", "pages"]},
     },
 }

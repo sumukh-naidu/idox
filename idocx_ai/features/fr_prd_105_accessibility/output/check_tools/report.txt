@@ -1,0 +1,19 @@
+access_report.pdf
+  PASS  every check gives the expected status
+  PASS  after the fix: improved checks pass, out-of-scope ones still fail  -- now passing: Document language declared, Title set and shown by the viewer
+  PASS  title and language set as expected  -- title 'ACME Test Ltd - Quarterly Operations Summary', language 'en'
+access_scanned.pdf
+  PASS  every check gives the expected status
+  PASS  after the fix: improved checks pass, out-of-scope ones still fail  -- now passing: Document language declared, Title set and shown by the viewer, Real text, not scanned images
+  PASS  title and language set as expected  -- title 'Site Inspection Report (Sample)', language 'en'
+  PASS  OCR text layer is searchable  -- 47 words now extractable
+  PASS  the scanned images themselves are untouched
+access_tagged.pdf
+  PASS  every check gives the expected status
+language detection
+  PASS  detects 'en'  -- got en
+  PASS  detects 'hi'  -- got hi
+  PASS  detects 'es'  -- got es
+  PASS  too little text gives no guess
+
+ALL PASS

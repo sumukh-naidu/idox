@@ -4,7 +4,10 @@
     GET  /files/{id}                 download
     POST /sessions                   -> session_id
     POST /sessions/{id}/messages     -> NDJSON stream of events, one JSON object per line:
-                                        text, tool_started, tool_finished, file_created, error, done
+                                        text, tool_started, tool_finished, file_created, proposal, error, done
+    GET  /proposals/{id}             a pending change, e.g. a redaction, for the user to review
+    POST /proposals/{id}/approve     the user's approval: applies the chosen items (the model cannot)
+    POST /proposals/{id}/reject
     GET  /                           the test page
 """
 
@@ -16,7 +19,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from core import agent, store
+from core import agent, catalog, llm, proposals, store
 
 MAX_UPLOAD_MB = 100
 STATIC = Path(__file__).resolve().parent / "static"
@@ -31,8 +34,22 @@ def index():
 
 @app.get("/health")
 def health():
-    m = agent.model_name()
-    return {"status": "ok" if m else "model unreachable", "model": m, "llama_endpoint": agent.LLAMA}
+    m = llm.model_name()
+    return {"status": "ok" if m else "model unreachable", "model": m, "llama_endpoint": llm.LLAMA}
+
+
+@app.get("/features")
+def features():
+    """Every in-scope feature, in build order, for the test page's sidebar."""
+    return catalog.features()
+
+
+@app.get("/features/{feature_id}/samples/{name}")
+def feature_sample(feature_id: str, name: str):
+    path = catalog.sample_path(feature_id, name)
+    if not path:
+        raise HTTPException(404, f"no sample '{name}' for {feature_id}")
+    return FileResponse(path, media_type="application/pdf", filename=name)
 
 
 @app.post("/files")
@@ -93,3 +110,45 @@ def send_message(sid: str, msg: Message):
             yield json.dumps(event, ensure_ascii=False) + "\n"
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+class Approval(BaseModel):
+    item_ids: list[str]
+    edits: dict | None = None      # values the user changed in the review card, by item id
+    session_id: str | None = None
+
+
+@app.get("/proposals/{pid}")
+def get_proposal(pid: str):
+    try:
+        return proposals.public(pid)
+    except proposals.NotFound as e:
+        raise HTTPException(404, str(e))
+
+
+@app.post("/proposals/{pid}/approve")
+def approve_proposal(pid: str, body: Approval):
+    """The user's approval from the review card. No tool can reach this."""
+    try:
+        result = proposals.approve(pid, body.item_ids, body.edits)
+    except proposals.NotFound as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    session = store.SESSIONS.get(body.session_id or "")
+    if session is not None:
+        f = result["file"]
+        store.attach(session, f["id"])
+        session.setdefault("notes", []).append(f"The user approved proposal {pid} in the review card: {result['note']}")
+    return result
+
+
+@app.post("/proposals/{pid}/reject")
+def reject_proposal(pid: str):
+    try:
+        proposals.reject(pid)
+    except proposals.NotFound as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "rejected"}

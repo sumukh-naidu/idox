@@ -84,7 +84,7 @@ def download(fid: str):
         meta, path = store.get_file(fid)
     except store.NotFound as e:
         raise HTTPException(404, str(e))
-    return FileResponse(path, media_type="application/pdf", filename=meta["name"])
+    return FileResponse(path, media_type=store.EXTENSIONS[meta.get("ext", "pdf")], filename=meta["name"])
 
 
 @app.post("/sessions")

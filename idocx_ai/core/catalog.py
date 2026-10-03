@@ -8,7 +8,7 @@ from pathlib import Path
 
 from core.tools import FEATURES
 
-ORDER = ["FR-PRD-104", "FR-AI-01", "FR-PRD-105", "FR-AI-03", "FR-AI-05", "FR-AI-02"]
+ORDER = ["FR-PRD-104", "FR-AI-01", "FR-PRD-105", "FR-AI-03", "FR-AI-05", "FR-AI-02", "FR-AI-04"]
 
 PLANNED = {
 }

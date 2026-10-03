@@ -28,6 +28,8 @@ def open_pdf(file_id: str):
         meta, path = store.get_file(file_id)
     except store.NotFound as e:
         raise ToolError(str(e))
+    if meta.get("ext", "pdf") != "pdf":
+        raise ToolError(f"'{meta['name']}' is a {meta['ext']} file, not a PDF")
     return meta, pymupdf.open(path)
 
 

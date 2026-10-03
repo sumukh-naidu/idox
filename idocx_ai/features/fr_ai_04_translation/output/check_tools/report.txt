@@ -1,0 +1,25 @@
+layout with a fake Spanish translator
+  PASS  every text block replaced in place (no original English left)  -- 23 translated, 3 number-only kept
+  PASS  the logo image and the table lines survive  -- 1 image, 8 lines
+  PASS  number-only table cells untouched, in the same place
+  PASS  every protected value still present
+  PASS  document language set to 'es'  -- es
+a translation that loses a number is retried, then flagged
+  PASS  the block that lost '45' is flagged, after one retry  -- [{"page": 2, "block": "The Buyer shall pay each undisputed invoice within 45 days o", "missing": ["45"]}]
+  PASS  the retry sends the original text unchanged; the reminder goes in the instructions  -- keep=['45']
+long translations shrink to fit; Hindi renders with an embedded Devanagari font
+  PASS  Devanagari font embedded  -- Nimbus Sans Bold, Nimbus Sans Regular, Noto Serif Devanagari Regular
+  PASS  over-long text was shrunk to fit rather than spilling  -- 4 block(s) shrunk, smallest scale 0.54
+  PASS  IDs, emails and amounts inside Hindi still copy correctly
+  PASS  the Hindi copy/search caveat is reported
+text copy: plain text that copies and searches correctly (unlike Devanagari in the PDF)
+  PASS  a .txt copy is made, with the exact Hindi text and the protected values  -- 1980 characters, ext txt
+  PASS  both files are reported as created
+a scanned page: OCR, then the translation on a clean page
+  PASS  the scanned image is gone and the translated text is real text on the page  -- 16 blocks translated, images left: 0
+  PASS  number-only values from the scan are written back unchanged  -- 25,000.00, 15,000.00, 8,000.00
+  PASS  the scanned-page note is reported  -- pages 1 were scans: their text was read by OCR and the translation pla
+refusals
+  PASS  an unsupported language is refused  -- language must be one of Hindi (hi), Spanish (es)
+
+ALL PASS

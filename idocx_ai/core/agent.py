@@ -40,7 +40,8 @@ def _system_prompt(session: dict) -> str:
         else:
             parents = ", ".join(f'"{names.get(p, p)}"' for p in meta["parents"])
             origin = f"made by {meta['source']} from {parents}"
-        lines.append(f'- {fid}  "{meta["name"]}"  ({meta["pages"]} pages, {origin})')
+        kind = f"{meta['pages']} pages" if meta.get("ext", "pdf") == "pdf" else f"{meta['ext']} file"
+        lines.append(f'- {fid}  "{meta["name"]}"  ({kind}, {origin})')
     files = "\n".join(lines) if lines else "(none uploaded yet)"
     features = "\n\n".join(tools.PROMPTS)
     return f"{SYSTEM}\n\n{features}\n\nFiles in this session:\n{files}"

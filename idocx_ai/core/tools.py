@@ -10,11 +10,12 @@ from core.pdfutil import STANDARD_INFO_KEYS, ToolError, info_keys, open_pdf, pag
 from features.fr_ai_01_workflow import tools as fr_ai_01
 from features.fr_ai_02_forms import tools as fr_ai_02
 from features.fr_ai_03_compare import tools as fr_ai_03
+from features.fr_ai_04_translation import tools as fr_ai_04
 from features.fr_ai_05_redaction import tools as fr_ai_05
 from features.fr_prd_104_cleanup import tools as fr_prd_104
 from features.fr_prd_105_accessibility import tools as fr_prd_105
 
-FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02]
+FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02, fr_ai_04]
 
 FILE_ID = {"type": "string", "description": "ID of the PDF, e.g. f_1a2b3c4d5e6f"}
 

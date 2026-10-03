@@ -1,0 +1,38 @@
+{
+  "_comment": "FR-AI-04 translation test set. All content invented.",
+  "agreement.pdf": {
+    "pages": 2,
+    "must_survive": [
+      "1 November 2026",
+      "12",
+      "18%",
+      "25,000.00",
+      "15,000.00",
+      "8,000.00",
+      "45",
+      "1.5%",
+      "3",
+      "60",
+      "legal@example.com",
+      "27ABCPE1234F1ZB",
+      "ACME Test Ltd",
+      "Example Buyer Pvt Ltd"
+    ],
+    "images": 1,
+    "table_rows": 4,
+    "number_only_cells": [
+      "25,000.00",
+      "15,000.00",
+      "8,000.00"
+    ]
+  },
+  "agreement_scanned.pdf": {
+    "pages": 1,
+    "text_layer": false,
+    "number_only_cells": [
+      "25,000.00",
+      "15,000.00",
+      "8,000.00"
+    ]
+  }
+}

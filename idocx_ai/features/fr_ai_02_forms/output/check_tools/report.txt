@@ -1,0 +1,36 @@
+reading form fields
+  PASS  application_form.pdf: every field found, in order  -- 10 fields
+  PASS  application_form.pdf: only signatures/declarations are user-only  -- ['declaration']
+  PASS  application_form.pdf: dropdown options read  -- plan_type: ['Individual', 'Family Floater', 'Senior Citizen']
+  PASS  payment_form.pdf: every field found, in order  -- 11 fields
+  PASS  payment_form.pdf: only signatures/declarations are user-only  -- ['approver_signature']
+  PASS  payment_form.pdf: dropdown options read  -- payment_mode: ['NEFT', 'RTGS', 'IMPS', 'Cheque']
+  PASS  a flat PDF is refused  -- 'invoice.pdf' has no fillable fields. Only fillable PDF forms are supported; a flat PDF th
+  PASS  a field without a tooltip takes the label printed beside it  -- Father's name
+extraction: checking values against the source (no model)
+  PASS  grounding: exact value in its quote  -- -> found
+  PASS  grounding: number written differently (19470 vs 19,470.00)  -- -> found
+  PASS  grounding: quote not in the document  -- -> unverified
+  PASS  grounding: value not inside its quote (subtotal quoted for the total)  -- -> unverified
+  PASS  grounding: dropdown option stated in the quote  -- -> found
+  PASS  grounding: checkbox with evidence  -- -> found
+  PASS  grounding: nothing stated: null stays empty  -- -> empty
+  PASS  OCR failure is spotted (too few words / mostly symbols)
+  PASS  the scanned invoice reads fine by OCR, so no vision fallback  -- 72 OCR words
+  PASS  digital table read exactly  -- 3 rows
+form filling: proposal, edits, fill, read back (values given, no model)
+  PASS  application_form.pdf: user-only fields cannot be approved, empty ones are marked empty
+  PASS  application_form.pdf: approving a signature/declaration field is refused  -- not in this proposal: ['declaration']
+  PASS  application_form.pdf: every field holds the approved value (edits applied), read back  -- 7 filled
+  PASS  application_form.pdf: empty and user-only fields left blank
+  PASS  application_form.pdf: the blank form is untouched
+  PASS  payment_form.pdf: user-only fields cannot be approved, empty ones are marked empty
+  PASS  payment_form.pdf: approving a signature/declaration field is refused  -- not in this proposal: ['approver_signature']
+  PASS  payment_form.pdf: every field holds the approved value (edits applied), read back  -- 10 filled
+  PASS  payment_form.pdf: empty and user-only fields left blank
+  PASS  payment_form.pdf: the blank form is untouched
+  PASS  a dropdown value that is not an option is refused  -- payment_mode: 'Bitcoin' is not one of the options ['NEFT', 'RTGS', 'IMPS', 'Cheque']
+  PASS  approving twice is refused  -- this proposal was already applied
+  PASS  source and form passed the wrong way round: told they look swapped  -- the form file has no fillable fields; the files look swapped: pass the fillable form as form_file_id
+
+ALL PASS

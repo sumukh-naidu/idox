@@ -1,0 +1,7 @@
+# Python 3.12:  /opt/homebrew/bin/python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# pymupdf pinned to the intern's version so both sides parse PDFs identically.
+pymupdf==1.28.2
+fastapi==0.128.8
+uvicorn==0.39.0
+python-multipart==0.0.32
+pillow==12.3.0

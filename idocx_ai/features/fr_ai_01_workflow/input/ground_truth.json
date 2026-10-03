@@ -1,0 +1,72 @@
+{
+  "_comment": "FR-AI-01 workflow test set. All content invented. Pages are 1-based.",
+  "merge_a.pdf": {
+    "pages": 3,
+    "markers": [
+      "A1",
+      "A2",
+      "A3"
+    ]
+  },
+  "merge_b.pdf": {
+    "pages": 3,
+    "markers": [
+      "B1",
+      null,
+      "B3"
+    ],
+    "blank_pages": [
+      2
+    ],
+    "note": "page 1 is a 300 dpi image: the compression target"
+  },
+  "contract_12p.pdf": {
+    "pages": 12,
+    "sections": [
+      {
+        "title": "Section 1 - Definitions",
+        "pages": "1-3"
+      },
+      {
+        "title": "Section 2 - Payment Terms",
+        "pages": "4-6"
+      },
+      {
+        "title": "Schedule A - Deliverables",
+        "pages": "7-9"
+      },
+      {
+        "title": "Schedule B - Contacts",
+        "pages": "10-12"
+      }
+    ]
+  },
+  "project_memo.pdf": {
+    "pages": 2,
+    "deadlines": [
+      "15 October 2026",
+      "20/10/2026",
+      "31 Oct 2026",
+      "5 November 2026"
+    ],
+    "not_deadlines": [
+      "1 March 2019",
+      "12 June 2025"
+    ],
+    "either": [
+      "1 December 2026"
+    ],
+    "note": "1 Dec 2026 is a scheduled meeting, not an action item: listing it is acceptable"
+  },
+  "scanned_notice.pdf": {
+    "pages": 1,
+    "text_layer": false,
+    "deadlines": [
+      "18 October 2026",
+      "25 October 2026"
+    ],
+    "not_deadlines": [
+      "2 October 2026"
+    ]
+  }
+}

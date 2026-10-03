@@ -1,0 +1,26 @@
+==============================================================================
+> Compare these two versions of the contract and show what changed.  (contract_v1.pdf + contract_v2.pdf)
+  plan: compare_documents
+  reply: Here are the changes between contract_v1.pdf and contract_v2.pdf: | Change ID | Type | Clause | Summary | |-----------|------|--------|---------| | **C1** | Modified | 3 (Payment) | Payment period extended from **30 to 45 days** | | **C2** | Removed | 4 (Exclusivity) | Entire exclusivity clause removed | | **C3** | Added | 5 (Data Protection) | New clause added requiring the Supplier to process data per Buyer's instr
+  2 model calls, 17.9s
+  PASS  older file first: True; clauses named: ['Payment', 'Liability', 'Exclusivity', 'Data Protection', 'Termination']; marked-up copy: True
+==============================================================================
+> Identify the clauses that were added, removed, or modified between these documents.  (contract_v1.pdf + contract_v2.pdf)
+  plan: compare_documents
+  reply: Here are the changes between contract_v1.pdf and contract_v2.pdf: **Modified Clauses:** - **C1 (Payment):** Payment period changed from 30 days to 45 days. - **C4 (Liability):** Liability cap period changed from 12 months to 6 months. - **C6 (Termination):** Wording changed from "terminate this agreement with 60 days' written notice" to "terminate this agreement by giving 60 days' written notice." **Removed Clauses:*
+  2 model calls, 15.6s
+  PASS  older file first: True; clauses named: ['Payment', 'Liability', 'Exclusivity', 'Data Protection', 'Termination']; marked-up copy: True
+==============================================================================
+> Compare the previous and latest versions and provide a summary of the meaningful changes.  (contract_v1.pdf + contract_v2.pdf)
+  plan: compare_documents -> check_change_explanations
+  reply: Here is a summary of the meaningful changes between contract_v1.pdf and contract_v2.pdf: ### Material Changes 1. **Payment Terms Extended (C1)** – The payment period was extended from **30 to 45 days**, giving the buyer more time to settle invoices. 2. **Exclusivity Clause Removed (C2)** – The clause preventing the buyer from purchasing similar services from other suppliers was **deleted entirely**, removing the excl
+  3 model calls, 31.1s
+  PASS  6 explanations verified; material: ['Data Protection', 'Exclusivity', 'Liability', 'Payment']
+==============================================================================
+> Compare these two versions and show what changed.  (contract_v1.pdf + contract_v2_scanned.pdf)
+  plan: compare_documents
+  reply: Here are the changes between **contract_v1.pdf** and **contract_v2_scanned.pdf**: | Change ID | Type | Clause | Summary | |-----------|------|--------|---------| | **C1** | Modified | 3 (Payment) | Payment period changed from **30 to 45 days** | | **C2** | Removed | 4 (Exclusivity) | Entire exclusivity clause was **deleted** | | **C3** | Added | 5 (Data Protection) | New clause added: Supplier must process data per B
+  2 model calls, 21.0s
+  PASS  older file first, OCR caveat given, payment change reported
+
+4/4 examples produced the expected result

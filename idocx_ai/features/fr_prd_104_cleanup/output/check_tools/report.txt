@@ -1,0 +1,34 @@
+cleanup_digital.pdf
+  PASS  blank pages found  -- want [3, 7, 8, 12], got [3, 7, 8, 12]
+  PASS  duplicates found (and of the right page)  -- want {5: 2, 10: 4}, got {5: 2, 10: 4}
+  PASS  nearly empty pages flagged for the user  -- want [9], got [9]
+  PASS  no real page proposed for removal
+  PASS  remove_pages leaves the right count  -- 12 -> 6, expected 6
+  PASS  metadata stripped and verified  -- removed 10 item(s), kept ['title']
+  (0.2s for blank + duplicate detection)
+cleanup_scanned.pdf
+  PASS  blank pages found  -- want [2], got [2]
+  PASS  duplicates found (and of the right page)  -- want {4: 1, 5: 3}, got {4: 1, 5: 3}
+  PASS  nearly empty pages flagged for the user  -- want [6], got [6]
+  PASS  no real page proposed for removal
+  PASS  remove_pages leaves the right count  -- 6 -> 3, expected 3
+  PASS  metadata stripped and verified  -- removed 5 item(s), kept []
+  (0.7s for blank + duplicate detection)
+cleanup_control.pdf
+  PASS  blank pages found  -- want [], got []
+  PASS  duplicates found (and of the right page)  -- want {}, got {}
+  PASS  nearly empty pages flagged for the user  -- want [], got []
+  PASS  no real page proposed for removal
+  PASS  nothing to strip: no new file written
+  (0.1s for blank + duplicate detection)
+one-click cleanup (clean_pdf detects, removes the safe pages, strips metadata, one file)
+  PASS  cleanup_digital.pdf: safe pages removed, metadata stripped, one file, the right pages asked about  -- 12 -> 7 pages, asks about [9, 12]
+  PASS  cleanup_scanned.pdf: safe pages removed, metadata stripped, one file, the right pages asked about  -- 6 -> 4 pages, asks about [4, 6]
+  PASS  confirmed pages removed later by their original numbers
+  PASS  cleanup_control.pdf: nothing to clean, no file
+  PASS  nothing asked: refused
+follow-up removal using original page numbers (cleanup_scanned.pdf)
+  PASS  after removing 2,5 then 'original' 4,6: original pages 1 and 3 remain  -- new file holds original pages 1, 3
+  PASS  asking for an already-removed page is refused  -- original page(s) 5 are no longer in this file (already removed). This file holds original pages 1, 3-4, 6.
+
+ALL PASS

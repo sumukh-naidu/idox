@@ -1,0 +1,163 @@
+{
+  "_comment": "FR-PRD-104 cleanup test set. All content invented. Pages are 1-based.",
+  "cleanup_digital.pdf": {
+    "pages": 12,
+    "pages_detail": [
+      {
+        "page": 1,
+        "remove": false,
+        "reason": "cover page"
+      },
+      {
+        "page": 2,
+        "remove": false,
+        "reason": "content"
+      },
+      {
+        "page": 3,
+        "remove": true,
+        "kind": "blank",
+        "category": "empty"
+      },
+      {
+        "page": 4,
+        "remove": false,
+        "reason": "content"
+      },
+      {
+        "page": 5,
+        "remove": true,
+        "kind": "duplicate",
+        "duplicate_of": 2
+      },
+      {
+        "page": 6,
+        "remove": false,
+        "reason": "vector chart with no text: a text-only check would wrongly call it blank"
+      },
+      {
+        "page": 7,
+        "remove": true,
+        "kind": "blank",
+        "category": "whitespace_only_text"
+      },
+      {
+        "page": 8,
+        "remove": true,
+        "kind": "blank",
+        "category": "intentionally_blank_notice"
+      },
+      {
+        "page": 9,
+        "remove": false,
+        "flag": "nearly_empty",
+        "reason": "a single line of real content (sign-off): not blank, so ask, never auto-remove"
+      },
+      {
+        "page": 10,
+        "remove": true,
+        "kind": "duplicate",
+        "duplicate_of": 4
+      },
+      {
+        "page": 11,
+        "remove": false,
+        "reason": "same heading and first paragraph as page 2 but a different second paragraph: not a duplicate"
+      },
+      {
+        "page": 12,
+        "remove": true,
+        "kind": "blank",
+        "category": "header_footer_only",
+        "note": "borderline: propose for removal, but the user should confirm"
+      }
+    ],
+    "metadata_to_remove": [
+      "author",
+      "subject",
+      "keywords",
+      "creator",
+      "producer",
+      "creationDate",
+      "modDate",
+      "Company (custom)",
+      "SourcePath (custom)",
+      "XMP metadata stream"
+    ],
+    "metadata_may_keep": [
+      "title (FR-PRD-105 accessibility checks want a title)"
+    ]
+  },
+  "cleanup_scanned.pdf": {
+    "pages": 6,
+    "pages_detail": [
+      {
+        "page": 1,
+        "remove": false,
+        "reason": "content"
+      },
+      {
+        "page": 2,
+        "remove": true,
+        "kind": "blank",
+        "category": "scanned_blank",
+        "note": "no text layer, grey paper, speckle and edge shadow: needs a pixel check"
+      },
+      {
+        "page": 3,
+        "remove": false,
+        "reason": "content"
+      },
+      {
+        "page": 4,
+        "remove": true,
+        "kind": "duplicate",
+        "duplicate_of": 1,
+        "note": "re-scan of page 1: different noise, angle and offset, so exact hashes differ"
+      },
+      {
+        "page": 5,
+        "remove": true,
+        "kind": "duplicate",
+        "duplicate_of": 3,
+        "note": "identical image bytes"
+      },
+      {
+        "page": 6,
+        "remove": false,
+        "flag": "nearly_empty",
+        "reason": "only a small RECEIVED stamp: not blank, so ask, never auto-remove"
+      }
+    ],
+    "text_layer": false,
+    "metadata_to_remove": [
+      "author",
+      "creator",
+      "producer",
+      "creationDate",
+      "modDate"
+    ]
+  },
+  "cleanup_control.pdf": {
+    "pages": 3,
+    "pages_detail": [
+      {
+        "page": 1,
+        "remove": false,
+        "reason": "content"
+      },
+      {
+        "page": 2,
+        "remove": false,
+        "reason": "content"
+      },
+      {
+        "page": 3,
+        "remove": false,
+        "reason": "content"
+      }
+    ],
+    "metadata_to_remove": [],
+    "expected": "report that nothing needs cleaning; propose no changes"
+  }
+}

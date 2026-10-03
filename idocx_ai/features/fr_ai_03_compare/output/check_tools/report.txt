@@ -1,0 +1,19 @@
+contract_v1 -> contract_v2
+  PASS  exactly the planted changes, of the right type  -- C1 Payment modified, C2 Exclusivity removed, C3 Data Protection added, C4 Liability modified, C5 Governing Law moved, C6 Termination modified
+  PASS  number changes surfaced as signals
+  PASS  unchanged clauses and renumbering not reported  -- running headers and footers, page numbers, spacing and punctuation-only edits, and 1 clause(s) only renumbered
+  PASS  headers and page numbers not reported
+  PASS  marked-up copy carries a mark for every change  -- 7 marks for C1, C2, C3, C4, C5, C6
+  PASS  no highlight on a clause number  -- p1 C1 modified: 'n 45 d'; p2 C3 added: '5. Data Protection'; p2 C3 added: 'The Supplier shall process per'; p2 C4 modified: 's 6 m'; p3 C6 modified: 't by giving 6'
+explanation checks
+  PASS  a correct explanation is verified
+  PASS  unknown change id and a wrong figure are rejected  -- no change with id 'C99'; cite only ids from the comparison; states 3, which is not in change C4's text
+  PASS  unexplained changes are listed
+  PASS  an unknown comparison is refused
+identical files
+  PASS  no changes and no marked-up copy  -- the two versions have the same text; say so
+contract_v1 -> contract_v2_scanned (OCR)
+  PASS  OCR warning given  -- read by OCR: new pages [1, 2, 3]. Some small wording differences may be OCR misreadings, not real edits; say so.
+  PASS  the material changes are still found  -- found 6 changes; extra from OCR: none
+
+ALL PASS

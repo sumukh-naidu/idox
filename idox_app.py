@@ -87,6 +87,9 @@ ROUTES = {
     "pdf_jpeg": dict(src="pdf", label="JPEG images (.jpeg)", model=False, script="pdf_to_jpg.py",
                      extra=["--ext", "jpeg"], opts=["pages", "dpi"],
                      note="The same pictures as JPG, with the .jpeg file ending."),
+    "pdf_png": dict(src="pdf", label="PNG images", model=False, script="pdf_to_png.py",
+                    opts=["pages", "dpi"],
+                    note="Draws each page exactly, lossless. One image per page. Checked pixel by pixel against the PDF. No model."),
     "pdf_tiff": dict(src="pdf", label="TIFF (one multi-page file)", model=False,
                      script="pdf_to_tiff.py", opts=["pages", "dpi"],
                      note="Lossless, 300 dpi by default. Checked pixel by pixel against the PDF."),
@@ -308,7 +311,7 @@ def progress_of(job: dict, text: str):
     elif script == "pdf_to_txt.py":
         m = re.search(r"converting (\d+):", text)
         done = len(re.findall(r"^  page \d+: (?:digital|scanned|blank)", text, re.M))
-    elif script == "pdf_to_jpg.py":
+    elif script in ("pdf_to_jpg.py", "pdf_to_png.py"):
         m = re.search(r"converting (\d+) at", text)
         done = len(re.findall(r"^  page \d+: \d+x\d+px", text, re.M))
     else:

@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iDocx Conversions</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232f6df6'/%3E%3Cpath d='M4 8h6M8 5l3 3-3 3' stroke='white' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
+<!--
+  Test page for idox_api.py, served at /ui. One button per conversion. Each form is built
+  from /openapi.json -- the same pydantic models the API validates with -- so the options
+  here can never drift from what the API accepts. No libraries; same origin as the API.
+-->
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2330; --muted: #5d6675; --line: #e2e5ea;
+  --accent: #2f6df6; --accent-ink: #ffffff; --accent-soft: #e8efff;
+  --ok: #18794e; --ok-soft: #e3f5ec; --warn: #9a5b00; --warn-soft: #fff3dc;
+  --bad: #c22f2f; --bad-soft: #fde8e8; --run: #2f6df6; --run-soft: #e8efff;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1218; --panel: #171b23; --ink: #e6e9ef; --muted: #9aa3b2; --line: #2a303b;
+    --accent: #6b9bff; --accent-ink: #0f1218; --accent-soft: #1d2a45;
+    --ok: #4cc38a; --ok-soft: #12291f; --warn: #f0b44c; --warn-soft: #2e2412;
+    --bad: #ff7b7b; --bad-soft: #3a1717; --run: #6b9bff; --run-soft: #1d2a45;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1218; --panel: #171b23; --ink: #e6e9ef; --muted: #9aa3b2; --line: #2a303b;
+  --accent: #6b9bff; --accent-ink: #0f1218; --accent-soft: #1d2a45;
+  --ok: #4cc38a; --ok-soft: #12291f; --warn: #f0b44c; --warn-soft: #2e2412;
+  --bad: #ff7b7b; --bad-soft: #3a1717; --run: #6b9bff; --run-soft: #1d2a45;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between;
+  padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 17px; margin: 0; }
+header .sub { color: var(--muted); font-size: 13px; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); font-size: 12px; color: var(--muted); background: var(--bg); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+main { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 20px; padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+nav h2, section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; }
+nav h2:first-child { margin-top: 0; }
+.routes { display: grid; gap: 6px; }
+.route { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 8px; width: 100%; text-align: left;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+  color: var(--ink); font: inherit; cursor: pointer; }
+.route:hover { border-color: var(--accent); }
+.route[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.route .name { font-weight: 600; }
+.route .meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag:empty { display: none; }
+.tag.ai { color: var(--accent); border-color: var(--accent); }
+.tag.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+.empty { color: var(--muted); text-align: center; padding: 40px 20px; }
+.panel h3 { margin: 0 0 4px; font-size: 20px; }
+.endpoint { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.about { margin: 10px 0 16px; color: var(--muted); max-width: 75ch; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.drop { display: block; border: 2px dashed var(--line); border-radius: var(--radius); padding: 22px; text-align: center;
+  cursor: pointer; color: var(--muted); transition: border-color .15s, background .15s; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop strong { color: var(--ink); }
+.drop input { display: none; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 16px 0; }
+.field label { display: block; font-weight: 600; margin-bottom: 4px; }
+.field input, .field select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--ink); font: inherit; }
+.field .help { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn { padding: 8px 18px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
+  color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.small { padding: 4px 10px; font-size: 12px; font-weight: 500; }
+.errors { margin-top: 12px; padding: 10px 14px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); }
+.errors ul { margin: 4px 0 0; padding-left: 18px; }
+.upload { color: var(--muted); font-size: 13px; }
+#jobs { display: grid; gap: 12px; }
+main > section { min-width: 0; }
+.job { overflow-wrap: anywhere; }  /* long errors and file names wrap instead of widening the card */
+.job .top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.job .title { font-weight: 600; }
+.job .sub { color: var(--muted); font-size: 12px; font-family: var(--mono); margin-top: 2px; word-break: break-all; }
+.state { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
+.state.queued, .state.cancelled, .state.gone { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.state.running { background: var(--run-soft); color: var(--run); }
+.state.done { background: var(--ok-soft); color: var(--ok); }
+.state.review { background: var(--warn-soft); color: var(--warn); }
+.state.failed { background: var(--bad-soft); color: var(--bad); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 12px 0 4px; }
+.bar > div { height: 100%; background: var(--run); width: 0; transition: width .4s; }
+.bar.indet > div { width: 30%; animation: slide 1.2s infinite ease-in-out; }
+@keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+.progress-text { color: var(--muted); font-size: 12px; }
+.box { margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-size: 13px; }
+.box.bad { background: var(--bad-soft); color: var(--bad); }
+.box.warn { background: var(--warn-soft); color: var(--warn); }
+.box ul { margin: 4px 0 0; padding-left: 18px; }
+.files { margin-top: 12px; display: grid; gap: 6px; }
+.file { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 7px; }
+.file .fname { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.file .fsize { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.thumbs img { height: 110px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+details { margin-top: 10px; }
+summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+pre { margin: 8px 0 0; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+  font: 12px/1.4 var(--mono); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+table.checks { border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+table.checks th, table.checks td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.r-PASS, .r-agrees, .r-matches { color: var(--ok); font-weight: 600; }
+.r-FAIL, .r-differs { color: var(--bad); font-weight: 600; }
+.job .foot { display: flex; gap: 8px; margin-top: 12px; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.runs-btn { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent);
+  background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+.runs-btn .count { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; text-align: center; }
+.runs-btn .count:empty { display: none; }
+.runs-btn.busy .dot { background: var(--run); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 9; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: var(--bg); border-left: 1px solid var(--line);
+  transform: translateX(100%); transition: transform .22s ease; z-index: 10; display: flex; flex-direction: column; box-shadow: -8px 0 24px rgba(0, 0, 0, .15); }
+body.runs-open .drawer { transform: none; }
+body.runs-open .scrim { opacity: 1; pointer-events: auto; }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.drawer-head h2 { margin: 0; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.drawer-body { overflow-y: auto; padding: 16px 18px 24px; flex: 1; }
+.drawer-body .empty { padding: 30px 10px; }
+@media (max-width: 860px) {
+  main { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  header { padding: 12px 16px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>iDocx conversions</h1>
+    <div class="sub">One button per API endpoint. Upload, convert, download. Raw API: <a href="/docs">Swagger</a></div>
+  </div>
+  <div class="pills">
+    <span class="pills" id="health"><span class="pill"><span class="dot"></span>checking…</span></span>
+    <button class="runs-btn" id="runs-btn" type="button" aria-controls="drawer" aria-expanded="false">
+      <span class="dot"></span>Runs <span class="count" id="jobcount"></span></button>
+  </div>
+</header>
+<main>
+  <nav id="nav" aria-label="Conversions"></nav>
+  <section>
+    <div id="panel" class="card panel"><div class="empty">Pick a conversion on the left.</div></div>
+    <div class="hint">Results appear under <strong>Runs</strong>, top right. Use made-up test documents only: this server has no login.</div>
+  </section>
+</main>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Runs" aria-hidden="true">
+  <div class="drawer-head">
+    <h2>Runs <span id="runs-sub" class="tag"></span></h2>
+    <button class="btn ghost small" id="runs-close" type="button">Close</button>
+  </div>
+  <div class="drawer-body">
+    <div id="jobs"></div>
+    <div class="empty" id="runs-empty">No runs yet. Convert a file and it will show up here.</div>
+    <div class="hint">Runs stay listed in this browser. Finished jobs are deleted on the server after 48 hours.</div>
+  </div>
+</aside>
+<script>
+"use strict";
+const $ = (sel, el = document) => el.querySelector(sel);
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === false || v == null) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false)
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+const size = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const LABELS = { dpi: "DPI", scan_mode: "Scan mode" };
+const label = key => LABELS[key] || key.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
+
+// Jobs this browser started, newest first. Storage can be missing (private window): then
+// the list just lasts until the page is reloaded.
+const saved = {
+  read() { try { return JSON.parse(localStorage.getItem("idox-jobs") || "[]"); } catch { return []; } },
+  write(list) { try { localStorage.setItem("idox-jobs", JSON.stringify(list.slice(0, 40))); } catch {} },
+  add(item) { this.write([item, ...this.read().filter(j => j.id !== item.id)]); },
+  drop(id) { this.write(this.read().filter(j => j.id !== id)); },
+};
+
+// Error and check detail (job.error, job.problems, the converter summary, the per-page checks and the
+// log) stays on the server and shows here only when the address ends in ?debug=1.
+const DEBUG = new URLSearchParams(location.search).has("debug");
+
+let ROUTES = [], HEALTH = null, current = null;
+const JOBS = new Map();          // id -> {title, card, state, seenRunningAt}
+
+// ---------------------------------------------------------------- conversions
+async function load() {
+  const spec = await (await fetch("/openapi.json")).json();
+  for (const [path, ops] of Object.entries(spec.paths)) {
+    const op = ops.post;
+    if (!path.startsWith("/convert/") || !op) continue;
+    const body = op.requestBody.content["multipart/form-data"] || Object.values(op.requestBody.content)[0];
+    const schema = spec.components.schemas[body.schema.$ref.split("/").pop()];
+    ROUTES.push({ path, slug: path.split("/").pop(), title: op.summary, group: op.tags[0],
+      about: op.description.split("\n\n")[0], accept: op["x-accept"] || [],
+      model: !!op["x-uses-model"], needs: op["x-needs"] || [], schema });
+  }
+  renderNav();
+  await refreshHealth();
+  setInterval(refreshHealth, 8000);
+  for (const j of saved.read().reverse()) track(j.id, j.title, null);
+  showRoute(ROUTES.find(r => r.slug === location.hash.slice(1)));
+  setInterval(poll, 1500);
+}
+
+function missing(route) {
+  const out = [];
+  if (!HEALTH) return out;
+  const tools = { LibreOffice: HEALTH.tools.soffice, Tesseract: HEALTH.tools.tesseract };
+  for (const t of route.needs) if (tools[t] === false) out.push(`needs ${t}`);
+  if (route.model && !HEALTH.model_server.ok) out.push("model down");
+  return out;
+}
+
+function renderNav() {
+  const nav = $("#nav");
+  nav.replaceChildren();
+  const groups = [...new Set(ROUTES.map(r => r.group))];
+  for (const g of groups) {
+    nav.append(h("h2", {}, g));
+    nav.append(h("div", { class: "routes" }, ROUTES.filter(r => r.group === g).map(r =>
+      h("button", { class: "route", type: "button", "aria-pressed": String(current === r),
+                    title: `POST ${r.path}`, onclick: () => showRoute(r) },
+        h("span", { class: "name" }, r.title),
+        h("span", { class: "meta" },
+          missing(r).map(m => h("span", { class: "tag warn" }, m)),
+          h("span", { class: "tag" }, r.accept.filter(e => e !== ".jpeg" && e !== ".tif").join(" ")))))));
+  }
+}
+
+function field(key, prop) {
+  const id = `opt-${key}`;
+  let control;
+  if (prop.enum) {
+    control = h("select", { id, name: key }, prop.enum.map(v => h("option", { value: v, selected: v === prop.default }, v)));
+  } else if (prop.type === "integer") {
+    control = h("input", { id, name: key, type: "number", step: "1", value: prop.default ?? "",
+                           min: prop.minimum, max: prop.maximum });
+  } else {
+    control = h("input", { id, name: key, type: "text", value: prop.default ?? "" });
+  }
+  return h("div", { class: "field" }, h("label", { for: id }, label(key)), control,
+           prop.description ? h("div", { class: "help" }, prop.description) : null);
+}
+
+function showRoute(route) {
+  current = route || null;
+  renderNav();
+  const panel = $("#panel");
+  if (!route) { panel.replaceChildren(h("div", { class: "empty" }, "Pick a conversion on the left.")); return; }
+  history.replaceState(null, "", `#${route.slug}`);
+
+  const fileInput = h("input", { type: "file", name: "file", accept: route.accept.join(",") });
+  const fileText = h("span", {}, h("strong", {}, "Choose a file"), ` or drag it here · ${route.accept.join(" ")}`);
+  const drop = h("label", { class: "drop" }, fileInput, fileText);
+  const pick = f => {
+    if (!f) return;
+    const dt = new DataTransfer(); dt.items.add(f); fileInput.files = dt.files;
+    fileText.replaceChildren(h("strong", {}, f.name), ` · ${size(f.size)} · click to change`);
+  };
+  fileInput.addEventListener("change", () => pick(fileInput.files[0]));
+  drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); });
+
+  const props = Object.entries(route.schema.properties).filter(([k]) => k !== "file");
+  const errors = h("div");
+  const status = h("span", { class: "upload" });
+  const submit = h("button", { class: "btn", type: "submit" }, "Convert");
+  // novalidate: out-of-range values reach the API, so testers see its own 422 messages.
+  const form = h("form", { novalidate: true },
+    drop,
+    props.length ? h("div", { class: "fields" }, props.map(([k, p]) => field(k, p)))
+                 : h("p", { class: "hint" }, "This conversion has no options."),
+    h("div", { class: "actions" }, submit, status), errors);
+  form.addEventListener("submit", e => { e.preventDefault(); send(route, form, submit, status, errors); });
+
+  const warn = missing(route);
+  panel.replaceChildren(
+    h("h3", {}, route.title),
+    h("div", { class: "endpoint" }, `POST ${route.path}`),
+    h("div", { class: "badges" },
+      route.needs.map(t => h("span", { class: "tag" }, `Uses ${t}`)),
+      warn.map(m => h("span", { class: "tag warn" }, m))),
+    h("p", { class: "about" }, route.about),
+    form);
+}
+
+function send(route, form, submit, status, errors) {
+  errors.replaceChildren();
+  const data = new FormData(form);
+  const file = data.get("file");
+  if (!file || !file.name) { showErrors(errors, ["file: choose a file first"]); return; }
+  submit.disabled = true;
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", route.path);
+  xhr.upload.onprogress = e => { if (e.lengthComputable) status.textContent = `Uploading ${Math.round(100 * e.loaded / e.total)}%`; };
+  xhr.onload = () => {
+    submit.disabled = false; status.textContent = "";
+    let body = null;
+    try { body = JSON.parse(xhr.responseText); } catch {}
+    if (xhr.status === 202 && body) {
+      saved.add({ id: body.id, title: route.title });
+      track(body.id, route.title, body, true);
+      return;
+    }
+    if (xhr.status === 422 && body && Array.isArray(body.detail)) {
+      showErrors(errors, body.detail.map(d => `${d.loc.slice(1).join(".") || "request"}: ${d.msg.replace(/^Value error, /, "")}`), xhr.status);
+    } else {
+      showErrors(errors, [body && body.detail ? String(body.detail) : (xhr.responseText || "No answer from the server.")], xhr.status);
+    }
+  };
+  xhr.onerror = () => { submit.disabled = false; status.textContent = ""; showErrors(errors, ["Could not reach the API."]); };
+  xhr.send(data);
+}
+
+function showErrors(box, list, code) {
+  box.replaceChildren(h("div", { class: "errors" },
+    h("strong", {}, code ? `Refused (HTTP ${code})` : "Not sent"), h("ul", {}, list.map(m => h("li", {}, m)))));
+}
+
+// ---------------------------------------------------------------- jobs
+function track(id, title, job, fresh = false) {
+  if (JOBS.has(id)) return;
+  const card = h("div", { class: "card job" });
+  JOBS.set(id, { title, card, state: "queued", seenRunningAt: null });
+  const list = $("#jobs");
+  fresh ? list.prepend(card) : list.append(card);
+  if (job) render(id, job); else card.append(h("div", { class: "progress-text" }, "Loading…"));
+  if (fresh) { setRuns(true); $("#jobs").parentElement.scrollTop = 0; }   // a new run opens the panel
+  count();
+}
+
+function count() {
+  const running = [...JOBS.values()].filter(j => j.state === "queued" || j.state === "running").length;
+  $("#jobcount").textContent = JOBS.size ? String(JOBS.size) : "";
+  $("#runs-btn").classList.toggle("busy", running > 0);
+  $("#runs-sub").textContent = running ? `${running} running` : "";
+  $("#runs-empty").hidden = JOBS.size > 0;
+}
+
+function setRuns(open) {
+  document.body.classList.toggle("runs-open", open);
+  $("#runs-btn").setAttribute("aria-expanded", String(open));
+  $("#drawer").setAttribute("aria-hidden", String(!open));
+}
+$("#runs-btn").addEventListener("click", () => setRuns(!document.body.classList.contains("runs-open")));
+$("#runs-close").addEventListener("click", () => setRuns(false));
+$("#scrim").addEventListener("click", () => setRuns(false));
+document.addEventListener("keydown", e => { if (e.key === "Escape") setRuns(false); });
+
+async function poll() {
+  for (const [id, j] of JOBS) {
+    if (j.state && !["queued", "running", "loading"].includes(j.state) && j.card.dataset.rendered) continue;
+    try {
+      const r = await fetch(`/jobs/${id}`);
+      if (r.status === 404) { j.state = "gone"; renderGone(id); continue; }
+      render(id, await r.json());
+    } catch { /* server restarting; try again next tick */ }
+  }
+}
+
+function renderGone(id) {
+  const j = JOBS.get(id);
+  j.card.dataset.rendered = "1";
+  j.card.replaceChildren(h("div", { class: "top" },
+    h("div", {}, h("div", { class: "title" }, j.title), h("div", { class: "sub" }, `job ${id}`)),
+    h("span", { class: "state gone" }, "no longer on the server")),
+    h("div", { class: "foot" }, h("button", { class: "btn ghost small", onclick: () => forget(id) }, "Remove from list")));
+}
+
+function render(id, job) {
+  const j = JOBS.get(id);
+  const active = job.state === "queued" || job.state === "running";
+  if (job.state === "running" && !j.seenRunningAt) j.seenRunningAt = Date.now();
+  // A finished card is drawn once; redrawing it would close open <details>.
+  if (!active && j.state === job.state && j.card.dataset.rendered) return;
+  j.state = job.state;
+  count();
+
+  const route = ROUTES.find(r => r.title === j.title);
+  const kids = [h("div", { class: "top" },
+    h("div", {},
+      h("div", { class: "title" }, `${j.title} · ${job.filename}`),
+      h("div", { class: "sub" }, `${route ? "POST " + route.path + " · " : ""}job ${id} · ${size(job.size)}`)),
+    h("span", { class: `state ${job.state}` }, job.state))];
+
+  if (active) {
+    const p = job.progress;
+    const bar = h("div", { class: p ? "bar" : "bar indet" }, h("div", { style: p ? `width:${100 * p.done / p.total}%` : null }));
+    const secs = j.seenRunningAt ? (Date.now() - j.seenRunningAt) / 1000 : 0;
+    kids.push(bar, h("div", { class: "progress-text" },
+      job.state === "queued" ? (job.model ? "Waiting for the model (model jobs run one at a time)…" : "Waiting to start…")
+        : `Running ${clock(secs)}${p ? ` · page ${p.done} of ${p.total}` : ""}`));
+  } else {
+    const took = job.finished && job.started ? ` in ${clock(job.finished - job.started)}` : "";
+    kids.push(h("div", { class: "progress-text", style: "margin-top:8px" },
+      { done: `Finished${took}. No problems reported.`, review: DEBUG ? `Finished${took}, but read the problems before trusting the file.` : `Finished${took}.`,
+        failed: `Failed${took}. The file you asked for was not written.`, cancelled: "Cancelled." }[job.state] || job.state));
+    if (DEBUG && job.error && job.state !== "cancelled") kids.push(h("div", { class: "box bad" }, job.error));
+    if (DEBUG && job.problems && job.problems.length)
+      kids.push(h("div", { class: "box warn" }, h("strong", {}, "Problems"), h("ul", {}, job.problems.map(p => h("li", {}, p)))));
+    if (job.files && job.files.length) kids.push(files(job.files));
+    if (DEBUG) {
+      if (job.summary && job.summary.length)
+        kids.push(h("details", {}, h("summary", {}, "Converter summary"), h("pre", {}, job.summary.join("\n"))));
+      if (job.pages && job.pages.length) kids.push(checks(job.pages));
+      const log = h("pre", {}, "Loading…");
+      const det = h("details", {}, h("summary", {}, "Full log"), log);
+      det.addEventListener("toggle", async () => {
+        if (det.open && !det.dataset.loaded) {
+          det.dataset.loaded = "1";
+          try { log.textContent = await (await fetch(`/jobs/${id}/log`)).text() || "(empty)"; }
+          catch { log.textContent = "Could not load the log."; }
+        }
+      });
+      kids.push(det);
+    }
+  }
+  kids.push(h("div", { class: "foot" },
+    active ? h("button", { class: "btn ghost small", onclick: () => cancel(id) }, "Cancel")
+           : h("button", { class: "btn ghost small", onclick: () => remove(id) }, "Delete job and files")));
+  j.card.replaceChildren(...kids.filter(Boolean));
+  if (!active) j.card.dataset.rendered = "1";
+}
+
+function files(list) {
+  const imgs = list.filter(f => /\.(png|jpe?g)$/i.test(f.name)).slice(0, 8);
+  const rows = list.map(f => h("div", { class: "file" },
+    h("span", { class: "fname" }, f.name),
+    h("span", { style: "display:flex;gap:10px;align-items:center" },
+      h("span", { class: "fsize" }, size(f.size)),
+      h("a", { class: "btn small", href: encodeURI(f.url), download: f.name.split("/").pop() }, "Download"))));
+  return h("div", {},
+    h("div", { class: "files" }, rows),
+    imgs.length ? h("div", { class: "thumbs" }, imgs.map(f =>
+      h("a", { href: encodeURI(f.url), download: f.name.split("/").pop(), title: f.name },
+        h("img", { src: encodeURI(f.url), alt: f.name, loading: "lazy" })))) : null);
+}
+
+function checks(pages) {
+  const keys = [...new Set(pages.flatMap(p => Object.keys(p.checks)))];
+  if (!keys.length) return null;
+  return h("details", {}, h("summary", {}, "Model checks per page"),
+    h("table", { class: "checks" },
+      h("tr", {}, h("th", {}, "Page"), keys.map(k => h("th", {}, k.replace(/_/g, " ")))),
+      pages.map(p => h("tr", {}, h("td", {}, `${p.page}${p.scanned ? " (scan)" : ""}`),
+        keys.map(k => { const c = p.checks[k];
+          return h("td", { title: c && c.detail ? c.detail : "" }, c ? h("span", { class: `r-${c.result}` }, c.result) : "—"); })))));
+}
+
+async function cancel(id) { await fetch(`/jobs/${id}`, { method: "DELETE" }); }
+async function remove(id) {
+  if (!confirm("Delete this job and its files from the server?")) return;
+  await fetch(`/jobs/${id}`, { method: "DELETE" });
+  forget(id);
+}
+function forget(id) { const j = JOBS.get(id); if (j) j.card.remove(); JOBS.delete(id); saved.drop(id); count(); }
+
+// ---------------------------------------------------------------- health
+async function refreshHealth() {
+  try {
+    HEALTH = await (await fetch("/health")).json();
+  } catch { HEALTH = null; }
+  const box = $("#health");
+  if (!HEALTH) { box.replaceChildren(h("span", { class: "pill" }, h("span", { class: "dot bad" }), "API not answering")); return; }
+  const pill = (ok, text, title) => h("span", { class: "pill", title }, h("span", { class: `dot ${ok ? "ok" : "bad"}` }), text);
+  const jobs = HEALTH.jobs || {};
+  box.replaceChildren(
+    pill(HEALTH.model_server.ok, HEALTH.model_server.ok ? "Model ready" : "Model down", HEALTH.model_server.url),
+    pill(HEALTH.tools.soffice, HEALTH.tools.soffice ? "LibreOffice" : "No LibreOffice"),
+    pill(HEALTH.tools.tesseract, HEALTH.tools.tesseract ? "Tesseract" : "No Tesseract"),
+    h("span", { class: "pill" }, `${jobs.running || 0} running · ${jobs.queued || 0} queued`));
+  renderNav();
+}
+
+window.addEventListener("hashchange", () => showRoute(ROUTES.find(r => r.slug === location.hash.slice(1))));
+load().catch(err => {
+  $("#panel").replaceChildren(h("div", { class: "errors" }, `Could not load the API description: ${err}`));
+});
+</script>
+</body>
+</html>

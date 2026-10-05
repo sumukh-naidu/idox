@@ -38,6 +38,7 @@ Usage:
 import argparse
 import hashlib
 import os
+import sys
 import time
 
 import pymupdf
@@ -50,6 +51,7 @@ from blocks import (
     TextBlock,
     check_coverage,
     check_grounding,
+    split_table_problems,
     check_structure,
     drop_duplicate_blocks,
     extract_page,
@@ -59,7 +61,9 @@ from blocks import (
     ungrounded_table_blocks,
     ungrounded_text_blocks,
 )
+import crop_reread
 import ocr
+import pdf_look
 from to_docx import build_docx, verify_docx, verify_images
 from to_pptx import build_pptx, verify_pptx
 from to_xlsx import build_xlsx, verify_xlsx
@@ -201,6 +205,7 @@ def extract_images(pdf_page, out_dir: str, page_no: int):
             "bytes": len(data),
             "ext": ext,
             "bbox": (bbox.y0, bbox.y1),
+            "x": (bbox.x0, bbox.x1),
             "width_in": bbox.width / 72.0,
             "height_in": bbox.height / 72.0,
             "px": (w, h),
@@ -210,6 +215,18 @@ def extract_images(pdf_page, out_dir: str, page_no: int):
         })
 
     return found
+
+
+def content_check_line(coverage, kind, source_texts):
+    """The 'content check' line. It compares the written file with the PDF's own text, so a scan has nothing
+    to compare with. Without this the line read "100%" on every scan: it compared the file with an empty
+    text and could not fail (KNOWN_ISSUES #2). For a scan, the OCR coverage line above is the real signal."""
+    if not "".join(source_texts).strip():
+        return (f"  content check: not run (the PDF has no text layer to compare the .{kind} with; "
+                f"see the OCR coverage check above)")
+    scanned = sum(1 for t in source_texts if not t.strip())
+    note = f" ({scanned} scanned page(s) not included: no text layer)" if scanned else ""
+    return f"  content check: {coverage:.0%} of the PDF's words are in the .{kind}{note}"
 
 
 def repair_missing_lines(page, pdf_page, missing_lines):
@@ -761,6 +778,8 @@ print(f"rendering at {args.dpi} dpi into {RENDER_DIR}/\n")
 
 markdown_out = [f"# Extracted from {os.path.basename(args.pdf)}\n"]
 extracted_pages = []          # kept for the Tier 3 .docx conversion
+failed_pages = []             # pages the model could not read; they are missing from every output
+page_numbers = []            # the PDF page index of each extracted page
 page_image_sets = []          # one list of extracted images per page (often [])
 scan_image_sets = []          # scanned-page images destined for a SEPARATE file
 source_texts = []             # the PDF's own text, for verifying that .docx
@@ -887,6 +906,7 @@ for pno in targets:
         print()
 
         extracted_pages.append(page)
+        page_numbers.append(pno)
         page_image_sets.append(page_images)
         scan_image_sets.append([])
         source_texts.append(source_text)
@@ -904,6 +924,7 @@ for pno in targets:
         )
     except Exception as exc:
         print(f"Tier 1 FAILED to produce valid output: {exc}")
+        failed_pages.append(pno + 1)
         continue
     elapsed = time.time() - started
     total_extraction_time += elapsed
@@ -973,7 +994,7 @@ for pno in targets:
     grounding, found, total = check_grounding(page, verify_text)
     geometry = check_geometry(page, pdf_page)
     coverage_problems, coverage, _missing, missing_lines = check_coverage(
-        page, verify_text
+        page, verify_text, row_tolerant=(verify_trust == "ocr")
     )
     validation_elapsed = time.time() - validation_started
     total_validation_time += validation_elapsed
@@ -993,9 +1014,11 @@ for pno in targets:
         print("  2. text-layer grounding:   N/A    "
               "(no text layer -- nothing to verify the model against)")
     else:
-        print(f"  2. text-layer grounding:   "
-              f"{'PASS' if not grounding else 'FAIL'}"
-              f"   ({found}/{total} strings verified against the PDF)")
+        hard, table_only = split_table_problems(grounding) if verify_trust == "ocr" else (grounding, [])
+        g_result = "FAIL" if hard else ("differs" if table_only else "PASS")
+        print(f"  2. text-layer grounding:   {g_result}"
+              f"   ({found}/{total} strings verified against the PDF"
+              f"{'; table cells OCR could not confirm are advisory, it reads ruled tables badly' if g_result == 'differs' else ''})")
         for p in grounding:
             print(f"       - {p}")
 
@@ -1025,6 +1048,25 @@ for pno in targets:
     # the source is the PDF's own text layer. OCR is a reading of the pixels,
     # not the document -- pasting its output in would launder a guess into the
     # deliverable. Under OCR the disagreement is reported and left alone.
+    if missing_lines and verify_trust == "ocr" and args.base_url:
+        # The model stopped early on a scan (KNOWN_ISSUES #1: it obeyed a miscounted n_blocks and left out a
+        # table). OCR text is not pasted in. The region around the missing lines is cropped out of the page
+        # image and the MODEL reads the crop, so what is written is still the model's reading.
+        before_reread = page
+        page, rereads = crop_reread.recover(page, img_path, args.model, args.base_url,
+                                            include_look=is_scanned, missing_lines=missing_lines)
+        for r in rereads:
+            print(f"       + RESTORED by re-reading the page image: {r}")
+        if page is not before_reread:
+            cov_problems, coverage, _, missing_lines = check_coverage(page, verify_text, row_tolerant=True)
+            print(f"       => coverage after re-read: {coverage:.0%}"
+                  f"{'' if not missing_lines else f', {len(missing_lines)} line(s) still missing'}")
+            # The checks above report the model's RAW output, so the log keeps showing what it dropped. This
+            # second check-4 line is the result AFTER the repair; the API reads the last one for each check,
+            # so a page that was fully restored is not sent to review for what the repair already fixed.
+            print(f"  4. content coverage:       {'PASS' if not cov_problems else 'FAIL'}"
+                  f"   ({coverage:.0%} of the PDF's text was extracted, after re-reading)")
+
     if missing_lines and verify_trust == "ocr":
         print(f"       ! {len(missing_lines)} line(s) OCR found but the model "
               f"did not return -- NOT auto-restored (OCR is a reading, not "
@@ -1043,9 +1085,11 @@ for pno in targets:
             print(f"       ! inside a table, not restored: {s[:60]!r}")
 
         if repairs:
-            _, coverage, _, still_missing = check_coverage(page, source_text)
+            cov_problems, coverage, _, still_missing = check_coverage(page, source_text)
             print(f"       => coverage after repair: {coverage:.0%}"
                   f"{'' if not still_missing else f', {len(still_missing)} line(s) still missing'}")
+            print(f"  4. content coverage:       {'PASS' if not cov_problems else 'FAIL'}"
+                  f"   ({coverage:.0%} of the PDF's text was extracted, after repair)")
 
     # Dropped TABLE ROWS are invisible to the line check above -- cells sit in
     # the text layer as separate short lines, so a whole missing row scores as
@@ -1142,6 +1186,7 @@ for pno in targets:
                   f"keeping the model's own formatting")
 
     extracted_pages.append(page)
+    page_numbers.append(pno)
     page_image_sets.append(page_images)
     scan_image_sets.append(scan_images_this_page)
     source_texts.append(source_text)
@@ -1183,10 +1228,27 @@ if args.docx and extracted_pages:
             print(f"  ! scanned-page layout failed ({type(exc).__name__}: {exc}); using the ordinary layout")
             problems = None
     if problems is None:
-        problems = build_docx(
-            extracted_pages, args.docx, title=os.path.basename(args.pdf),
-            layout=source_layout, image_sets=page_image_sets,
-        )
+        # Digital pages: copy each block's font, size, weight, position and spacing from
+        # the PDF's text layer (the model's blocks only decide order and structure).
+        # Any failure here keeps the default Word styles.
+        word_pages, word_layout = extracted_pages, source_layout
+        try:
+            word_pages, word_layout, look_notes = pdf_look.restyle_document(
+                extracted_pages, [doc[n] for n in page_numbers],
+                [bool(t.strip()) for t in source_texts], page_image_sets, source_layout)
+            for note in look_notes:
+                print(f"  layout: {note}")
+            problems = build_docx(
+                word_pages, args.docx, title=os.path.basename(args.pdf),
+                layout=word_layout, image_sets=page_image_sets,
+            )
+        except Exception as exc:
+            print(f"  ! could not copy the PDF's appearance ({type(exc).__name__}: {exc}); "
+                  f"using the default Word styles")
+            problems = build_docx(
+                extracted_pages, args.docx, title=os.path.basename(args.pdf),
+                layout=source_layout, image_sets=page_image_sets,
+            )
         if layout_ratios:
             import ocr_layout
             ocr_layout.apply_sizes_pages(
@@ -1209,7 +1271,7 @@ if args.docx and extracted_pages:
     # Reading the file back is the only honest way to claim it contains the
     # document. Checking what we meant to write proves nothing.
     coverage, missing = verify_docx(args.docx, "\n".join(source_texts))
-    print(f"  content check: {coverage:.0%} of the PDF's words are in the .docx")
+    print(content_check_line(coverage, "docx", source_texts))
 
     # --- the separate scan document, under --scan-mode both ---------------
     # Written as its own file rather than as extra pages, so the text document
@@ -1254,7 +1316,7 @@ if args.xlsx and extracted_pages:
         print(f"    - {p}")
 
     coverage, missing = verify_xlsx(args.xlsx, "\n".join(source_texts))
-    print(f"  content check: {coverage:.0%} of the PDF's words are in the .xlsx")
+    print(content_check_line(coverage, "xlsx", source_texts))
     if missing:
         shown = ", ".join(missing[:8])
         more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
@@ -1272,7 +1334,7 @@ if args.pptx and extracted_pages:
         print(f"    - {p}")
 
     coverage, missing = verify_pptx(args.pptx, "\n".join(source_texts))
-    print(f"  content check: {coverage:.0%} of the PDF's words are in the .pptx")
+    print(content_check_line(coverage, "pptx", source_texts))
     if missing:
         shown = ", ".join(missing[:8])
         more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
@@ -1317,3 +1379,12 @@ if total_time > 0:
     print(f"  TOTAL                                 {total_time:8.2f}s")
 else:
     print("  no pages were timed -- nothing to report")
+
+# A page the model could not read is missing from the output. Say so in the verdict and in the exit code, so
+# a run by hand or a script cannot mistake a partial result for a complete one. (The API already marks such
+# a job "review" or "failed" from this same log text.)
+if failed_pages:
+    print()
+    print(f"VERDICT: FAIL -- page(s) {', '.join(map(str, failed_pages))} could not be read by the model "
+          f"and are missing from the output")
+    sys.exit(1)

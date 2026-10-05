@@ -65,6 +65,7 @@ import re
 import sys
 import tempfile
 import time
+from collections import Counter
 
 import pymupdf
 
@@ -526,6 +527,12 @@ def verify_txt(txt_path: str, doc, wanted, ocr_texts=None):
                     r["problems"].append(
                         f"the page has only {len(got_words)} words in the file but "
                         f"OCR reads {len(o_words)}: most of the page is missing")
+                # The two word-set comparisons above cannot see a line the model wrote twice (a logo read once
+                # in the title block and again after the footer). Compare how often each LINE occurs instead.
+                # Advisory only (KNOWN_ISSUES #14): nothing is deleted, because a page can repeat a line honestly.
+                f_lines = Counter(normalize(l) for l in got_text.splitlines() if len(l.strip()) >= 3)
+                o_lines = Counter(normalize(l) for l in read.splitlines() if len(l.strip()) >= 3)
+                r["repeats"] = [(l, c, o_lines[l]) for l, c in f_lines.items() if c >= 2 and o_lines[l] < c]
             results.append(r)
             continue
 
@@ -790,6 +797,8 @@ def run(pdf_path: str, out_dir: str, pages: str, dpi: int, base_url: str,
                 info = "no OCR available"
             print(f"  page {r['page']}: scanned, UNVERIFIED (no text layer to check "
                   f"against). {info}  [{tag}]")
+            for line, in_file, in_ocr in r.get("repeats", []):
+                print(f"       ~ possible repeat: {line!r} is in the file {in_file} times, OCR read it {in_ocr} time(s)")
             if r.get("ocr_cov") is not None and (r["ocr_cov"] < 0.7 or r["ocr_prec"] < 0.7):
                 print("       ~ low OCR agreement. Advisory only: OCR misses white-on-dark "
                       "text and accents. Look at this page.")
@@ -831,45 +840,51 @@ def run(pdf_path: str, out_dir: str, pages: str, dpi: int, base_url: str,
     return ok
 
 
-parser = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
-parser.add_argument("--outdir", default=TXT_OUT_DIR,
-                    help=f"where the .txt files go (default {TXT_OUT_DIR})")
-parser.add_argument("--pages", default="all", help="e.g. 1, 1-3, 2,4 (default: all)")
-parser.add_argument("--dpi", type=int, default=125,
-                    help="resolution of the page image the model reads (default 125)")
-parser.add_argument("--model", default="qwen3-vl:4b-instruct",
-                    help="Ollama model name; ignored when --base-url is given")
-parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
-                    help=f"the llama-server to use (default {DEFAULT_BASE_URL}). "
-                         f"Pass --base-url {LOCAL_BASE_URL} for this machine's "
-                         "local 2B model, or an empty string for Ollama.")
-parser.add_argument("--scan-image", action="store_true",
-                    help="EXPERIMENTAL: for a scanned page that is exactly one "
-                         "upright full-page image, send that image to the model "
-                         "instead of a render. Fixed a lost hyphen on one scan but "
-                         "lost more whole lines on another; see scan_image_for_model().")
-args = parser.parse_args()
+def main():
+    """Read the command line, convert each PDF, exit 1 if any failed."""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
+    parser.add_argument("--outdir", default=TXT_OUT_DIR,
+                        help=f"where the .txt files go (default {TXT_OUT_DIR})")
+    parser.add_argument("--pages", default="all", help="e.g. 1, 1-3, 2,4 (default: all)")
+    parser.add_argument("--dpi", type=int, default=125,
+                        help="resolution of the page image the model reads (default 125)")
+    parser.add_argument("--model", default="qwen3-vl:4b-instruct",
+                        help="Ollama model name; ignored when --base-url is given")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
+                        help=f"the llama-server to use (default {DEFAULT_BASE_URL}). "
+                             f"Pass --base-url {LOCAL_BASE_URL} for this machine's "
+                             "local 2B model, or an empty string for Ollama.")
+    parser.add_argument("--scan-image", action="store_true",
+                        help="EXPERIMENTAL: for a scanned page that is exactly one "
+                             "upright full-page image, send that image to the model "
+                             "instead of a render. Fixed a lost hyphen on one scan but "
+                             "lost more whole lines on another; see scan_image_for_model().")
+    args = parser.parse_args()
 
-paths = []
-for pattern in args.pdfs:
-    paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[")
-                 else [pattern])
+    paths = []
+    for pattern in args.pdfs:
+        paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[")
+                     else [pattern])
 
-ok = fail = 0
-for path in paths:
-    if not os.path.exists(path):
-        print(f"skipping {path}: not found")
-        continue
-    if run(path, args.outdir, args.pages, args.dpi, args.base_url, args.model,
-           use_scan_image=args.scan_image):
-        ok += 1
-    else:
-        fail += 1
+    ok = fail = 0
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"skipping {path}: not found")
+            continue
+        if run(path, args.outdir, args.pages, args.dpi, args.base_url, args.model,
+               use_scan_image=args.scan_image):
+            ok += 1
+        else:
+            fail += 1
 
-if len(paths) > 1:
-    print("=" * 72)
-    print(f"{ok} succeeded, {fail} failed or partial, {len(paths)} total")
+    if len(paths) > 1:
+        print("=" * 72)
+        print(f"{ok} succeeded, {fail} failed or partial, {len(paths)} total")
 
-sys.exit(1 if fail else 0)
+    sys.exit(1 if fail else 0)
+
+
+if __name__ == "__main__":
+    main()

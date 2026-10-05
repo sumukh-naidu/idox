@@ -203,7 +203,10 @@ def check_frame(page, frame: Image.Image, want_dpi: int, use_ocr: bool):
             cov = 1 - len(missing) / len(words)
             info["ocr"] = cov
             if cov < OCR_MIN_COVERAGE:
-                problems.append(
+                # Advisory only: Tesseract misreads correct pixels (3 of 10 byte-exact pages "failed"
+                # on this alone), so it is reported but never fails the page. The exact checks above
+                # (size, blank page, ink under every text line) still decide PASS or FAIL.
+                info["ocr_warning"] = (
                     f"OCR read only {cov:.0%} of the PDF's words from the frame "
                     f"({len(missing)} missing, e.g. {', '.join(missing[:6])})")
     return problems, info
@@ -306,6 +309,8 @@ def run(pdf_path: str, out_dir: str, dpi: int, compression: str, pages: str,
               f"[{'PASS' if not problems else 'FAIL'}]")
         for p in problems:
             print(f"       - {p}")
+        if info.get("ocr_warning"):
+            print(f"       ~ warning (advisory, does not fail the page): {info['ocr_warning']}")
     tif.close()
 
     frames_ok = n_frames == len(targets)
@@ -332,44 +337,50 @@ def run(pdf_path: str, out_dir: str, dpi: int, compression: str, pages: str,
     return ok
 
 
-parser = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
-parser.add_argument("--outdir", default=TIFF_OUT_DIR,
-                    help=f"where the TIFF files go (default {TIFF_OUT_DIR})")
-parser.add_argument("--dpi", type=int, default=300,
-                    help="render resolution (default 300)")
-parser.add_argument("--compression", choices=sorted(COMPRESSIONS), default="lzw",
-                    help="lossless compression: lzw (default, opens everywhere) "
-                         "or deflate (about 30%% smaller, a few old viewers "
-                         "cannot open it)")
-parser.add_argument("--pages", default="all",
-                    help="e.g. 1, 1-3, 2,4 (default: all)")
-parser.add_argument("--no-ocr", action="store_true",
-                    help="skip the OCR word check (the other checks still run)")
-args = parser.parse_args()
+def main():
+    """Read the command line, convert each PDF, exit 1 if any failed."""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
+    parser.add_argument("--outdir", default=TIFF_OUT_DIR,
+                        help=f"where the TIFF files go (default {TIFF_OUT_DIR})")
+    parser.add_argument("--dpi", type=int, default=300,
+                        help="render resolution (default 300)")
+    parser.add_argument("--compression", choices=sorted(COMPRESSIONS), default="lzw",
+                        help="lossless compression: lzw (default, opens everywhere) "
+                             "or deflate (about 30%% smaller, a few old viewers "
+                             "cannot open it)")
+    parser.add_argument("--pages", default="all",
+                        help="e.g. 1, 1-3, 2,4 (default: all)")
+    parser.add_argument("--no-ocr", action="store_true",
+                        help="skip the OCR word check (the other checks still run)")
+    args = parser.parse_args()
 
-if args.dpi < 10:
-    raise SystemExit("--dpi must be at least 10")
+    if args.dpi < 10:
+        raise SystemExit("--dpi must be at least 10")
 
-paths = []
-for pattern in args.pdfs:
-    paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[")
-                 else [pattern])
+    paths = []
+    for pattern in args.pdfs:
+        paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[")
+                     else [pattern])
 
-ok = fail = 0
-for path in paths:
-    if not os.path.exists(path):
-        print(f"skipping {path}: not found")
-        continue
-    if run(path, args.outdir, args.dpi, args.compression, args.pages,
-           use_ocr=not args.no_ocr):
-        ok += 1
-    else:
-        fail += 1
+    ok = fail = 0
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"skipping {path}: not found")
+            continue
+        if run(path, args.outdir, args.dpi, args.compression, args.pages,
+               use_ocr=not args.no_ocr):
+            ok += 1
+        else:
+            fail += 1
 
-if len(paths) > 1:
-    print("=" * 72)
-    print(f"{ok} succeeded, {fail} failed, {len(paths)} total")
+    if len(paths) > 1:
+        print("=" * 72)
+        print(f"{ok} succeeded, {fail} failed, {len(paths)} total")
 
-sys.exit(1 if fail else 0)
+    sys.exit(1 if fail else 0)
+
+
+if __name__ == "__main__":
+    main()

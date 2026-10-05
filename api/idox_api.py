@@ -88,7 +88,7 @@ import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, ClassVar, List, Literal, Optional
+from typing import Annotated, ClassVar, Dict, List, Literal, Optional
 
 import requests
 from fastapi import FastAPI, Form, HTTPException, UploadFile
@@ -114,8 +114,8 @@ PASS_THROUGH = ("IDOX_API_KEY", "IDOX_THINKING", "IDOX_MAX_IMAGE_SIDE", "IDOX_TI
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 PAGES_RE = re.compile(r"^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$")
 
-# One entry per conversion -- the same 17 the web app (idox_app.py) runs, plus the two
-# JPG scripts it does not offer. "flag" marks test_pdf.py, which writes one Office
+# One entry per conversion -- the 17 the web app (idox_app.py) runs, plus the two
+# JPG scripts it does not offer, plus JPG -> PDF (searchable picture). "flag" marks test_pdf.py, which writes one Office
 # format per flag; "extra" is fixed arguments; "needs" is programs it cannot run without;
 # "result" is the file that must exist for the job to count, when there are by-products.
 ROUTES = {
@@ -137,6 +137,8 @@ ROUTES = {
     "docx_pdf": dict(script="word_to_pdf.py", model=False, needs=("soffice",)),
     "tiff_pdf": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",)),
     "tiff_pdf_pic": dict(script="tiff_to_pdf.py", model=False, extra=["--no-text"]),
+    # the same script for one JPG: the picture, fitted to A4, with a hidden text layer (no model)
+    "jpg_pdf_search": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",), extra=["--fit-a4"]),
 }
 
 # The start of a valid file of each type, so a renamed file is refused at upload
@@ -679,6 +681,43 @@ class Job(BaseModel):
     files: List[JobFile] = []
 
 
+# Shapes for the pages that were documented only as "200 OK": they describe what is returned in Swagger and
+# validate nothing. The endpoints return exactly what they returned before.
+class ModelServer(BaseModel):
+    url: str = Field(description="Where the converters send their page images.")
+    ok: bool = Field(description="True when the model server answered /health.")
+    status: Optional[int] = Field(None, description="The model server's HTTP status, when it answered.")
+    error: Optional[str] = Field(None, description="Why it could not be reached, when it did not answer.")
+
+
+class Health(BaseModel):
+    model_server: ModelServer
+    tools: Dict[str, bool] = Field(description="Whether each external tool is installed: soffice, tesseract.")
+    jobs: Dict[str, int] = Field(description="How many jobs are in each state, e.g. {\"done\": 3}.")
+
+    model_config = {"json_schema_extra": {"examples": [{
+        "model_server": {"url": "http://127.0.0.1:8080", "ok": True, "status": 200},
+        "tools": {"soffice": True, "tesseract": True}, "jobs": {"done": 3, "review": 1}}]}}
+
+
+class DeleteResult(BaseModel):
+    """Exactly one field is present."""
+    cancelled: Optional[str] = Field(None, description="Job id of a queued job that was cancelled.")
+    cancelling: Optional[str] = Field(None, description="Job id of a running job that is being stopped.")
+    deleted: Optional[str] = Field(None, description="Job id of a finished job whose files were deleted.")
+
+    model_config = {"json_schema_extra": {"examples": [{"deleted": "a1b2c3d4e5f6"}]}}
+
+
+class ErrorDetail(BaseModel):
+    detail: str = Field(description="What went wrong, in words.")
+
+    model_config = {"json_schema_extra": {"examples": [{"detail": "No such job."}]}}
+
+
+NOT_FOUND = {404: {"model": ErrorDetail, "description": "No job with that id."}}
+
+
 def safe_stem(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name or "").stem).strip("._")
     return stem[:80] or "document"
@@ -716,13 +755,23 @@ async def create_job(route_id: str, body: Conversion) -> dict:
     return public_job(job)
 
 
+UI_PAGE = Path(__file__).resolve().parent / "idox_api_ui.html"
+
+
 @app.get("/", include_in_schema=False)
 def root():
-    """The bare address has nothing of its own; send people to the API page."""
-    return RedirectResponse("/docs")
+    """The bare address opens the test page; /docs is the Swagger page."""
+    return RedirectResponse("/ui")
 
 
-@app.get("/health")
+@app.get("/ui", include_in_schema=False)
+def ui():
+    """A page with one button per conversion, built from /openapi.json, for testing by hand."""
+    # no-cache: the browser asks the server each time (cheap, the file has an ETag), so an updated page is never stale.
+    return FileResponse(UI_PAGE, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/health", responses={200: {"model": Health, "description": "Model server, tools and job counts."}})
 def health():
     """Is the model server answering, and are the external tools installed?"""
     try:
@@ -748,91 +797,122 @@ JOB_HELP = ("Returns a job at once (202). Poll GET /jobs/{id} until state is don
             "or failed, then download the result from the job's files.")
 
 
-def conversion(path: str, route_id: str, model: type, summary: str):
-    """Register POST /convert/<path> for one route, its form validated by `model`."""
+def conversion(group: str, path: str, route_id: str, model: type, title: str, about: str):
+    """Register POST /convert/<path> for one route, its form validated by `model`. The
+    x- fields tell the test page (/ui) what to accept and what the route needs."""
     async def endpoint(body: Annotated[model, Form()]):
         return await create_job(route_id, body)
     endpoint.__name__ = route_id
-    app.post(f"/convert/{path}", status_code=202, response_model=Job,
-             summary=summary.split(".")[0], description=f"{summary}\n\n{JOB_HELP}")(endpoint)
+    route = ROUTES[route_id]
+    app.post(f"/convert/{path}", status_code=202, response_model=Job, tags=[group],
+             summary=title, description=f"{about}\n\n{JOB_HELP}",
+             openapi_extra={"x-accept": list(model.EXTS), "x-uses-model": route["model"],
+                            "x-needs": [TOOL_NAMES[t] for t in route.get("needs", ())]})(endpoint)
 
 
-# --- from PDF ---------------------------------------------------------------
-conversion("pdf-to-word", "pdf_docx", PdfToWord,
+PDF, IMAGE, OTHER = "From PDF", "From an image", "From Word or TIFF"
+conversion(PDF, "pdf-to-word", "pdf_docx", PdfToWord, "PDF → Word",
            "PDF -> Word (.docx). Every page is read by the vision model, digital and scanned. "
            "A Markdown copy of what the model read (.md) is also produced.")
-conversion("pdf-to-excel", "pdf_xlsx", PdfToOffice,
+conversion(PDF, "pdf-to-excel", "pdf_xlsx", PdfToOffice, "PDF → Excel",
            "PDF -> Excel (.xlsx). Every page is read by the vision model and goes into one "
-           "sheet: tables as grids, text in column A, every value kept as text. A Markdown "
+           "sheet: tables as grids, text in column A. Clear numbers in tables are real numbers shown exactly as "
+           "printed; IDs, dates, phone numbers and anything doubtful stay text. A Markdown "
            "copy of what the model read (.md) is also produced.")
-conversion("pdf-to-powerpoint", "pdf_pptx", PdfToOffice,
+conversion(PDF, "pdf-to-powerpoint", "pdf_pptx", PdfToOffice, "PDF → PowerPoint",
            "PDF -> PowerPoint (.pptx). One slide per page; the first heading on a page becomes "
            "its slide title. Every page is read by the vision model, digital and scanned. A "
            "Markdown copy of what the model read (.md) is also produced.")
-conversion("pdf-to-text", "pdf_txt", PdfPages,
+conversion(PDF, "pdf-to-text", "pdf_txt", PdfPages, "PDF → Text",
            "PDF -> plain text (.txt), page by page. Pages with real text are taken from the "
            "PDF and checked against it; scanned pages are read by the model and marked "
            "UNVERIFIED, because there is no text layer to check them against.")
-conversion("pdf-to-jpg", "pdf_jpg", PdfToJpg,
+conversion(PDF, "pdf-to-jpg", "pdf_jpg", PdfToJpg, "PDF → JPG",
            "PDF -> JPG images, one per page. No model: each page is drawn exactly as a PDF "
            "viewer shows it, about a second per page. The files are <name>/page_001.jpg, ... "
            "Each JPG is read back and checked against the PDF (size, not blank, every text "
            "line on ink, an OCR word check), so a job is 'review' if a page fails.")
-conversion("pdf-to-jpeg", "pdf_jpeg", PdfToJpg,
+conversion(PDF, "pdf-to-jpeg", "pdf_jpeg", PdfToJpg, "PDF → JPEG",
            "PDF -> JPEG images, one per page. The same as pdf-to-jpg, with the .jpeg file "
            "ending: <name>/page_001.jpeg, ... No model.")
-conversion("pdf-to-png", "pdf_png", PdfToPng,
+conversion(PDF, "pdf-to-png", "pdf_png", PdfToPng, "PDF → PNG",
            "PDF -> PNG images, one per page, lossless. No model. The files are "
            "<name>/page_001.png, ... Each is checked pixel by pixel against the PDF.")
-conversion("pdf-to-tiff", "pdf_tiff", PdfToTiff,
+conversion(PDF, "pdf-to-tiff", "pdf_tiff", PdfToTiff, "PDF → TIFF",
            "PDF -> one multi-page TIFF (<name>.tiff), one frame per page, lossless, 300 dpi by "
            "default. No model. Every frame is checked pixel by pixel against the PDF.")
 
-# --- from an image ----------------------------------------------------------
-conversion("image-to-word", "img_docx", ImageToWord,
+conversion(IMAGE, "image-to-word", "img_docx", ImageToWord, "Image → Word",
            "Image (PNG/JPG) -> Word (.docx) with editable text and tables, read by the vision "
            "model. An image has no text layer, so the reading is checked against an OCR "
            "reading instead; a failed check makes the job 'review'.")
-conversion("image-to-word-picture", "img_docx_pic", ImageFile,
+conversion(IMAGE, "image-to-word-picture", "img_docx_pic", ImageFile, "Image → Word (picture)",
            "Image (PNG/JPG) -> Word (.docx) with the picture placed in unchanged. No model, "
            "not editable.")
-conversion("image-to-excel", "img_xlsx", ImageFile,
+conversion(IMAGE, "image-to-excel", "img_xlsx", ImageFile, "Image → Excel",
            "Image (PNG/JPG) of a table -> Excel (.xlsx), read by the vision model and checked "
            "against an OCR reading. If the image has no table, nothing is written and the "
            "job fails with 'No table was found'.")
-conversion("jpg-to-pdf", "jpg_pdf", JpgFile,
+conversion(IMAGE, "jpg-to-pdf", "jpg_pdf", JpgFile, "JPG → PDF",
            "JPG -> PDF, with editable text. The vision model reads the image (text, headings, "
            "tables) and the page is rebuilt from that reading as a text PDF, via Word and "
-           "LibreOffice. About 30 s to a few minutes per image on the local 2B. This is NOT "
-           "the picture placed on a page: the PDF contains the model's reading, so it can "
-           "change letters or miss content. The reading is checked against an OCR reading of "
-           "the image; a failed check makes the job 'review'.")
-conversion("jpg-to-png", "jpg_png", JpgFile,
+           "LibreOffice. This is NOT the picture placed on a page: the PDF contains the "
+           "model's reading, so it can change letters or miss content. The reading is checked "
+           "against an OCR reading of the image; a failed check makes the job 'review'.")
+conversion(IMAGE, "jpg-to-pdf-searchable", "jpg_pdf_search", JpgFile, "JPG → PDF (searchable picture)",
+           "JPG -> PDF that SHOWS THE ORIGINAL PICTURE, fitted to an A4 page, with a hidden text layer read by "
+           "Tesseract OCR so it can be searched and copied. No model. Unlike 'JPG -> PDF' this does not "
+           "re-type the page: the picture, its fonts and layout are exactly the JPG; only the hidden text is "
+           "an OCR reading and it can miss text such as white-on-dark lettering.")
+conversion(IMAGE, "jpg-to-png", "jpg_png", JpgFile, "JPG → PNG",
            "JPG -> PNG (<name>.png). No model. The PNG is read back and checked against the JPG.")
-conversion("jpg-to-tiff", "jpg_tiff", JpgToTiff,
+conversion(IMAGE, "jpg-to-tiff", "jpg_tiff", JpgToTiff, "JPG → TIFF",
            "JPG -> TIFF (<name>.tiff), lossless. No model. The TIFF is read back and checked "
            "against the JPG.")
 
-# --- from Word and TIFF -----------------------------------------------------
-conversion("word-to-pdf", "docx_pdf", WordFile,
+conversion(OTHER, "word-to-pdf", "docx_pdf", WordFile, "Word → PDF",
            "Word (.docx) -> PDF, rendered by LibreOffice. No model. The PDF is then checked "
            "against the Word file: word coverage, paragraphs and table cells kept.")
-conversion("tiff-to-pdf", "tiff_pdf", TiffFile,
+conversion(OTHER, "tiff-to-pdf", "tiff_pdf", TiffFile, "TIFF → PDF (searchable)",
            "TIFF -> searchable PDF. Each frame becomes a page, unchanged, with a hidden text "
            "layer read by Tesseract OCR so it can be searched and copied. No model.")
-conversion("tiff-to-pdf-picture", "tiff_pdf_pic", TiffFile,
+conversion(OTHER, "tiff-to-pdf-picture", "tiff_pdf_pic", TiffFile, "TIFF → PDF (picture)",
            "TIFF -> PDF, picture only. Each frame becomes a page, unchanged, with no text "
            "layer. No model.")
 
 
-@app.get("/jobs/{jid}", response_model=Job)
+_default_openapi = app.openapi
+
+
+def openapi_with_uploads() -> dict:
+    """FastAPI does not notice an UploadFile inside a Form model, so it describes these
+    forms as url-encoded and Swagger's "Try it out" shows the file as a text box. Each
+    form carries a file, so describe it as the multipart upload it really is."""
+    if app.openapi_schema is None:
+        spec = _default_openapi()
+        for path, ops in spec["paths"].items():
+            content = ops.get("post", {}).get("requestBody", {}).get("content", {})
+            if path.startswith("/convert/") and "application/x-www-form-urlencoded" in content:
+                content["multipart/form-data"] = content.pop("application/x-www-form-urlencoded")
+    return app.openapi_schema
+
+
+app.openapi = openapi_with_uploads
+
+
+@app.get("/jobs/{jid}", response_model=Job, responses=NOT_FOUND)
 def job_status(jid: str):
+    """The job: its state, progress, problems and the files it produced."""
     with JOBS_LOCK:
         return public_job(get_job(jid))
 
 
-@app.get("/jobs/{jid}/files/{name:path}")
+@app.get("/jobs/{jid}/files/{name:path}",
+         responses={200: {"description": "The file itself, sent as a download.",
+                          "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+                    404: {"model": ErrorDetail, "description": "No such job, or the job has no file with that name."}})
 def job_file(jid: str, name: str):
+    """Download one of the files listed in the job's `files`."""
     with JOBS_LOCK:
         job = get_job(jid)
         names = {f["name"] for f in job.get("outputs", [])}
@@ -843,14 +923,18 @@ def job_file(jid: str, name: str):
     return FileResponse(job_dir(jid) / "out" / name, filename=Path(name).name)
 
 
-@app.get("/jobs/{jid}/log", response_class=PlainTextResponse)
+@app.get("/jobs/{jid}/log", response_class=PlainTextResponse,
+         responses={200: {"description": "The converter's full log as plain text.", "content": {"text/plain": {"example": "Tier 1 -- 8 blocks in 15.1s"}}},
+                    404: {"description": "No job with that id.",
+                          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorDetail"}}}}})
 def job_log(jid: str):
+    """The converter's own output for this job, as plain text."""
     with JOBS_LOCK:
         get_job(jid)
     return read_log(jid)
 
 
-@app.delete("/jobs/{jid}")
+@app.delete("/jobs/{jid}", responses={200: {"model": DeleteResult, "description": "What was done to the job."}, **NOT_FOUND})
 def delete_job(jid: str):
     """Cancel a queued or running job; delete a finished one and its files."""
     with JOBS_LOCK:

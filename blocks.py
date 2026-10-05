@@ -713,10 +713,21 @@ def check_structure(page: Page):
                 continue
 
             if len(block.rows) != block.n_data_rows:
-                problems.append(
-                    f"{label}: claims n_data_rows={block.n_data_rows} but "
-                    f"returned {len(block.rows)} rows"
-                )
+                if block.has_header and block.n_data_rows == len(block.rows) + 1:
+                    # The model counted the header row as a data row. In 20 of 20 mismatches in the saved
+                    # logs the claim was exactly one more than the rows returned, with every row present
+                    # (KNOWN_ISSUES #3). It is a miscount, not a contradiction. A genuinely lost row is
+                    # caught by check 4 against the text, so this is only a note.
+                    notes.append(
+                        f"{label}: claims n_data_rows={block.n_data_rows} and returned "
+                        f"{len(block.rows)} rows -- the claim counted the header row; see check 4 "
+                        f"for whether a row was actually lost"
+                    )
+                else:
+                    problems.append(
+                        f"{label}: claims n_data_rows={block.n_data_rows} but "
+                        f"returned {len(block.rows)} rows"
+                    )
 
             # A headerless table (a plain grid of numbers, say) has no labels
             # to count, so the header is only checked when one is claimed.
@@ -751,7 +762,20 @@ def check_structure(page: Page):
     return problems, notes
 
 
-def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
+def _in_order(tokens, row_tokens) -> bool:
+    """Are `tokens` a subsequence of `row_tokens` (same order, others may sit between)?"""
+    it = iter(row_tokens)
+    return all(any(t == r for r in it) for t in tokens)
+
+
+def split_table_problems(problems):
+    """Split grounding problems into (hard, table). Used when the source is an OCR reading, not a text layer:
+    Tesseract reads a ruled table badly (cells dropped, rows read as lines), so a table cell it cannot
+    confirm is advisory. A text block it cannot confirm is still a hard problem."""
+    return ([p for p in problems if "kind=table" not in p], [p for p in problems if "kind=table" in p])
+
+
+def check_coverage(page: Page, source_text: str, threshold: float = 0.95, row_tolerant: bool = False):
     """How much of the PDF's text made it into the extraction?
 
     The mirror image of check_grounding, and the check that was missing.
@@ -767,6 +791,11 @@ def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
 
     Returns (problems, coverage, missing_words, missing_lines). Only works on
     digital PDFs.
+
+    row_tolerant=True is for an OCR reading as the source. Tesseract often drops a one-digit cell from a
+    table row ("Paper A4 450.00" for "Paper A4 | 10 | 450.00"), so a source line also counts as present when
+    its words appear IN ORDER inside one single table row. That is narrow on purpose: a dropped row, or a
+    line from anywhere else on the page, still counts as missing.
     """
     source = normalize(source_text)
     if not source:
@@ -793,6 +822,13 @@ def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
     words = {w for w in source.split() if len(w) > 3}
     if not words:
         return ([], 1.0, [], [])
+
+    row_tokens = []
+    if row_tolerant:
+        for block in page.blocks:
+            if isinstance(block, TableBlock):
+                for cells in ([block.header] if block.header else []) + list(block.rows):
+                    row_tokens.append(normalize(" ".join(cells)).split())
 
     missing = sorted(
         w for w in words
@@ -829,6 +865,9 @@ def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
             continue
         source_seen.add(line_n)
         if line_n not in produced and squash(line) not in produced_squashed:
+            tokens = line_n.split()
+            if row_tolerant and len(tokens) >= 2 and any(_in_order(tokens, r) for r in row_tokens):
+                continue
             missing_lines.append(line.strip())
 
     if missing_lines:
@@ -1235,7 +1274,9 @@ def snap_to_text_layer(page: Page, source_text: str,
 # build measurably dropped content (a whole table, merged headings) on a
 # page the intended model handled cleanly. Pass base_url=None explicitly to
 # opt into Ollama on purpose (e.g. to reach its 4B model for a hard page).
-DEFAULT_BASE_URL = "http://10.0.3.33:8080"
+# IDOX_BASE_URL overrides it without editing code (the API and start_convert.sh already use that variable).
+# Unset, nothing changes: the address is the remote endpoint below, which is unreachable from some machines.
+DEFAULT_BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.33:8080")
 
 # The local, fully-controlled setup this replaced as the default -- still
 # valid, still running, not removed. Use this explicitly (--base-url

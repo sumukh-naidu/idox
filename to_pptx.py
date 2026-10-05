@@ -30,6 +30,7 @@ that, made deliberately, not as a first draft to improve on later:
   titles of their own -- a page keeps mapping to exactly one slide either way.
 """
 
+import re
 from typing import List
 
 from pptx import Presentation
@@ -71,6 +72,11 @@ BOTTOM_MARGIN_IN = 0.4
 # so this is what stands in for it when estimating a text box's real height.
 CHAR_WIDTH_FACTOR = 0.52
 LINE_HEIGHT_FACTOR = 1.25  # line spacing as a multiple of font size
+
+# A slide title is a short line. The model often returns one coarse "heading" block holding a title AND what
+# follows it ("Services Agreement\nSample document...\nACME", or "4. Payment\nThe Buyer shall pay..."), which
+# used to become one huge title that ran off the slide (KNOWN_ISSUES #5).
+MAX_TITLE_CHARS = 90
 
 
 def _remaining_height(top_in: float) -> float:
@@ -233,6 +239,40 @@ def _add_image(slide, img: dict, top_in: float, problems: List[str], where: str)
     return top_in + height_in + 0.2
 
 
+# "1. Parties", "2.1 Scope", "(a) Term", "A. Overview": a short numbered or lettered line that opens a clause.
+_CLAUSE_HEAD = re.compile(r"^\s*(\d+(\.\d+)*[.)]?|\([a-z0-9]{1,3}\)|[A-Z][.)])\s+\S")
+MAX_CLAUSE_HEAD_CHARS = 40
+
+
+def _split_headings(blocks):
+    """Split a block into a heading and a paragraph when the model joined a heading to the text after it.
+
+    Two cases, both only when the first line is short and the rest is longer:
+    - a "heading" block holding a title plus more text ("Services Agreement" / "Sample document...").
+    - a "paragraph" block whose first line is a numbered clause heading ("1. Parties" / "This services...").
+    A two-line title ("Annual Report" / "2026") stays whole, and so does a list.
+    """
+    out = []
+    for b in blocks:
+        if isinstance(b, TableBlock) or b.kind not in ("heading", "paragraph"):
+            out.append(b)
+            continue
+        lines = [ln.strip() for ln in b.text.splitlines() if ln.strip()]
+        rest = "\n".join(lines[1:])
+        first = lines[0] if lines else ""
+        if b.kind == "heading":
+            split = len(lines) > 1 and len(first) <= MAX_TITLE_CHARS and len(rest) > len(first)
+        else:
+            split = (len(lines) > 1 and len(first) <= MAX_CLAUSE_HEAD_CHARS and len(rest) > len(first)
+                     and bool(_CLAUSE_HEAD.match(first)) and first[-1] not in ".,;:")
+        if split:
+            out.append(b.model_copy(update={"kind": "heading", "text": first, "bold": True}))
+            out.append(b.model_copy(update={"kind": "paragraph", "text": rest, "bold": False}))
+        else:
+            out.append(b)
+    return out
+
+
 def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
     """Write one slide per page. Returns a list of problems found.
 
@@ -252,13 +292,15 @@ def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
                   and pno - 1 < len(image_sets) else [])
 
         slide = prs.slides.add_slide(layout)
-        blocks = list(page.blocks)
+        blocks = _split_headings(list(page.blocks))
 
-        # The first heading becomes the slide title; it is consumed here and
-        # never written again as a body line.
+        # The first heading that is a short line becomes the slide title; it is
+        # consumed here and never written again as a body line. A "heading"
+        # that is really a whole paragraph is never used as a title.
         title_idx = next(
             (i for i, b in enumerate(blocks)
-             if not isinstance(b, TableBlock) and b.kind == "heading"),
+             if not isinstance(b, TableBlock) and b.kind == "heading"
+             and len(b.text.strip()) <= MAX_TITLE_CHARS),
             None,
         )
         if title_idx is not None:

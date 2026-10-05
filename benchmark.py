@@ -182,9 +182,11 @@ def read_output(path):
         from openpyxl import load_workbook
         wb = load_workbook(str(path), data_only=True)
         parts, cells = [], []
+        from to_xlsx import cell_display      # numbers are real numbers now: compare the text they display
         for ws in wb.worksheets:
-            for row in ws.iter_rows(values_only=True):
-                vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
+            for row in ws.iter_rows():
+                vals = [cell_display(c.value, c.number_format).strip() for c in row
+                        if c.value is not None and cell_display(c.value, c.number_format).strip()]
                 if vals:
                     parts.append(" ".join(vals)); cells.extend(vals)
         return "\n".join(parts), cells, info

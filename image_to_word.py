@@ -49,6 +49,7 @@ from blocks import (
     Page,
     check_coverage,
     check_grounding,
+    split_table_problems,
     check_structure,
     drop_duplicate_blocks,
     extract_page,
@@ -168,15 +169,17 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
         ocr_text = ocr.ocr_image(image_path)
         if ocr_text.strip():
             grounding, found, total = check_grounding(page, ocr_text)
-            print(f"  2. OCR grounding:          "
-                  f"{'PASS' if not grounding else 'FAIL'}"
+            hard, table_only = split_table_problems(grounding)
+            verdict = "FAIL" if hard else ("differs" if table_only else "PASS")
+            print(f"  2. OCR grounding:          {verdict}"
                   f"   ({found}/{total} strings verified against an "
-                  f"independent OCR reading)")
+                  f"independent OCR reading"
+                  f"{'; table cells OCR could not confirm are advisory, it reads ruled tables badly' if verdict == 'differs' else ''})")
             for p in grounding:
                 print(f"       - {p}")
 
             coverage_problems, coverage, _missing, missing_lines = (
-                check_coverage(page, ocr_text)
+                check_coverage(page, ocr_text, row_tolerant=True)
             )
             if coverage is None:
                 print("  4. OCR coverage:           N/A")
@@ -207,11 +210,11 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
     # Alignment, heading size and blank table rows are MEASURED from the image's own line geometry (Tesseract)
     # instead of taken from the model's guess, which centres left-aligned headings. Text is never changed.
     # Costs about 0.1-1 s; skipped with --no-layout, and any failure falls back to the model's own formatting.
-    layout_page, ratios = page, {}
+    layout_page, ratios, layout_info = page, {}, None
     if layout and ocr.have_tesseract():
         try:
             import ocr_layout       # imported here so a missing pytesseract only skips this step
-            layout_page, rows, ratios, _info = ocr_layout.apply_ocr_layout(page, image_path)
+            layout_page, rows, ratios, layout_info = ocr_layout.apply_ocr_layout(page, image_path)
             for bi, kind, text, m_al, o_al, ratio in rows:
                 if kind == "table":
                     print(f"  layout: table {text}")
@@ -222,7 +225,17 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
             layout_page, ratios = page, {}
     build_docx([layout_page], final_path)
     if ratios:
-        ocr_layout.apply_sizes(final_path, layout_page, ratios)
+        # Sizes, font, heading colour and table proportions from the image (KNOWN_ISSUES #12); if the image's
+        # size cannot be measured the old behaviour (heading sizes only) applies.
+        try:
+            body_pt = ocr_layout.polish_image_docx(final_path, layout_page, layout_info, ratios, image_path)
+        except Exception as exc:
+            print(f"  ! could not size the file from the image ({type(exc).__name__}: {exc})")
+            body_pt = None
+        if body_pt:
+            print(f"  layout: text sized from the image ({body_pt:g} pt body), table rows and columns proportioned")
+        else:
+            ocr_layout.apply_sizes(final_path, layout_page, ratios)
 
     print(f"  -> {final_path}")
     print()

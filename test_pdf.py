@@ -56,10 +56,12 @@ from blocks import (
     fix_trailing_heading_after_table,
     merge_nested_tables,
     normalize,
+    recover_dropped_tables,
     ungrounded_table_blocks,
     ungrounded_text_blocks,
 )
 import ocr
+import pdf_look
 from to_docx import build_docx, verify_docx, verify_images
 from to_pptx import build_pptx, verify_pptx
 from to_xlsx import build_xlsx, verify_xlsx
@@ -201,6 +203,7 @@ def extract_images(pdf_page, out_dir: str, page_no: int):
             "bytes": len(data),
             "ext": ext,
             "bbox": (bbox.y0, bbox.y1),
+            "x": (bbox.x0, bbox.x1),
             "width_in": bbox.width / 72.0,
             "height_in": bbox.height / 72.0,
             "px": (w, h),
@@ -761,6 +764,7 @@ print(f"rendering at {args.dpi} dpi into {RENDER_DIR}/\n")
 
 markdown_out = [f"# Extracted from {os.path.basename(args.pdf)}\n"]
 extracted_pages = []          # kept for the Tier 3 .docx conversion
+page_numbers = []            # the PDF page index of each extracted page
 page_image_sets = []          # one list of extracted images per page (often [])
 scan_image_sets = []          # scanned-page images destined for a SEPARATE file
 source_texts = []             # the PDF's own text, for verifying that .docx
@@ -887,6 +891,7 @@ for pno in targets:
         print()
 
         extracted_pages.append(page)
+        page_numbers.append(pno)
         page_image_sets.append(page_images)
         scan_image_sets.append([])
         source_texts.append(source_text)
@@ -905,6 +910,12 @@ for pno in targets:
     except Exception as exc:
         print(f"Tier 1 FAILED to produce valid output: {exc}")
         continue
+    # A table the model planned but never wrote (it obeyed a miscounted n_blocks): ask once
+    # for the rest of the page. See recover_dropped_tables().
+    if args.base_url:
+        page, recovery = recover_dropped_tables(page, img_path, args.base_url, include_look=is_scanned)
+        if recovery:
+            print(f"  ! {recovery}")
     elapsed = time.time() - started
     total_extraction_time += elapsed
 
@@ -1142,6 +1153,7 @@ for pno in targets:
                   f"keeping the model's own formatting")
 
     extracted_pages.append(page)
+    page_numbers.append(pno)
     page_image_sets.append(page_images)
     scan_image_sets.append(scan_images_this_page)
     source_texts.append(source_text)
@@ -1183,10 +1195,27 @@ if args.docx and extracted_pages:
             print(f"  ! scanned-page layout failed ({type(exc).__name__}: {exc}); using the ordinary layout")
             problems = None
     if problems is None:
-        problems = build_docx(
-            extracted_pages, args.docx, title=os.path.basename(args.pdf),
-            layout=source_layout, image_sets=page_image_sets,
-        )
+        # Digital pages: copy each block's font, size, weight, position and spacing from
+        # the PDF's text layer (the model's blocks only decide order and structure).
+        # Any failure here keeps the default Word styles.
+        word_pages, word_layout = extracted_pages, source_layout
+        try:
+            word_pages, word_layout, look_notes = pdf_look.restyle_document(
+                extracted_pages, [doc[n] for n in page_numbers],
+                [bool(t.strip()) for t in source_texts], page_image_sets, source_layout)
+            for note in look_notes:
+                print(f"  layout: {note}")
+            problems = build_docx(
+                word_pages, args.docx, title=os.path.basename(args.pdf),
+                layout=word_layout, image_sets=page_image_sets,
+            )
+        except Exception as exc:
+            print(f"  ! could not copy the PDF's appearance ({type(exc).__name__}: {exc}); "
+                  f"using the default Word styles")
+            problems = build_docx(
+                extracted_pages, args.docx, title=os.path.basename(args.pdf),
+                layout=source_layout, image_sets=page_image_sets,
+            )
         if layout_ratios:
             import ocr_layout
             ocr_layout.apply_sizes_pages(

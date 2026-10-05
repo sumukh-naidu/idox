@@ -1247,8 +1247,10 @@ LOCAL_BASE_URL = "http://127.0.0.1:8090"
 def extract_page(image_path: str, model: str = MODEL_NAME,
                  num_ctx: int = 8192, num_predict: int = 4000,
                  return_timing: bool = False, base_url: str = DEFAULT_BASE_URL,
-                 include_look: bool = True):
+                 include_look: bool = True, note: str = ""):
     """Send one page image to the local model; get back analysis + blocks + review.
+
+    note, when given, is added to the user prompt (see recover_dropped_tables()).
 
     include_look=False switches the request schema from Page/TextBlock to
     PageNoLook/TextBlockNoLook, dropping align/size/bold from what the model
@@ -1288,7 +1290,7 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
     if base_url:
         return _extract_page_raw_server(
             image_path, base_url, num_ctx, num_predict, return_timing,
-            include_look,
+            include_look, note,
         )
 
     schema_cls = Page if include_look else PageNoLook
@@ -1296,7 +1298,7 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": USER_PROMPT, "images": [image_path]},
+            {"role": "user", "content": f"{USER_PROMPT} {note}".strip(), "images": [image_path]},
         ],
         format=schema_cls.model_json_schema(),   # decoder cannot emit invalid JSON
         options={
@@ -1380,9 +1382,53 @@ def _fit_max_side(image_path: str, max_side: int):
     return buf.getvalue()
 
 
+def recover_dropped_tables(page, image_path: str, base_url: str, include_look: bool = True):
+    """Ask once for the rest of a page whose table(s) the model planned but did not write.
+
+    The analysis section is written BEFORE the blocks and says how many tables the page
+    has (table_column_counts) and how many blocks to write (n_blocks). The schema tells
+    the model to "output exactly this many blocks", so when n_blocks is miscounted --
+    on a scanned agreement it counted 8 for a page of 10 blocks, leaving the table and
+    the footer out of its own tally -- it obeys the wrong count and stops, with a table
+    it had just reported seeing missing from the output. Nothing noticed: the structure
+    check treats n_blocks as advisory and a table that was never written has no rows to
+    compare.
+
+    So: when the plan names more tables than were written, ask again, once, for only what
+    comes after the last block returned. The reply is kept only if it brings back a table,
+    and blocks repeating text already extracted are dropped.
+
+    Returns (page, note). note is None when nothing was needed, else a line for the log.
+    """
+    want = len(page.analysis.table_column_counts)
+    have = sum(isinstance(b, TableBlock) for b in page.blocks)
+    if want <= have or not page.blocks:
+        return page, None
+    last = next((b for b in reversed(page.blocks) if not isinstance(b, TableBlock)), page.blocks[-1])
+    anchor = " ".join(getattr(last, "text", "").split())[:70]
+    cols = page.analysis.table_column_counts[have:]
+    ask = (f"The page continues after the block that starts '{anchor}'. It also holds {want - have} "
+           f"more table(s) with {', '.join(map(str, cols))} column(s), and any text below them. "
+           f"Extract ONLY what comes after that block: every table, then any remaining text. "
+           f"Do not repeat blocks that come before it.")
+    try:
+        more = extract_page(image_path, base_url=base_url, include_look=include_look, note=ask)
+    except Exception as exc:
+        return page, f"the model planned {want} table(s) but wrote {have}; asking for the rest failed ({exc})"
+    if not any(isinstance(b, TableBlock) for b in more.blocks):
+        return page, f"the model planned {want} table(s) but wrote {have}; asking again did not bring one back"
+    seen = {normalize(getattr(b, "text", "")) for b in page.blocks if getattr(b, "text", "").strip()}
+    extra = [b for b in more.blocks if isinstance(b, TableBlock) or normalize(getattr(b, "text", "")) not in seen]
+    blocks = list(page.blocks) + extra
+    page = Page(analysis=LayoutAnalysis(n_blocks=len(blocks), table_column_counts=page.analysis.table_column_counts),
+                blocks=blocks)
+    return page, (f"the model planned {want} table(s) but wrote {have}; asked again and got "
+                  f"{len(extra)} more block(s) including {sum(isinstance(b, TableBlock) for b in extra)} table(s)")
+
+
 def _extract_page_raw_server(image_path: str, base_url: str,
                              num_ctx: int, num_predict: int,
-                             return_timing: bool, include_look: bool = True):
+                             return_timing: bool, include_look: bool = True, note: str = ""):
     """The base_url path: talk to a raw llama-server directly, not Ollama.
 
     Uses its OpenAI-compatible /v1/chat/completions endpoint. Same system
@@ -1429,7 +1475,7 @@ def _extract_page_raw_server(image_path: str, base_url: str,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": [
-                {"type": "text", "text": USER_PROMPT},
+                {"type": "text", "text": f"{USER_PROMPT} {note}".strip()},
                 {"type": "image_url",
                  "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
             ]},

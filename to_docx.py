@@ -46,7 +46,7 @@ from typing import List
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
-from docx.oxml import parse_xml
+from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Inches, Pt, RGBColor
 from docx.table import Table
@@ -105,17 +105,19 @@ def apply_layout(doc, layout: dict):
 from blocks import Page, TableBlock, normalize, squash
 
 
-def _neutral_headings(doc):
+def _neutral_headings(doc, keep_bold=False):
     """Word's heading styles are blue, in a theme font. Headings copied from a PDF carry
     their own font, size and colour on every run, so the styles are made plain: the
-    heading stays a real heading (navigation pane, outline) without Word's look."""
+    heading stays a real heading (navigation pane, outline) without Word's look.
+    keep_bold=True is for pages measured from a scan: their runs may rely on the style's bold."""
     for name in ("Heading 1", "Heading 2", "Heading 3", "Title"):
         try:
             style = doc.styles[name]
         except KeyError:
             continue
         style.font.color.rgb = RGBColor(0, 0, 0)
-        style.font.bold = False
+        if not keep_bold:
+            style.font.bold = False
         rpr = style.element.get_or_add_rPr()
         fonts = rpr.find(qn("w:rFonts"))
         if fonts is not None:
@@ -151,9 +153,31 @@ def _add_styled_text(doc, b: StyledText, cur):
     return para, start + b.n_lines * b.line_h
 
 
+CELL_PAD_PT = 5.4      # Word's default left/right cell padding: a table's border sits this far left of its indent
+BORDER_PT = 0.5        # Table Grid border width; a row renders this much taller than its set height
+
+
+def _indent_table(table, points: float):
+    """Move the table right by `points`. Without it Word and LibreOffice draw the left border one cell padding
+    to the LEFT of the margin, so the table sat about 5.5 pt left of the PDF's (KNOWN_ISSUES #6)."""
+    tbl_pr = table._tbl.tblPr
+    ind = tbl_pr.find(qn("w:tblInd"))
+    if ind is None:
+        ind = OxmlElement("w:tblInd")
+        later = [tbl_pr.find(qn(t)) for t in ("w:tblBorders", "w:shd", "w:tblLayout", "w:tblCellMar", "w:tblLook")]
+        later = [e for e in later if e is not None]
+        if later:
+            later[0].addprevious(ind)       # keep the schema's element order
+        else:
+            tbl_pr.append(ind)
+    ind.set(qn("w:w"), str(round(points * 20)))
+    ind.set(qn("w:type"), "dxa")
+
+
 def _style_table(table, block: StyledTable):
     """Column widths, row heights, font and size from the PDF's own table."""
     table.autofit = False
+    _indent_table(table, CELL_PAD_PT)
     if block.col_widths:
         for i, w in enumerate(block.col_widths):
             table.columns[i].width = Pt(w)
@@ -163,7 +187,7 @@ def _style_table(table, block: StyledTable):
     for i, row in enumerate(table.rows):
         h = block.row_heights[i] if len(block.row_heights) == len(table.rows) else median
         if h:
-            row.height = Pt(round(h, 1))
+            row.height = Pt(round(max(h - BORDER_PT, 1), 1))
             row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
         for cell in row.cells:
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -439,8 +463,11 @@ def build_docx(pages: List[Page], path: str, title: str = None,
 
     if layout:
         apply_layout(doc, layout)
-    if layout and any(isinstance(b, (StyledText, StyledTable)) for pg in pages for b in pg.blocks):
-        _neutral_headings(doc)
+    if layout:
+        # Pages copied from a PDF carry their own look; pages measured from a scan or an image carry sizes on
+        # the runs. Either way Word's blue heading styles would show through (KNOWN_ISSUES #4).
+        _neutral_headings(doc, keep_bold=not any(isinstance(b, (StyledText, StyledTable))
+                                                 for pg in pages for b in pg.blocks))
 
     # The filename heading is skipped when matching the source layout: the PDF
     # has no such line, so adding one guarantees the first page differs.
@@ -503,6 +530,11 @@ def build_docx(pages: List[Page], path: str, title: str = None,
                 beside = (by_position and isinstance(block, StyledText) and block.kind != "list"
                           and "x" in im and block.top < im["bbox"][1]
                           and im["width_in"] * 72.0 < 0.6 * (layout["width_pt"] - layout["left_pt"] - layout["right_pt"]))
+                # A logo found on a scan (ocr_layout.scan_graphics) is always floated onto the next text
+                # paragraph, at the position measured from the scan, so it takes no room in the text flow.
+                beside = beside or bool(im.get("float") and layout and "x" in im
+                                        and not isinstance(block, TableBlock)
+                                        and block.kind != "list" and block.text.strip())
                 if beside:
                     floats.append(im)
                     continue
@@ -581,6 +613,8 @@ def build_docx(pages: List[Page], path: str, title: str = None,
                 para.paragraph_format.space_before = Pt(6)
             after_table = False
             if para is not None:
+                for im in floats:
+                    _anchor_image(para, im, layout, problems, where)
                 last_para = para
                 if break_before:
                     para.paragraph_format.page_break_before = True

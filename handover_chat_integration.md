@@ -101,7 +101,7 @@ All commands are run from the repo root with `.venv/bin/python`. "Model?" means 
 
 - Handles digital and scanned PDFs page by page. A page with no text layer is "scanned"; `--scan-mode text` (default) reads it with the model and writes an editable transcript; `image` embeds the page picture and does *not* run the model (fast, not editable); `both` writes the transcript to `X.docx` and the page pictures to a separate `X_scan.docx`.
 - Word output matches the source page size, margins and body font size, keeps headings, lists, captions and real tables (with merged divider rows), and inserts images taken byte-for-byte from the PDF at their original size and reading-order position.
-- Excel output is **one sheet for the whole document**, tables as grids, prose in column A, **every value stored as text** (nothing is silently converted to a number), images embedded in their own cell.
+- Excel output is **one sheet for the whole document**, tables as grids, prose in column A, **unambiguous table numbers (450.00, 25,000.00, 1,250) stored as real numbers whose number format shows exactly the printed text; everything else, and all prose and headers, stored as text** (changed 2026-10-05; `IDOX_XLSX_NUMBERS=0` restores all-text), images embedded in their own cell.
 - PowerPoint output is **one slide per PDF page, always** (a page is never split); the first heading becomes the slide title; layout is estimated because python-pptx cannot measure text.
 - It does **not** reproduce fonts, colours, vector drawings/charts, or exact positions. Vector graphics are not extracted at all.
 - Extras: `--pages 1-3`, `--dpi` (default 125), `--no-ocr`, `--show-reasoning`, `--base-url`, `--model`.

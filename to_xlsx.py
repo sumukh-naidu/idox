@@ -32,12 +32,16 @@ Three decisions shape this file:
   reading order rather than being discarded, so nothing from the PDF is lost
   and the coverage checks still mean something.
 
-  EVERYTHING AS TEXT. "$1,020.00" stays "$1,020.00" rather than becoming the
-  number 1020 with currency formatting. Nothing can be silently misconverted
-  and verification stays exact -- at the cost of needing manual conversion
-  before anything will sum or chart.
+  NUMBERS ONLY WHEN THEY ROUND-TRIP. A table cell is written as a real number only when it is unambiguous
+  (450.00, 25,000.00, 1,250, 10) AND the cell's number format shows exactly the characters that were printed.
+  Anything else stays literal text: "$1,020.00", "12%", dates, phone numbers, IDs, anything with a leading zero,
+  Indian-style 1,25,000 grouping, and any plain whole number of 5 or more digits. So nothing is silently
+  misconverted, verification stays exact, and amounts sum and chart. Prose and table headers are always text.
+  Set IDOX_XLSX_NUMBERS=0 to get the old behaviour (every cell text) without changing code.
 """
 
+import os
+import re
 from typing import List
 
 from openpyxl import Workbook, load_workbook
@@ -70,16 +74,55 @@ PX_PER_POINT = 96.0 / 72.0
 FORMULA_STARTS = ("=", "+", "-", "@")
 
 
-def _write_cell(ws, row: int, col: int, value: str, bold: bool = False):
-    """Write one cell as literal text, whatever it contains."""
+NUMBERS = os.environ.get("IDOX_XLSX_NUMBERS", "1") != "0"
+
+_DECIMAL = re.compile(r"^-?(?:0|[1-9]\d{0,14})\.\d+$")                # 450.00  0.5  -3.25
+_GROUPED = re.compile(r"^-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$")       # 25,000.00  1,250
+_SMALL_INT = re.compile(r"^-?(?:0|[1-9]\d{0,3})$")                      # 10  2026
+_OUR_FORMATS = re.compile(r"(#,##)?0(?:\.(0+))?")                       # 0  0.00  #,##0  #,##0.00
+
+
+def cell_display(value, number_format: str = "General") -> str:
+    """The text a cell shows. For the number formats this file writes, exactly what Excel displays;
+    anything else comes back as str(value). Used to read a workbook back and compare it with the PDF."""
+    m = _OUR_FORMATS.fullmatch(number_format or "")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not m:
+        return "" if value is None else str(value)
+    d = len(m.group(2) or "")
+    return f"{value:,.{d}f}" if m.group(1) else f"{value:.{d}f}"
+
+
+def as_number(text: str):
+    """(value, number_format) when `text` is an unambiguous number whose format shows it back unchanged, else None."""
+    if _GROUPED.match(text):
+        grouped = True
+    elif _DECIMAL.match(text) or _SMALL_INT.match(text):
+        grouped = False
+    else:
+        return None
+    plain = text.replace(",", "")
+    decimals = len(plain.split(".")[1]) if "." in plain else 0
+    value = float(plain) if decimals else int(plain)
+    if value == 0 and text.startswith("-"):
+        return None                      # "-0.00" would display as "0.00"
+    fmt = ("#,##0" if grouped else "0") + ("." + "0" * decimals if decimals else "")
+    return (value, fmt) if cell_display(value, fmt) == text else None
+
+
+def _write_cell(ws, row: int, col: int, value: str, bold: bool = False, allow_number: bool = False):
+    """Write one cell. Literal text unless `allow_number` is set and the value is an unambiguous number."""
     cell = ws.cell(row=row, column=col)
     text = "" if value is None else str(value)
 
-    cell.value = text
-    if text.startswith(FORMULA_STARTS):
-        # The same mechanism Excel uses when a cell is formatted as Text: the
-        # content displays unchanged but is never parsed as a formula.
-        cell.quotePrefix = True
+    number = as_number(text) if (allow_number and NUMBERS) else None
+    if number:
+        cell.value, cell.number_format = number
+    else:
+        cell.value = text
+        if text.startswith(FORMULA_STARTS):
+            # The same mechanism Excel uses when a cell is formatted as Text: the
+            # content displays unchanged but is never parsed as a formula.
+            cell.quotePrefix = True
     cell.alignment = Alignment(vertical="top", wrap_text=False)
     if bold:
         cell.font = Font(bold=True)
@@ -236,7 +279,7 @@ def build_xlsx(pages: List[Page], path: str, image_sets: List[list] = None,
                         )
                     cells = (list(source_row) + [""] * width)[:width]
                     for i, value in enumerate(cells, start=1):
-                        _write_cell(ws, row, i, value)
+                        _write_cell(ws, row, i, value, allow_number=True)
                     row += 1
 
                 row += 1          # blank row after each table
@@ -272,13 +315,13 @@ def verify_xlsx(path: str, source_text: str):
 
     Returns (coverage, missing_words).
     """
-    wb = load_workbook(path, read_only=True, data_only=True)
+    wb = load_workbook(path, data_only=True)
     parts = []
     for ws in wb.worksheets:
-        for row in ws.iter_rows(values_only=True):
-            for value in row:
-                if value is not None:
-                    parts.append(str(value))
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    parts.append(cell_display(cell.value, cell.number_format))
     wb.close()
 
     written = normalize(" ".join(parts))

@@ -74,7 +74,7 @@ ROUTES = {
                      note="Reads each page with the model and rebuilds it as an editable Word file."),
     "pdf_xlsx": dict(src="pdf", label="Excel (.xlsx)", model=True, script="test_pdf.py",
                      flag="--xlsx", ext="xlsx", opts=["pages", "scan_mode"],
-                     note="Tables become sheet grids; text goes in column A. Every value is kept as text."),
+                     note="Tables become sheet grids; text goes in column A. Clear numbers (450.00, 25,000.00) are real numbers shown exactly as printed; everything else stays text."),
     "pdf_pptx": dict(src="pdf", label="PowerPoint (.pptx)", model=True, script="test_pdf.py",
                      flag="--pptx", ext="pptx", opts=["pages", "scan_mode"],
                      note="One slide per page. The first heading becomes the slide title."),

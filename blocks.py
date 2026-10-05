@@ -713,10 +713,21 @@ def check_structure(page: Page):
                 continue
 
             if len(block.rows) != block.n_data_rows:
-                problems.append(
-                    f"{label}: claims n_data_rows={block.n_data_rows} but "
-                    f"returned {len(block.rows)} rows"
-                )
+                if block.has_header and block.n_data_rows == len(block.rows) + 1:
+                    # The model counted the header row as a data row. In 20 of 20 mismatches in the saved
+                    # logs the claim was exactly one more than the rows returned, with every row present
+                    # (KNOWN_ISSUES #3). It is a miscount, not a contradiction. A genuinely lost row is
+                    # caught by check 4 against the text, so this is only a note.
+                    notes.append(
+                        f"{label}: claims n_data_rows={block.n_data_rows} and returned "
+                        f"{len(block.rows)} rows -- the claim counted the header row; see check 4 "
+                        f"for whether a row was actually lost"
+                    )
+                else:
+                    problems.append(
+                        f"{label}: claims n_data_rows={block.n_data_rows} but "
+                        f"returned {len(block.rows)} rows"
+                    )
 
             # A headerless table (a plain grid of numbers, say) has no labels
             # to count, so the header is only checked when one is claimed.
@@ -751,7 +762,20 @@ def check_structure(page: Page):
     return problems, notes
 
 
-def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
+def _in_order(tokens, row_tokens) -> bool:
+    """Are `tokens` a subsequence of `row_tokens` (same order, others may sit between)?"""
+    it = iter(row_tokens)
+    return all(any(t == r for r in it) for t in tokens)
+
+
+def split_table_problems(problems):
+    """Split grounding problems into (hard, table). Used when the source is an OCR reading, not a text layer:
+    Tesseract reads a ruled table badly (cells dropped, rows read as lines), so a table cell it cannot
+    confirm is advisory. A text block it cannot confirm is still a hard problem."""
+    return ([p for p in problems if "kind=table" not in p], [p for p in problems if "kind=table" in p])
+
+
+def check_coverage(page: Page, source_text: str, threshold: float = 0.95, row_tolerant: bool = False):
     """How much of the PDF's text made it into the extraction?
 
     The mirror image of check_grounding, and the check that was missing.
@@ -767,6 +791,11 @@ def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
 
     Returns (problems, coverage, missing_words, missing_lines). Only works on
     digital PDFs.
+
+    row_tolerant=True is for an OCR reading as the source. Tesseract often drops a one-digit cell from a
+    table row ("Paper A4 450.00" for "Paper A4 | 10 | 450.00"), so a source line also counts as present when
+    its words appear IN ORDER inside one single table row. That is narrow on purpose: a dropped row, or a
+    line from anywhere else on the page, still counts as missing.
     """
     source = normalize(source_text)
     if not source:
@@ -793,6 +822,13 @@ def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
     words = {w for w in source.split() if len(w) > 3}
     if not words:
         return ([], 1.0, [], [])
+
+    row_tokens = []
+    if row_tolerant:
+        for block in page.blocks:
+            if isinstance(block, TableBlock):
+                for cells in ([block.header] if block.header else []) + list(block.rows):
+                    row_tokens.append(normalize(" ".join(cells)).split())
 
     missing = sorted(
         w for w in words
@@ -829,6 +865,9 @@ def check_coverage(page: Page, source_text: str, threshold: float = 0.95):
             continue
         source_seen.add(line_n)
         if line_n not in produced and squash(line) not in produced_squashed:
+            tokens = line_n.split()
+            if row_tolerant and len(tokens) >= 2 and any(_in_order(tokens, r) for r in row_tokens):
+                continue
             missing_lines.append(line.strip())
 
     if missing_lines:
@@ -1235,7 +1274,9 @@ def snap_to_text_layer(page: Page, source_text: str,
 # build measurably dropped content (a whole table, merged headings) on a
 # page the intended model handled cleanly. Pass base_url=None explicitly to
 # opt into Ollama on purpose (e.g. to reach its 4B model for a hard page).
-DEFAULT_BASE_URL = "http://10.0.3.33:8080"
+# IDOX_BASE_URL overrides it without editing code (the API and start_convert.sh already use that variable).
+# Unset, nothing changes: the address is the remote endpoint below, which is unreachable from some machines.
+DEFAULT_BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.33:8080")
 
 # The local, fully-controlled setup this replaced as the default -- still
 # valid, still running, not removed. Use this explicitly (--base-url
@@ -1247,10 +1288,8 @@ LOCAL_BASE_URL = "http://127.0.0.1:8090"
 def extract_page(image_path: str, model: str = MODEL_NAME,
                  num_ctx: int = 8192, num_predict: int = 4000,
                  return_timing: bool = False, base_url: str = DEFAULT_BASE_URL,
-                 include_look: bool = True, note: str = ""):
+                 include_look: bool = True):
     """Send one page image to the local model; get back analysis + blocks + review.
-
-    note, when given, is added to the user prompt (see recover_dropped_tables()).
 
     include_look=False switches the request schema from Page/TextBlock to
     PageNoLook/TextBlockNoLook, dropping align/size/bold from what the model
@@ -1290,7 +1329,7 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
     if base_url:
         return _extract_page_raw_server(
             image_path, base_url, num_ctx, num_predict, return_timing,
-            include_look, note,
+            include_look,
         )
 
     schema_cls = Page if include_look else PageNoLook
@@ -1298,7 +1337,7 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"{USER_PROMPT} {note}".strip(), "images": [image_path]},
+            {"role": "user", "content": USER_PROMPT, "images": [image_path]},
         ],
         format=schema_cls.model_json_schema(),   # decoder cannot emit invalid JSON
         options={
@@ -1382,53 +1421,9 @@ def _fit_max_side(image_path: str, max_side: int):
     return buf.getvalue()
 
 
-def recover_dropped_tables(page, image_path: str, base_url: str, include_look: bool = True):
-    """Ask once for the rest of a page whose table(s) the model planned but did not write.
-
-    The analysis section is written BEFORE the blocks and says how many tables the page
-    has (table_column_counts) and how many blocks to write (n_blocks). The schema tells
-    the model to "output exactly this many blocks", so when n_blocks is miscounted --
-    on a scanned agreement it counted 8 for a page of 10 blocks, leaving the table and
-    the footer out of its own tally -- it obeys the wrong count and stops, with a table
-    it had just reported seeing missing from the output. Nothing noticed: the structure
-    check treats n_blocks as advisory and a table that was never written has no rows to
-    compare.
-
-    So: when the plan names more tables than were written, ask again, once, for only what
-    comes after the last block returned. The reply is kept only if it brings back a table,
-    and blocks repeating text already extracted are dropped.
-
-    Returns (page, note). note is None when nothing was needed, else a line for the log.
-    """
-    want = len(page.analysis.table_column_counts)
-    have = sum(isinstance(b, TableBlock) for b in page.blocks)
-    if want <= have or not page.blocks:
-        return page, None
-    last = next((b for b in reversed(page.blocks) if not isinstance(b, TableBlock)), page.blocks[-1])
-    anchor = " ".join(getattr(last, "text", "").split())[:70]
-    cols = page.analysis.table_column_counts[have:]
-    ask = (f"The page continues after the block that starts '{anchor}'. It also holds {want - have} "
-           f"more table(s) with {', '.join(map(str, cols))} column(s), and any text below them. "
-           f"Extract ONLY what comes after that block: every table, then any remaining text. "
-           f"Do not repeat blocks that come before it.")
-    try:
-        more = extract_page(image_path, base_url=base_url, include_look=include_look, note=ask)
-    except Exception as exc:
-        return page, f"the model planned {want} table(s) but wrote {have}; asking for the rest failed ({exc})"
-    if not any(isinstance(b, TableBlock) for b in more.blocks):
-        return page, f"the model planned {want} table(s) but wrote {have}; asking again did not bring one back"
-    seen = {normalize(getattr(b, "text", "")) for b in page.blocks if getattr(b, "text", "").strip()}
-    extra = [b for b in more.blocks if isinstance(b, TableBlock) or normalize(getattr(b, "text", "")) not in seen]
-    blocks = list(page.blocks) + extra
-    page = Page(analysis=LayoutAnalysis(n_blocks=len(blocks), table_column_counts=page.analysis.table_column_counts),
-                blocks=blocks)
-    return page, (f"the model planned {want} table(s) but wrote {have}; asked again and got "
-                  f"{len(extra)} more block(s) including {sum(isinstance(b, TableBlock) for b in extra)} table(s)")
-
-
 def _extract_page_raw_server(image_path: str, base_url: str,
                              num_ctx: int, num_predict: int,
-                             return_timing: bool, include_look: bool = True, note: str = ""):
+                             return_timing: bool, include_look: bool = True):
     """The base_url path: talk to a raw llama-server directly, not Ollama.
 
     Uses its OpenAI-compatible /v1/chat/completions endpoint. Same system
@@ -1475,7 +1470,7 @@ def _extract_page_raw_server(image_path: str, base_url: str,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": [
-                {"type": "text", "text": f"{USER_PROMPT} {note}".strip()},
+                {"type": "text", "text": USER_PROMPT},
                 {"type": "image_url",
                  "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
             ]},

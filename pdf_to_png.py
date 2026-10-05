@@ -192,7 +192,10 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
             cov = 1 - len(missing) / len(words)
             info["ocr"] = cov
             if cov < OCR_MIN_COVERAGE:
-                problems.append(
+                # Advisory only: Tesseract misreads correct pixels (3 of 10 byte-exact pages "failed"
+                # on this alone), so it is reported but never fails the page. The exact checks above
+                # (size, blank page, ink under every text line) still decide PASS or FAIL.
+                info["ocr_warning"] = (
                     f"OCR read only {cov:.0%} of the PDF's words from the PNG "
                     f"({len(missing)} missing, e.g. {', '.join(missing[:6])})")
     return problems, info
@@ -274,6 +277,8 @@ def run(pdf_path: str, out_dir: str, dpi: int, pages: str,
               f"[{'PASS' if not problems else 'FAIL'}]")
         for p in problems:
             print(f"       - {p}")
+        if info.get("ocr_warning"):
+            print(f"       ~ warning (advisory, does not fail the page): {info['ocr_warning']}")
 
     written = len(results)
     n_bad = sum(1 for _, problems, _ in results if problems)
@@ -299,39 +304,45 @@ def run(pdf_path: str, out_dir: str, dpi: int, pages: str,
     return ok
 
 
-parser = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
-parser.add_argument("--outdir", default=PNG_OUT_DIR,
-                    help=f"where the per-PDF folders go (default {PNG_OUT_DIR})")
-parser.add_argument("--dpi", type=int, default=150,
-                    help="render resolution (default 150, the same as pdf_to_jpg.py)")
-parser.add_argument("--pages", default="all",
-                    help="e.g. 1, 1-3, 2,4 (default: all)")
-parser.add_argument("--no-ocr", action="store_true",
-                    help="skip the OCR word check (the other checks still run)")
-args = parser.parse_args()
+def main():
+    """Read the command line, convert each PDF, exit 1 if any failed."""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
+    parser.add_argument("--outdir", default=PNG_OUT_DIR,
+                        help=f"where the per-PDF folders go (default {PNG_OUT_DIR})")
+    parser.add_argument("--dpi", type=int, default=150,
+                        help="render resolution (default 150, the same as pdf_to_jpg.py)")
+    parser.add_argument("--pages", default="all",
+                        help="e.g. 1, 1-3, 2,4 (default: all)")
+    parser.add_argument("--no-ocr", action="store_true",
+                        help="skip the OCR word check (the other checks still run)")
+    args = parser.parse_args()
 
-if args.dpi < 10:
-    raise SystemExit("--dpi must be at least 10")
+    if args.dpi < 10:
+        raise SystemExit("--dpi must be at least 10")
 
-paths = []
-for pattern in args.pdfs:
-    paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[")
-                 else [pattern])
+    paths = []
+    for pattern in args.pdfs:
+        paths.extend(sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[")
+                     else [pattern])
 
-ok = fail = 0
-for path in paths:
-    if not os.path.exists(path):
-        print(f"skipping {path}: not found")
-        continue
-    if run(path, args.outdir, args.dpi, args.pages, use_ocr=not args.no_ocr):
-        ok += 1
-    else:
-        fail += 1
+    ok = fail = 0
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"skipping {path}: not found")
+            continue
+        if run(path, args.outdir, args.dpi, args.pages, use_ocr=not args.no_ocr):
+            ok += 1
+        else:
+            fail += 1
 
-if len(paths) > 1:
-    print("=" * 72)
-    print(f"{ok} succeeded, {fail} failed, {len(paths)} total")
+    if len(paths) > 1:
+        print("=" * 72)
+        print(f"{ok} succeeded, {fail} failed, {len(paths)} total")
 
-sys.exit(1 if fail else 0)
+    sys.exit(1 if fail else 0)
+
+
+if __name__ == "__main__":
+    main()

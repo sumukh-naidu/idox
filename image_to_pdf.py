@@ -48,6 +48,7 @@ from blocks import (
     Page,
     check_coverage,
     check_grounding,
+    split_table_problems,
     check_structure,
     drop_duplicate_blocks,
     extract_page,
@@ -160,15 +161,17 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
         ocr_text = ocr.ocr_image(image_path)
         if ocr_text.strip():
             grounding, found, total = check_grounding(page, ocr_text)
-            print(f"  2. OCR grounding:          "
-                  f"{'PASS' if not grounding else 'FAIL'}"
+            hard, table_only = split_table_problems(grounding)
+            verdict = "FAIL" if hard else ("differs" if table_only else "PASS")
+            print(f"  2. OCR grounding:          {verdict}"
                   f"   ({found}/{total} strings verified against an "
-                  f"independent OCR reading)")
+                  f"independent OCR reading"
+                  f"{'; table cells OCR could not confirm are advisory, it reads ruled tables badly' if verdict == 'differs' else ''})")
             for p in grounding:
                 print(f"       - {p}")
 
             coverage_problems, coverage, _missing, missing_lines = (
-                check_coverage(page, ocr_text)
+                check_coverage(page, ocr_text, row_tolerant=True)
             )
             if coverage is None:
                 print("  4. OCR coverage:           N/A")

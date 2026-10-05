@@ -88,7 +88,7 @@ import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, ClassVar, List, Literal, Optional
+from typing import Annotated, ClassVar, Dict, List, Literal, Optional
 
 import requests
 from fastapi import FastAPI, Form, HTTPException, UploadFile
@@ -114,8 +114,8 @@ PASS_THROUGH = ("IDOX_API_KEY", "IDOX_THINKING", "IDOX_MAX_IMAGE_SIDE", "IDOX_TI
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 PAGES_RE = re.compile(r"^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$")
 
-# One entry per conversion -- the same 17 the web app (idox_app.py) runs, plus the two
-# JPG scripts it does not offer. "flag" marks test_pdf.py, which writes one Office
+# One entry per conversion -- the 17 the web app (idox_app.py) runs, plus the two
+# JPG scripts it does not offer, plus JPG -> PDF (searchable picture). "flag" marks test_pdf.py, which writes one Office
 # format per flag; "extra" is fixed arguments; "needs" is programs it cannot run without;
 # "result" is the file that must exist for the job to count, when there are by-products.
 ROUTES = {
@@ -137,6 +137,8 @@ ROUTES = {
     "docx_pdf": dict(script="word_to_pdf.py", model=False, needs=("soffice",)),
     "tiff_pdf": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",)),
     "tiff_pdf_pic": dict(script="tiff_to_pdf.py", model=False, extra=["--no-text"]),
+    # the same script for one JPG: the picture, fitted to A4, with a hidden text layer (no model)
+    "jpg_pdf_search": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",), extra=["--fit-a4"]),
 }
 
 # The start of a valid file of each type, so a renamed file is refused at upload
@@ -679,6 +681,43 @@ class Job(BaseModel):
     files: List[JobFile] = []
 
 
+# Shapes for the pages that were documented only as "200 OK": they describe what is returned in Swagger and
+# validate nothing. The endpoints return exactly what they returned before.
+class ModelServer(BaseModel):
+    url: str = Field(description="Where the converters send their page images.")
+    ok: bool = Field(description="True when the model server answered /health.")
+    status: Optional[int] = Field(None, description="The model server's HTTP status, when it answered.")
+    error: Optional[str] = Field(None, description="Why it could not be reached, when it did not answer.")
+
+
+class Health(BaseModel):
+    model_server: ModelServer
+    tools: Dict[str, bool] = Field(description="Whether each external tool is installed: soffice, tesseract.")
+    jobs: Dict[str, int] = Field(description="How many jobs are in each state, e.g. {\"done\": 3}.")
+
+    model_config = {"json_schema_extra": {"examples": [{
+        "model_server": {"url": "http://127.0.0.1:8080", "ok": True, "status": 200},
+        "tools": {"soffice": True, "tesseract": True}, "jobs": {"done": 3, "review": 1}}]}}
+
+
+class DeleteResult(BaseModel):
+    """Exactly one field is present."""
+    cancelled: Optional[str] = Field(None, description="Job id of a queued job that was cancelled.")
+    cancelling: Optional[str] = Field(None, description="Job id of a running job that is being stopped.")
+    deleted: Optional[str] = Field(None, description="Job id of a finished job whose files were deleted.")
+
+    model_config = {"json_schema_extra": {"examples": [{"deleted": "a1b2c3d4e5f6"}]}}
+
+
+class ErrorDetail(BaseModel):
+    detail: str = Field(description="What went wrong, in words.")
+
+    model_config = {"json_schema_extra": {"examples": [{"detail": "No such job."}]}}
+
+
+NOT_FOUND = {404: {"model": ErrorDetail, "description": "No job with that id."}}
+
+
 def safe_stem(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name or "").stem).strip("._")
     return stem[:80] or "document"
@@ -728,10 +767,11 @@ def root():
 @app.get("/ui", include_in_schema=False)
 def ui():
     """A page with one button per conversion, built from /openapi.json, for testing by hand."""
-    return FileResponse(UI_PAGE, media_type="text/html")
+    # no-cache: the browser asks the server each time (cheap, the file has an ETag), so an updated page is never stale.
+    return FileResponse(UI_PAGE, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
-@app.get("/health")
+@app.get("/health", responses={200: {"model": Health, "description": "Model server, tools and job counts."}})
 def health():
     """Is the model server answering, and are the external tools installed?"""
     try:
@@ -776,7 +816,8 @@ conversion(PDF, "pdf-to-word", "pdf_docx", PdfToWord, "PDF → Word",
            "A Markdown copy of what the model read (.md) is also produced.")
 conversion(PDF, "pdf-to-excel", "pdf_xlsx", PdfToOffice, "PDF → Excel",
            "PDF -> Excel (.xlsx). Every page is read by the vision model and goes into one "
-           "sheet: tables as grids, text in column A, every value kept as text. A Markdown "
+           "sheet: tables as grids, text in column A. Clear numbers in tables are real numbers shown exactly as "
+           "printed; IDs, dates, phone numbers and anything doubtful stay text. A Markdown "
            "copy of what the model read (.md) is also produced.")
 conversion(PDF, "pdf-to-powerpoint", "pdf_pptx", PdfToOffice, "PDF → PowerPoint",
            "PDF -> PowerPoint (.pptx). One slide per page; the first heading on a page becomes "
@@ -818,6 +859,11 @@ conversion(IMAGE, "jpg-to-pdf", "jpg_pdf", JpgFile, "JPG → PDF",
            "LibreOffice. This is NOT the picture placed on a page: the PDF contains the "
            "model's reading, so it can change letters or miss content. The reading is checked "
            "against an OCR reading of the image; a failed check makes the job 'review'.")
+conversion(IMAGE, "jpg-to-pdf-searchable", "jpg_pdf_search", JpgFile, "JPG → PDF (searchable picture)",
+           "JPG -> PDF that SHOWS THE ORIGINAL PICTURE, fitted to an A4 page, with a hidden text layer read by "
+           "Tesseract OCR so it can be searched and copied. No model. Unlike 'JPG -> PDF' this does not "
+           "re-type the page: the picture, its fonts and layout are exactly the JPG; only the hidden text is "
+           "an OCR reading and it can miss text such as white-on-dark lettering.")
 conversion(IMAGE, "jpg-to-png", "jpg_png", JpgFile, "JPG → PNG",
            "JPG -> PNG (<name>.png). No model. The PNG is read back and checked against the JPG.")
 conversion(IMAGE, "jpg-to-tiff", "jpg_tiff", JpgToTiff, "JPG → TIFF",
@@ -854,14 +900,19 @@ def openapi_with_uploads() -> dict:
 app.openapi = openapi_with_uploads
 
 
-@app.get("/jobs/{jid}", response_model=Job)
+@app.get("/jobs/{jid}", response_model=Job, responses=NOT_FOUND)
 def job_status(jid: str):
+    """The job: its state, progress, problems and the files it produced."""
     with JOBS_LOCK:
         return public_job(get_job(jid))
 
 
-@app.get("/jobs/{jid}/files/{name:path}")
+@app.get("/jobs/{jid}/files/{name:path}",
+         responses={200: {"description": "The file itself, sent as a download.",
+                          "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+                    404: {"model": ErrorDetail, "description": "No such job, or the job has no file with that name."}})
 def job_file(jid: str, name: str):
+    """Download one of the files listed in the job's `files`."""
     with JOBS_LOCK:
         job = get_job(jid)
         names = {f["name"] for f in job.get("outputs", [])}
@@ -872,14 +923,18 @@ def job_file(jid: str, name: str):
     return FileResponse(job_dir(jid) / "out" / name, filename=Path(name).name)
 
 
-@app.get("/jobs/{jid}/log", response_class=PlainTextResponse)
+@app.get("/jobs/{jid}/log", response_class=PlainTextResponse,
+         responses={200: {"description": "The converter's full log as plain text.", "content": {"text/plain": {"example": "Tier 1 -- 8 blocks in 15.1s"}}},
+                    404: {"description": "No job with that id.",
+                          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorDetail"}}}}})
 def job_log(jid: str):
+    """The converter's own output for this job, as plain text."""
     with JOBS_LOCK:
         get_job(jid)
     return read_log(jid)
 
 
-@app.delete("/jobs/{jid}")
+@app.delete("/jobs/{jid}", responses={200: {"model": DeleteResult, "description": "What was done to the job."}, **NOT_FOUND})
 def delete_job(jid: str):
     """Cancel a queued or running job; delete a finished one and its files."""
     with JOBS_LOCK:

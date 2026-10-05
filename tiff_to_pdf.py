@@ -18,7 +18,12 @@ Output:   tiff_to_pdf_input/report.tiff  ->  tiff_to_pdf_output/report.pdf
 
 PAGE SIZE is the frame's physical size: pixels / dpi * 72 points, using the dpi
 stored in the TIFF, so a 300 dpi A4 scan becomes an A4 page. A frame with no
-usable dpi is assumed to be 300 dpi and the report says so.
+usable dpi cannot say how big it is, so its page is fitted into A4 (portrait or
+landscape, whichever fits the picture, aspect kept) and the report says so.
+Assuming 300 dpi instead made a 1000x400 px picture a 3.3 x 1.3 inch page.
+The script also takes a single JPG or PNG (one frame); with --fit-a4 the page is
+fitted to A4 whatever resolution the file stores, which is how the API's
+"JPG -> PDF (searchable picture)" route uses it.
 
 THE TEXT LAYER IS ONLY AS GOOD AS OCR. Tesseract misses text printed white on a
 dark background and reads accented letters as plain ones. The picture is always
@@ -64,6 +69,9 @@ TIFF_DIR = "tiff_to_pdf_input"
 PDF_OUT_DIR = "tiff_to_pdf_output"
 
 DEFAULT_DPI = 300
+# A frame with no stored resolution is fitted inside this box (A4, in points) in whichever
+# orientation matches the picture.
+FIT_PAGE_PT = (595.0, 842.0)
 # A stored resolution below this is not a real dpi (some writers store 1 or 0).
 MIN_REAL_DPI = 10
 TEXT_LAYER_MIN = 0.90
@@ -110,6 +118,17 @@ def frame_dpi(frame: Image.Image):
     if stored and stored[0] >= MIN_REAL_DPI and stored[1] >= MIN_REAL_DPI:
         return float(stored[0]), float(stored[1]), False
     return float(DEFAULT_DPI), float(DEFAULT_DPI), True
+
+
+def fit_dpi(width_px: int, height_px: int) -> float:
+    """The dpi that makes a picture with no stored resolution fill A4 as far as its shape allows.
+
+    Both axes use the same value, so the picture is never stretched. A 2480x3508 px frame gives 300 dpi
+    (an A4 page, same as before); a 1000x400 px frame gives about 85 dpi (842 x 337 pt)."""
+    long_side, short_side = max(FIT_PAGE_PT), min(FIT_PAGE_PT)
+    box_w, box_h = (long_side, short_side) if width_px >= height_px else (short_side, long_side)
+    pt_per_px = min(box_w / width_px, box_h / height_px)
+    return 72.0 / pt_per_px
 
 
 def text_layer_pdf(rgb: Image.Image, dpi_x: float, dpi_y: float) -> bytes:
@@ -206,7 +225,7 @@ def check_page(page, doc, rgb: Image.Image, dpi_x: float, dpi_y: float,
 
 
 def run(tiff_path: str, out_dir: str, with_text: bool,
-        workers: int = DEFAULT_WORKERS) -> bool:
+        workers: int = DEFAULT_WORKERS, fit_a4: bool = False) -> bool:
     name = os.path.splitext(os.path.basename(tiff_path))[0]
     print("=" * 72)
     print(tiff_path)
@@ -261,8 +280,13 @@ def run(tiff_path: str, out_dir: str, with_text: bool,
         layer_texts.append("")
         if fr.mode != "RGB":
             print(f"  frame {i + 1}: mode {fr.mode} converted to RGB")
-        if assumed:
-            print(f"  frame {i + 1}: no usable dpi stored -- assumed {DEFAULT_DPI}")
+        if assumed or fit_a4:
+            dx = dy = fit_dpi(rgb.width, rgb.height)
+            dpis[-1] = (dx, dy)
+            why = "requested" if fit_a4 and not assumed else "no usable dpi stored"
+            print(f"  frame {i + 1}: {why} -- page fitted to A4 "
+                  f"({rgb.width / dx * 72.0:.0f} x {rgb.height / dy * 72.0:.0f} pt, "
+                  f"effective {dx:.0f} dpi)")
 
         page = doc.new_page(width=rgb.width / dx * 72.0,
                             height=rgb.height / dy * 72.0)
@@ -360,6 +384,9 @@ parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
                          f"{DEFAULT_WORKERS}; 1 = one page at a time)")
 parser.add_argument("--no-text", action="store_true",
                     help="picture only: skip OCR and write no text layer")
+parser.add_argument("--fit-a4", action="store_true",
+                    help="fit every page into A4 even if the file stores a resolution (for a JPG: its stored "
+                         "density is usually 72 or 96 and would make a huge page)")
 args = parser.parse_args()
 
 if not args.no_text and not ocr.have_tesseract():
@@ -377,7 +404,7 @@ for path in paths:
         print(f"skipping {path}: not found")
         continue
     if run(path, args.outdir, with_text=not args.no_text,
-           workers=max(args.workers, 1)):
+           workers=max(args.workers, 1), fit_a4=args.fit_a4):
         ok += 1
     else:
         fail += 1

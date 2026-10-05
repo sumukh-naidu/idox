@@ -192,6 +192,112 @@ def apply_sizes(docx_path, page, ratios, body_pt=11.0, max_chars=90):
     apply_sizes_pages(docx_path, [(page, ratios)], body_pt, max_chars)
 
 
+# Image -> Word look (KNOWN_ISSUES #12). The model returns text and structure only, so the file came out in Word's
+# default blue headings and 11 pt text no matter how big the image's text was. The image's own size is measured
+# instead: its text height, scaled so the image width equals the page's text width, gives the body size; the rows
+# of a table image give the row height. The FONT FAMILY cannot be read from a picture, so a plain sans-serif is used.
+FONT_FROM_BOX = 1.35         # the measured height is letter height without descenders (about 0.72 of the font size)
+BODY_PT_RANGE = (9.0, 20.0)
+IMAGE_FONT = "Arial"
+
+
+def _plain_font(docx_path):
+    """The font family of a scan cannot be read from its pixels, so a plain sans-serif replaces Word's theme serif
+    (most documents are sans-serif; a serif scan comes out sans-serif, with the same text and sizes)."""
+    from docx import Document
+    doc = Document(docx_path)
+    for name in ("Normal", "Heading 1", "Heading 2", "Heading 3", "Title"):
+        try:
+            doc.styles[name].font.name = IMAGE_FONT
+        except KeyError:
+            pass
+    doc.save(docx_path)
+
+
+def _ruled_row_pitch(image_path):
+    """Pixels between the horizontal ruling lines of a ruled table, or None when fewer than three are found.
+    A ruling line is a row of the image that is mostly dark; text rows are not."""
+    gray = Image.open(image_path).convert("L")
+    column = list(gray.point(lambda v: 255 if v < 140 else 0).resize((1, gray.height), Image.BOX).getdata())
+    ys = [y for y, v in enumerate(column) if v >= 255 * 0.5]
+    centres, run = [], []
+    for y in ys:
+        if run and y - run[-1] > 2:
+            centres.append(sum(run) / len(run))
+            run = []
+        run.append(y)
+    if run:
+        centres.append(sum(run) / len(run))
+    gaps = sorted(b - a for a, b in zip(centres, centres[1:]))
+    return gaps[len(gaps) // 2] if len(centres) >= 3 else None
+
+
+def polish_image_docx(docx_path, page, info, ratios, image_path):
+    """Give a finished Image -> Word file the image's proportions. Text is never changed. Returns the body size used,
+    or None when the image's size could not be measured (the file is then left as the writer made it)."""
+    from docx import Document
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
+    from docx.shared import Pt
+    from to_docx import _neutral_headings
+    if not info or not info.get("body_h") or not info.get("page_centre"):
+        return None
+    doc = Document(docx_path)
+    sec = doc.sections[0]
+    text_w = (sec.page_width - sec.left_margin - sec.right_margin) / 12700.0       # points
+    sc = text_w / (info["page_centre"] * 2)                                          # points per image pixel
+    body_pt = max(BODY_PT_RANGE[0], min(BODY_PT_RANGE[1], round(info["body_h"] * sc * FONT_FROM_BOX * 2) / 2))
+    _neutral_headings(doc, keep_bold=True)
+    # The writer puts an explicit size on every run (11 pt for normal text), which overrides the style, so the
+    # runs are scaled the same way: 11 -> body_pt, and a smaller caption stays proportionally smaller.
+    old_base = doc.styles["Normal"].font.size.pt if doc.styles["Normal"].font.size else 11.0
+    for para in doc.paragraphs:
+        if para.style.name.startswith(("Heading", "Title")):
+            continue
+        for run in para.runs:
+            if run.font.size:
+                run.font.size = Pt(round(run.font.size.pt / old_base * body_pt * 2) / 2)
+    for name in ("Normal", "Heading 1", "Heading 2", "Heading 3", "Title"):
+        try:
+            doc.styles[name].font.name = IMAGE_FONT
+        except KeyError:
+            pass
+    doc.styles["Normal"].font.size = Pt(body_pt)
+
+    tables = [t for t in doc.tables]
+    if tables:
+        _size, lines = ocr_lines(image_path)
+        cells = _table_cells(page)
+        tops = sorted(l["top"] for l in lines if _is_table_line(l, cells))
+        n_rows = len(tables[0].rows)
+        # first row to last row spread over the rows between them: robust when OCR misses a middle row
+        pitch = _ruled_row_pitch(image_path)
+        row_pt = pitch * sc if pitch else ((tops[-1] - tops[0]) / (n_rows - 1) * sc
+                                           if len(tops) >= 2 and n_rows >= 2 else None)
+        for t in tables:
+            n_cols = len(t.columns)
+            weight = [max([len(r.cells[c].text) for r in t.rows] + [1]) + 4 for c in range(n_cols)]
+            for c in range(n_cols):
+                width = Pt(text_w * weight[c] / sum(weight))
+                t.columns[c].width = width
+                for cell in t.columns[c].cells:
+                    cell.width = width
+            t.autofit = False
+            for row in t.rows:
+                if row_pt:
+                    row.height = Pt(round(row_pt, 1))
+                    row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+                for cell in row.cells:
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    for para in cell.paragraphs:
+                        para.paragraph_format.space_before = Pt(0)
+                        para.paragraph_format.space_after = Pt(0)
+                        for run in para.runs:
+                            run.font.size = Pt(body_pt)
+    doc.save(docx_path)
+    apply_sizes_pages(docx_path, [(page, ratios)], body_pt)
+    return body_pt
+
+
 # ======================================================================================================================
 # Scanned DOCUMENTS (PDF route): margins, paragraph spacing and inserted pictures measured from the scan
 #
@@ -267,6 +373,85 @@ def scan_pictures(pdf_doc, pno, out_dir, scale=1.0):
     return sorted(pics, key=lambda p: (p["bbox_pt"][1], p["bbox_pt"][0]))
 
 
+# A logo or stamp printed INTO a scan is not a separate image object, so scan_pictures() cannot see it. It shows up
+# as a compact solid block. These limits are deliberately narrow: only a small, solid, mostly empty block in the top
+# quarter of the page, clear of any table, counts. Anything else (a shaded table header, a boxed paragraph, bold
+# lettering) is left to the text path, because turning real text into a picture would lose it.
+GFX_FILL = 0.5           # a grid cell counts as solid when this share of it is ink
+GFX_COMPACT = 0.85       # share of the block's bounding box that is solid (letters and lines are far below)
+GFX_MIN_AREA, GFX_MAX_AREA = 0.003, 0.10     # of the page
+GFX_MIN_W, GFX_MAX_W, GFX_MIN_H = 0.08, 0.45, 0.02
+GFX_ZONE_TOP = 0.25      # the block must lie in the top quarter of the page
+GFX_MAX_LINES, GFX_MAX_CHARS = 2, 30         # OCR text allowed inside it (a logo has a word or two)
+GFX_MAX_PER_PAGE = 2
+
+
+def scan_graphics(png_path, lines, cells, out_dir, pno, sc):
+    """Solid graphics (a logo box) printed into a scanned page, cut out of the scan as pictures.
+
+    `lines` are the OCR lines in pixels, `cells` the table cell texts (see _table_cells), `sc` points per pixel.
+    Returns entries like scan_pictures()'s, plus "float": True so they are anchored beside the text, not in it."""
+    img = Image.open(png_path)
+    gray = img.convert("L")
+    W, H = gray.size
+    cell = max(6, W // 100)
+    gw, gh = W // cell, H // cell
+    if gw < 10 or gh < 10:
+        return []
+    ink = gray.point(lambda v: 255 if v < 215 else 0)
+    grid = ink.resize((gw, gh), Image.BOX).load()
+    on = [[grid[x, y] >= 255 * GFX_FILL for x in range(gw)] for y in range(gh)]
+    seen = [[False] * gw for _ in range(gh)]
+    table_tops = [l["top"] for l in lines if _is_table_line(l, cells)]
+    heights = sorted(l["bottom"] - l["top"] for l in lines) or [cell]
+    line_h = heights[len(heights) // 2]
+    found = []
+    for y in range(gh):
+        for x in range(gw):
+            if not on[y][x] or seen[y][x]:
+                continue
+            stack, members = [(x, y)], []
+            seen[y][x] = True
+            while stack:
+                cx, cy = stack.pop()
+                members.append((cx, cy))
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if 0 <= nx < gw and 0 <= ny < gh and on[ny][nx] and not seen[ny][nx]:
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+            xs, ys = [m[0] for m in members], [m[1] for m in members]
+            bw, bh = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+            fw, fh = bw * cell / W, bh * cell / H
+            if (len(members) / (bw * bh) < GFX_COMPACT or not GFX_MIN_AREA <= fw * fh <= GFX_MAX_AREA
+                    or not GFX_MIN_W <= fw <= GFX_MAX_W or fh < GFX_MIN_H):
+                continue
+            x0, y0, x1, y1 = min(xs) * cell, min(ys) * cell, (max(xs) + 1) * cell, (max(ys) + 1) * cell
+            if (y0 + y1) / 2 > GFX_ZONE_TOP * H:
+                continue
+            if table_tops and min(table_tops) <= y1 + 2 * line_h:
+                continue                              # in a table, or just above one: a shaded cell, not a logo
+            inside = [l for l in lines if x0 <= (l["x0"] + l["x1"]) / 2 <= x1 and y0 <= (l["top"] + l["bottom"]) / 2 <= y1]
+            if (len(inside) > GFX_MAX_LINES or sum(len(l["text"]) for l in inside) > GFX_MAX_CHARS
+                    or any(_is_table_line(l, cells) for l in inside)):
+                continue
+            # tighten the cell-aligned box to the ink itself
+            ox, oy = max(0, x0 - cell), max(0, y0 - cell)
+            tight = ink.crop((ox, oy, min(W, x1 + cell), min(H, y1 + cell))).getbbox()
+            if not tight:
+                continue
+            found.append((oy + tight[1], ox + tight[0], ox + tight[2], oy + tight[3]))
+    pics = []
+    for k, (ty0, tx0, tx1, ty1) in enumerate(sorted(found)[:GFX_MAX_PER_PAGE]):
+        crop = img.convert("RGB").crop((tx0, ty0, tx1, ty1))
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"p{pno + 1:03d}_scangfx{k:02d}.png")
+        crop.save(path)
+        data = open(path, "rb").read()
+        pics.append({"path": path, "ext": "png", "bytes": len(data), "sha1": hashlib.sha1(data).hexdigest(),
+                     "px": crop.size, "bbox_pt": (tx0 * sc, ty0 * sc, tx1 * sc, ty1 * sc), "float": True})
+    return pics
+
+
 def _plan(pages, img_paths, page_w_pt, page_h_pt, dpi, scale):
     """Measure the scan: edges, line pitch, and the gap before each block (all in points)."""
     sc = 72.0 / dpi * scale          # points per pixel of the rendered scan
@@ -339,6 +524,33 @@ def _reading_order(pages, ratios_list, img_paths):
     return out_pages, out_ratios
 
 
+def _strip_picture_lines(pages, plan, pics_by_page):
+    """A logo's lettering the model wrote as one line INSIDE a bigger block ("Title / Subtitle / ACME") is a
+    duplicate of the picture: remove that line. Whole blocks inside a picture are handled by _drop_picture_text."""
+    sc = plan["sc"]
+    out = []
+    for page, info, pics in zip(pages, plan["pages"], pics_by_page):
+        words = set()
+        for p in pics:
+            x0, y0, x1, y1 = (v / sc for v in p["bbox_pt"])
+            for ln in info["lines"]:
+                cx, cy = (ln["x0"] + ln["x1"]) / 2, (ln["top"] + ln["bottom"]) / 2
+                if x0 <= cx <= x1 and y0 <= cy <= y1 and len(norm(ln["text"])) >= 2:
+                    words.add(norm(ln["text"]))
+        if not words:
+            out.append(page)
+            continue
+        blocks = []
+        for b in page.blocks:
+            if not isinstance(b, TableBlock) and "\n" in b.text:
+                kept = [l for l in b.text.split("\n") if norm(l) not in words]
+                if len(kept) != len(b.text.split("\n")) and kept:
+                    b = b.model_copy(update={"text": "\n".join(kept)})
+            blocks.append(b)
+        out.append(Page(analysis=page.analysis, blocks=blocks))
+    return out
+
+
 def _drop_picture_text(pages, ratios_list, plan, pics_by_page):
     """Text the model read OUT OF a picture is a duplicate of that picture: remove those blocks, re-index the rest."""
     sc = plan["sc"]
@@ -390,7 +602,8 @@ def _picture_plan(pages, plan, pics_by_page):
             entries.append({"path": p["path"], "sha1": p["sha1"], "bytes": p["bytes"], "ext": p["ext"],
                             "bbox": (y0, y1), "width_in": (x1 - x0) / 72.0, "height_in": (y1 - y0) / 72.0,
                             "px": p["px"], "frac_above": after / n if n else 0.0,
-                            "text_before": None, "text_after": None})
+                            "text_before": None, "text_after": None, "x": (x0, x1),
+                            "float": bool(p.get("float"))})
             flat.append(p)
         image_sets.append(entries)
     return image_sets, flat
@@ -427,8 +640,10 @@ def _apply_spacing(docx_path, pages, plan, sb_override, pics_flat, pic_adj, layo
                     pf.line_spacing = Pt(plan["pitch"])
                     ptr = q + 1
                     break
-    drawings = [p for p in doc.paragraphs if p._p.xpath(".//w:drawing")]
-    for para, pic in zip(drawings, pics_flat):
+    # Only inline pictures take a paragraph of their own; a floating one is anchored to a text paragraph and must
+    # not have that paragraph's spacing changed.
+    drawings = [p for p in doc.paragraphs if p._p.xpath(".//wp:inline")]
+    for para, pic in zip(drawings, [p for p in pics_flat if not p.get("float")]):
         adj = pic_adj.get(pic["path"], (0.0, 0.0))
         para.paragraph_format.left_indent = Pt(max(0.0, pic["bbox_pt"][0] - layout["left_pt"] + adj[0]))
         para.paragraph_format.space_before = Pt(max(0.0, pic["gap_pt"] + adj[1]))
@@ -440,6 +655,7 @@ def _build(docx_path, pages, ratios_list, plan, image_sets, pics_flat, sb_overri
     layout = _layout(plan, top_adj)
     problems = build_docx(pages, docx_path, layout=layout, image_sets=image_sets)
     apply_sizes_pages(docx_path, list(zip(pages, ratios_list)), body_pt=BODY_PT)
+    _plain_font(docx_path)
     _apply_spacing(docx_path, pages, plan, sb_override, pics_flat, pic_adj, layout)
     return problems
 
@@ -498,13 +714,24 @@ def build_scanned_docx(pages, ratios_list, img_paths, pdf_doc, pnos, docx_path, 
     pages, ratios_list = _reading_order(pages, ratios_list, img_paths)
     plan = _plan(pages, img_paths, page_size_pt[0], page_size_pt[1], dpi, scale)
     pics_by_page = [scan_pictures(pdf_doc, pno, image_dir, scale) if image_dir else [] for pno in pnos]
+    if image_dir:
+        # A scan with no separate picture objects can still have a logo printed into it.
+        for i, (page, info) in enumerate(zip(pages, plan["pages"])):
+            if not pics_by_page[i]:
+                try:
+                    pics_by_page[i] = scan_graphics(info["png"], info["lines"], _table_cells(page), image_dir,
+                                                    pnos[i], plan["sc"])
+                except Exception as exc:
+                    log(f"  ! could not look for a logo on page {i + 1} ({type(exc).__name__}: {exc})")
     n_pics = sum(len(p) for p in pics_by_page)
     if n_pics:
+        pages = _strip_picture_lines(pages, plan, pics_by_page)
         pages, ratios_list = _drop_picture_text(pages, ratios_list, plan, pics_by_page)
         for info, pics in zip(plan["pages"], pics_by_page):
-            if pics:
-                plan["top"] = min(plan["top"], min(p["bbox_pt"][1] for p in pics))
-                plan["bottom_edge"] = max(plan["bottom_edge"], max(p["bbox_pt"][3] for p in pics))
+            fixed = [p for p in pics if not p.get("float")]      # a floating logo does not move the text
+            if fixed:
+                plan["top"] = min(plan["top"], min(p["bbox_pt"][1] for p in fixed))
+                plan["bottom_edge"] = max(plan["bottom_edge"], max(p["bbox_pt"][3] for p in fixed))
     image_sets, pics_flat = _picture_plan(pages, plan, pics_by_page)
     log(f"  scan layout: pitch {plan['pitch']:.1f}pt, left {plan['left'] / 72:.2f}in, top {plan['top'] / 72:.2f}in, "
         f"{n_pics} picture(s) kept from the scan")

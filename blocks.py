@@ -1275,8 +1275,9 @@ def snap_to_text_layer(page: Page, source_text: str,
 # page the intended model handled cleanly. Pass base_url=None explicitly to
 # opt into Ollama on purpose (e.g. to reach its 4B model for a hard page).
 # IDOX_BASE_URL overrides it without editing code (the API and start_convert.sh already use that variable).
-# Unset, nothing changes: the address is the remote endpoint below, which is unreachable from some machines.
-DEFAULT_BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.33:8080")
+# 2026-10-06: default switched to the Qwen3.6-35B-A3B (IQ4_XS) server on the Mac mini, for testing
+# every feature against it. The 8B at 10.0.3.33:8080 above is down.
+DEFAULT_BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.66:8080")
 
 # The local, fully-controlled setup this replaced as the default -- still
 # valid, still running, not removed. Use this explicitly (--base-url

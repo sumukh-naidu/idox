@@ -725,7 +725,7 @@ class ModelAddress(unittest.TestCase):
         return r.stdout.strip().splitlines()[-1]
 
     def test_unset_keeps_the_old_default(self):
-        self.assertEqual(self.default_in_subprocess(), "http://10.0.3.33:8080")
+        self.assertEqual(self.default_in_subprocess(), "http://10.0.3.66:8080")
 
     def test_the_variable_wins(self):
         self.assertEqual(self.default_in_subprocess(IDOX_BASE_URL="http://127.0.0.1:8080"), "http://127.0.0.1:8080")

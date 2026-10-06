@@ -57,8 +57,8 @@ naming the field: an unknown field, an option out of range, a malformed page ran
 and the file itself -- its type, its size, and that its contents really are that type.
 
 CONFIGURATION (environment variables, read at start)
-    IDOX_BASE_URL       the model server (default http://127.0.0.1:8090, the local 2B;
-                        blocks.DEFAULT_BASE_URL points at a remote 8B that is down)
+    IDOX_BASE_URL       the model server (default http://10.0.3.66:8080, the Qwen3.6-35B on
+                        the Mac mini; http://127.0.0.1:8090 is the local 2B)
     IDOX_API_KEY        sent to the model server if set (the tuhin-ai API needs one)
     IDOX_THINKING, IDOX_MAX_IMAGE_SIDE, IDOX_TIMEOUT
                         passed through to the converter if set (see blocks.py)
@@ -98,7 +98,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 REPO = Path(__file__).resolve().parent.parent      # the scripts live one folder up
 PY = sys.executable
 
-BASE_URL = os.environ.get("IDOX_BASE_URL", "http://127.0.0.1:8090").rstrip("/")
+BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.66:8080").rstrip("/")
 JOBS_DIR = Path(os.environ.get("IDOX_JOBS_DIR",
                                Path.home() / ".local/share/idox/api_jobs")).expanduser()
 LIMITS = {"model": int(os.environ.get("IDOX_MODEL_JOBS", "1")),

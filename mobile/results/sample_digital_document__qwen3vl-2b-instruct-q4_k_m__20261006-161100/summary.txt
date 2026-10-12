@@ -1,0 +1,12 @@
+file: sample_digital_document.pdf
+model: qwen3vl-2b-instruct-q4_k_m.gguf
+mmproj: mmproj-qwen3vl-2b-instruct-q8_0.gguf
+threads: 4
+gpu: false
+image_tokens: 512
+prompt: mobile (assets/mobile_system_prompt.txt)
+pages: 2, read ok: 2
+model_load_s: 5.1
+pages_total_s: 270.8
+server_peak_rss_mb: 2498
+device: samsung SM-M356B, Android 16

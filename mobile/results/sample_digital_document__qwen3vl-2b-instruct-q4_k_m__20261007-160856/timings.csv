@@ -1,0 +1,3 @@
+page,attempt,prompt_tokens,prefill_s,gen_tokens,gen_s,gen_tok_per_s,wall_s,finish
+1,read-text,409,26.70,386,39.38,9.8,66.10,stop
+2,read-text,185,12.50,455,48.72,9.3,61.29,stop

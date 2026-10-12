@@ -1,0 +1,13 @@
+root ::= ws "," ws block ( ws "," ws block )* ws "]" ws "}"
+block ::= textblock | table
+textblock ::= "{" ws "\"kind\"" ws ":" ws kind ws "," ws "\"text\"" ws ":" ws string ws "," ws "\"align\"" ws ":" ws align ws "," ws "\"size\"" ws ":" ws size ws "," ws "\"bold\"" ws ":" ws bool ws "}"
+table ::= "{" ws "\"kind\"" ws ":" ws "\"table\"" ws "," ws "\"has_header\"" ws ":" ws bool ws "," ws "\"n_data_rows\"" ws ":" ws int ws "," ws "\"n_cols\"" ws ":" ws int ws "," ws "\"header\"" ws ":" ws strlist ws "," ws "\"rows\"" ws ":" ws "[" ws ( strlist ( ws "," ws strlist )* )? ws "]" ws "}"
+kind ::= "\"heading\"" | "\"paragraph\"" | "\"caption\"" | "\"list\"" | "\"image\""
+align ::= "\"left\"" | "\"center\"" | "\"right\""
+size ::= "\"large\"" | "\"normal\"" | "\"small\""
+strlist ::= "[" ws ( string ( ws "," ws string )* )? ws "]"
+bool ::= "true" | "false"
+int ::= "-"? [0-9]{1,6}
+string ::= "\"" char* "\""
+char ::= [^"\\\x7F\x00-\x1F] | "\\" ( ["\\/bfnrt] | "u" [0-9a-fA-F]{4} )
+ws ::= [ \t\n]{0,20}

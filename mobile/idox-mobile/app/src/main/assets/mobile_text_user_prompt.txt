@@ -1,0 +1,5 @@
+The page text:
+
+{PAGE_TEXT}
+
+Write every line as blocks, top to bottom, each exactly once, then stop.

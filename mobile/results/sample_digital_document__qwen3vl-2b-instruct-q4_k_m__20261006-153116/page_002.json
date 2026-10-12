@@ -1,0 +1,21 @@
+{
+  "analysis": {
+    "n_blocks": 8,
+    "table_column_counts": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "blocks": [
+    {
+      "kind": "heading",
+      "text": "Regional Breakdown"
+    ,
+      "align": "center",
+      "size": "large",
+      "bold": true
+    }
+  ]
+}

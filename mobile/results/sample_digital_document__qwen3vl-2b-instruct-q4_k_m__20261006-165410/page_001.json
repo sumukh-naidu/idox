@@ -1,0 +1,17 @@
+{
+  "analysis": {
+    "n_blocks": 7,
+    "table_column_counts": [5]
+  },
+  "blocks": [
+    {
+      "kind": "heading",
+      "text": "Product Analytics Overview"
+    ,
+    "align": "center",
+    "size": "large"
+    ,
+    "bold": true
+    }
+  ]
+}

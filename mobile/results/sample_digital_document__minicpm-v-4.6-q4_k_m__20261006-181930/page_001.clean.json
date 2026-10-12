@@ -1,0 +1,79 @@
+{
+ "analysis": {
+  "n_blocks": 4,
+  "table_column_counts": []
+ },
+ "blocks": [
+  {
+   "kind": "heading",
+   "text": "Product Analytics Overview",
+   "align": "center",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "paragraph",
+   "text": "This report covers user growth and engagement for the product over the last five months. Monthly active users have grown steadily, with the largest jump occurring between March and April following release of the mobile app redesign.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "heading",
+   "text": "Monthly Active Users",
+   "align": "center",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "paragraph",
+   "text": "Monthly Active Users",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "image",
+   "text": "",
+   "align": "center",
+   "size": "small",
+   "bold": false
+  },
+  {
+   "kind": "table",
+   "has_header": true,
+   "n_data_rows": 5,
+   "n_cols": 2,
+   "header": [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May"
+   ],
+   "rows": [
+    [
+     "120",
+     "150",
+     "135",
+     "180",
+     "210"
+    ]
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Figure 1: Active users by month, in thousands",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "Retention also improved during this period, with week-4 retention rising from 38% in January to 47% in May.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  }
+ ]
+}

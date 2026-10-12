@@ -1,0 +1,76 @@
+{
+  "analysis": {"n_blocks": 5, "table_column_counts": [3, 2, 1]}, "blocks": [
+    {
+      "kind": "heading",
+      "text": "Regional Breakdown"
+    ,
+    "align": "center",
+    "size": "normal"
+  ,
+    "bold": true
+  },
+  {
+      "kind": "paragraph",
+      "text": "The table below breaks down active users by region for the most recent month. North America and Europe together account for the majority of the user base."
+    ,
+    "align": "left",
+    "size": "normal"
+  ,
+    "bold": false
+  },
+  {
+      "kind": "table",
+      "has_header": true,
+      "n_data_rows": 4,
+      "n_cols": 4,
+      "header": [
+        "Region",
+        "Active Users",
+        "% of Total",
+        "MoM Change"
+      ],
+      "rows": [
+          [
+            "North America",
+            "84,200",
+            "40%",
+            "+6%"
+          ],
+          [
+            "Europe",
+            "63,500",
+            "30%",
+            "+4%"
+          ],
+          [
+            "Asia Pacific",
+            "42,000",
+            "20%",
+            "+9%"
+          ],
+          [
+            "Rest of World",
+            "21,000",
+            "10%",
+            "+2%"
+          ]
+        ]
+      },
+      {
+        "kind": "caption",
+        "text": "Asia Pacific showed the fastest month-over-month growth at 9%, suggesting continued investment in that region is likely to pay off over the next two quarters."
+      ,
+      "align": "center",
+      "size": "small"
+    ,
+    "bold": false
+  },
+  {
+    "kind": "heading",
+    "text": "Regional Breakdown",
+    "align": "center",
+    "size": "normal"
+  ,
+    "bold": true
+  }
+]}

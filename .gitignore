@@ -45,3 +45,11 @@ End-of-Day_Report___Day_7.pdf
 
 # OS
 .DS_Store
+
+# mobile: pulled APKs, decompiled code and Android build output are not ours / too large
+mobile/vlmtester/
+mobile/**/build/
+mobile/**/.gradle/
+mobile/**/local.properties
+mobile/**/jniLibs/
+mobile/llama_dotprod_libs/

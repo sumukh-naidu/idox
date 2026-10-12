@@ -1,0 +1,111 @@
+{
+  "analysis": {
+    "n_blocks": 7,
+    "table_column_counts": [5]
+  },
+  "blocks": [
+    {
+      "kind": "heading",
+      "text": "Product Analytics Overview"
+    ,
+    "align": "center",
+    "size": "large"
+    ,
+    "bold": true
+    } 
+  ,
+    {
+      "kind": "paragraph",
+      "text": "This report covers user growth and engagement for the product over the last five months. Monthly active users have grown steadily, with the largest jump occurring between March and April following the release of the mobile app redesign."
+    ,
+    "align": "left",
+    "size": "normal"
+    ,
+    "bold": false
+    } 
+  ,
+    {
+      "kind": "heading",
+      "text": "Monthly Active Users"
+    ,
+    "align": "center",
+    "size": "large"
+    ,
+    "bold": true
+    } 
+  ,
+    {
+      "kind": "table",
+      "has_header": false,
+      "n_data_rows": 5,
+      "n_cols": 1,
+      "header": [
+        "",
+        ""
+      ],
+      "rows": [
+        [
+          "Jan"
+        ],
+        [
+          "Feb"
+        ],
+        [
+          "Mar"
+        ],
+        [
+          "Apr"
+        ],
+        [
+          "May"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Monthly Active Users"
+    ,
+    "align": "left",
+    "size": "normal"
+    ,
+    "bold": false
+    } 
+  ,
+    {
+      "kind": "table",
+      "has_header": true,
+      "n_data_rows": 5,
+      "n_cols": 1,
+      "header": [
+        "",
+        ""
+      ],
+      "rows": [
+        [
+          "Jan"
+        ],
+        [
+          "Feb"
+        ],
+        [
+          "Mar"
+        ],
+        [
+          "Apr"
+        ],
+        [
+          "May"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "120, 150, 135, 180, 210"
+    ,
+    "align": "left",
+    "size": "normal"
+    ,
+    "bold": false
+    } 
+  ]
+}

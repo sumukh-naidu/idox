@@ -1,0 +1,52 @@
+[x=166 y=78 size=18.0 font=Helvetica-Bold] Employee Onboarding Summary
+[x=78 y=110 size=10.0 font=Helvetica] This document summarizes new employee onboarding activity for the current quarter. All departments
+[x=78 y=122 size=10.0 font=Helvetica] reported steady intake, with Engineering showing the largest increase in headcount. HR completed
+[x=78 y=134 size=10.0 font=Helvetica] compliance training for all new hires within the first two weeks of their start date.
+[x=78 y=178 size=14.0 font=Helvetica-Bold] Department Headcount
+[x=100 y=210 size=10.0 font=Helvetica-Bold] Department
+[x=246 y=210 size=10.0 font=Helvetica-Bold] New Hires
+[x=335 y=210 size=10.0 font=Helvetica-Bold] Completed Training
+[x=463 y=210 size=10.0 font=Helvetica-Bold] Pending
+[x=100 y=234 size=10.0 font=Helvetica] Engineering
+[x=264 y=234 size=10.0 font=Helvetica] 18
+[x=376 y=234 size=10.0 font=Helvetica] 16
+[x=480 y=234 size=10.0 font=Helvetica] 2
+[x=100 y=258 size=10.0 font=Helvetica] Sales
+[x=267 y=258 size=10.0 font=Helvetica] 9
+[x=379 y=258 size=10.0 font=Helvetica] 9
+[x=480 y=258 size=10.0 font=Helvetica] 0
+[x=100 y=282 size=10.0 font=Helvetica] Customer Support
+[x=264 y=282 size=10.0 font=Helvetica] 12
+[x=376 y=282 size=10.0 font=Helvetica] 10
+[x=480 y=282 size=10.0 font=Helvetica] 2
+[x=100 y=306 size=10.0 font=Helvetica] HR
+[x=267 y=306 size=10.0 font=Helvetica] 3
+[x=379 y=306 size=10.0 font=Helvetica] 3
+[x=480 y=306 size=10.0 font=Helvetica] 0
+[x=78 y=340 size=10.0 font=Helvetica] Two Customer Support hires and two Engineering hires have pending training sessions scheduled for
+[x=78 y=352 size=10.0 font=Helvetica] early next month. No onboarding delays have been reported to date.
+[x=78 y=78 size=18.0 font=Helvetica-Bold] Facility Compliance Notes
+[x=78 y=110 size=10.0 font=Helvetica] The warehouse safety audit conducted this quarter identified one active violation, shown in the notice
+[x=78 y=122 size=10.0 font=Helvetica] below. Facilities management has been notified and corrective signage has been ordered.
+[x=78 y=356 size=10.0 font=Helvetica-Oblique] Figure 1: Warehouse safety notice posted at Dock 3
+[x=78 y=404 size=14.0 font=Helvetica-Bold] Equipment Inspection Log
+[x=100 y=436 size=10.0 font=Helvetica-Bold] Equipment ID
+[x=231 y=436 size=10.0 font=Helvetica-Bold] Last Inspected
+[x=352 y=436 size=10.0 font=Helvetica-Bold] Status
+[x=443 y=436 size=10.0 font=Helvetica-Bold] Next Due
+[x=100 y=460 size=10.0 font=Helvetica] FL-102
+[x=241 y=460 size=10.0 font=Helvetica] 2026-07-12
+[x=356 y=460 size=10.0 font=Helvetica] Pass
+[x=439 y=460 size=10.0 font=Helvetica] 2026-10-12
+[x=100 y=484 size=10.0 font=Helvetica] FL-103
+[x=241 y=484 size=10.0 font=Helvetica] 2026-07-15
+[x=356 y=484 size=10.0 font=Helvetica] Pass
+[x=439 y=484 size=10.0 font=Helvetica] 2026-10-15
+[x=100 y=508 size=10.0 font=Helvetica] FL-107
+[x=241 y=508 size=10.0 font=Helvetica] 2026-07-18
+[x=349 y=508 size=10.0 font=Helvetica] Flagged
+[x=439 y=508 size=10.0 font=Helvetica] 2026-08-01
+[x=100 y=532 size=10.0 font=Helvetica] DK-3-GATE
+[x=241 y=532 size=10.0 font=Helvetica] 2026-08-02
+[x=356 y=532 size=10.0 font=Helvetica] Pass
+[x=439 y=532 size=10.0 font=Helvetica] 2026-11-02

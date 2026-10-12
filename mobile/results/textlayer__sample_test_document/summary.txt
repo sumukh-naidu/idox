@@ -1,0 +1,2 @@
+Android built-in: 2 text runs, 1107 chars, 562 ms
+PdfBox-Android: 1089 chars, 362 ms (incl. first-use init)

@@ -1,0 +1,10 @@
+# Facility Compliance Notes
+The warehouse safety audit conducted this quarter identified one active violation, shown in the notice
+below. Facilities management has been notified and corrective signage has been ordered.
+*Figure 1: Warehouse safety notice posted at Dock 3*
+## Equipment Inspection Log
+| Equipment ID | Last Inspected | Status | Next Due |
+| FL-102 | 2026-07-12 | Pass | 2026-10-12 |
+| FL-103 | 2026-07-15 | Pass | 2026-10-15 |
+| FL-107 | 2026-07-18 | Flagged | 2026-08-01 |
+| DK-3-GATE | 2026-08-02 | Pass | 2026-11-02 |

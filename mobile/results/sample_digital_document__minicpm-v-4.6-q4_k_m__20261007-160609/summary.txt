@@ -1,0 +1,18 @@
+file: sample_digital_document.pdf
+model: minicpm-v-4.6-q4_k_m.gguf
+mmproj: mmproj-minicpm-v-4.6-q8_0.gguf
+threads: 4
+gpu: false
+image_tokens: 512
+prompt: mobile (assets/mobile_system_prompt.txt)
+input: text layer for digital PDF pages, image otherwise
+model_start: warm (already loaded)
+pages: 2, read ok: 2
+model_load_s: 0.0
+pages_total_s: 57.4
+server_peak_rss_mb: 1630
+device: samsung SM-M356B, Android 16
+page 1 accuracy check vs text layer: 100% of the page's words found
+page 1: 23.8 s
+page 2 accuracy check vs text layer: 100% of the page's words found
+page 2: 33.7 s

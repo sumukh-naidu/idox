@@ -1,0 +1,77 @@
+{
+ "analysis": {
+  "n_blocks": 2,
+  "table_column_counts": [
+   3,
+   3
+  ]
+ },
+ "blocks": [
+  {
+   "kind": "heading",
+   "text": "Facility Compliance Notes",
+   "align": "left",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "paragraph",
+   "text": "The warehouse safety audit conducted this quarter identified one active violation, shown in the notice below. Facilities management has been notified and corrective signage has been ordered.",
+   "align": "left",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "caption",
+   "text": "Figure 1: Warehouse safety notice posted at Dock 3",
+   "align": "center",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "heading",
+   "text": "Equipment Inspection Log",
+   "align": "left",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "table",
+   "has_header": true,
+   "n_data_rows": 4,
+   "n_cols": 4,
+   "header": [
+    "Equipment ID",
+    "Last Inspected",
+    "Status",
+    "Next Due"
+   ],
+   "rows": [
+    [
+     "FL-102",
+     "2026-07-12",
+     "Pass",
+     "2026-10-12"
+    ],
+    [
+     "FL-103",
+     "2026-07-15",
+     "Pass",
+     "2026-10-15"
+    ],
+    [
+     "FL-107",
+     "2026-07-18",
+     "Flagged",
+     "2026-08-01"
+    ],
+    [
+     "DK-3-GATE",
+     "2026-08-02",
+     "Pass",
+     "2026-11-02"
+    ]
+   ]
+  }
+ ]
+}

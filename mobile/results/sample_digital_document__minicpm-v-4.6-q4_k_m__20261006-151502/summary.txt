@@ -1,0 +1,11 @@
+file: sample_digital_document.pdf
+model: minicpm-v-4.6-q4_k_m.gguf
+mmproj: mmproj-minicpm-v-4.6-q8_0.gguf
+threads: 4
+gpu: false
+image_tokens: 512
+pages: 2, read ok: 2
+model_load_s: 7.6
+pages_total_s: 280.4
+server_peak_rss_mb: 1753
+device: samsung SM-M356B, Android 16

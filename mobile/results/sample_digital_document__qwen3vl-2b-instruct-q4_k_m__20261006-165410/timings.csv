@@ -1,0 +1,3 @@
+page,prompt_tokens,prefill_s,gen_tokens,gen_s,gen_tok_per_s,wall_s,blocks,finish
+1,1023,83.32,78,9.21,8.5,92.65,1,stop
+2,481,62.15,416,52.80,7.9,115.31,4,stop+retry

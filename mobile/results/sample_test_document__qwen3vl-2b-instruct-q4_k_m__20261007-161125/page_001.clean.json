@@ -1,0 +1,78 @@
+{
+ "analysis": {
+  "n_blocks": 12,
+  "table_column_counts": [
+   4,
+   4,
+   4
+  ]
+ },
+ "blocks": [
+  {
+   "kind": "heading",
+   "text": "Employee Onboarding Summary",
+   "align": "left",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "paragraph",
+   "text": "This document summarizes new employee onboarding activity for the current quarter. All departments reported steady intake, with Engineering showing the largest increase in headcount. HR completed compliance training for all new hires within the first two weeks of their start date.",
+   "align": "left",
+   "size": "normal",
+   "bold": true
+  },
+  {
+   "kind": "heading",
+   "text": "Department Headcount",
+   "align": "left",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "table",
+   "has_header": true,
+   "n_data_rows": 4,
+   "n_cols": 3,
+   "header": [
+    "Department",
+    "New Hires",
+    "Completed Training",
+    "Pending"
+   ],
+   "rows": [
+    [
+     "Engineering",
+     "18",
+     "16",
+     "2"
+    ],
+    [
+     "Sales",
+     "9",
+     "9",
+     "0"
+    ],
+    [
+     "Customer Support",
+     "12",
+     "10",
+     "2"
+    ],
+    [
+     "HR",
+     "3",
+     "3",
+     "0"
+    ]
+   ]
+  },
+  {
+   "kind": "paragraph",
+   "text": "Two Customer Support hires and two Engineering hires have pending training sessions scheduled for early next month. No onboarding delays have been reported to date.",
+   "align": "left",
+   "size": "normal",
+   "bold": true
+  }
+ ]
+}

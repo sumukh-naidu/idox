@@ -1,0 +1,33 @@
+[x=187 y=78 size=18.0 font=Helvetica-Bold] Product Analytics Overview
+[x=78 y=110 size=10.0 font=Helvetica] This report covers user growth and engagement for the product over the last five months. Monthly
+[x=78 y=122 size=10.0 font=Helvetica] active users have grown steadily, with the largest jump occurring between March and April following the
+[x=78 y=134 size=10.0 font=Helvetica] release of the mobile app redesign.
+[x=78 y=178 size=14.0 font=Helvetica-Bold] Monthly Active Users
+[x=78 y=425 size=10.0 font=Helvetica-Oblique] Figure 1: Active users by month, in thousands
+[x=78 y=453 size=10.0 font=Helvetica] Retention also improved during this period, with week-4 retention rising from 38% in January to 47% in
+[x=78 y=465 size=10.0 font=Helvetica] May.
+[x=78 y=78 size=18.0 font=Helvetica-Bold] Regional Breakdown
+[x=78 y=110 size=10.0 font=Helvetica] The table below breaks down active users by region for the most recent month. North America and
+[x=78 y=122 size=10.0 font=Helvetica] Europe together account for the majority of the user base.
+[x=96 y=156 size=10.0 font=Helvetica-Bold] Region
+[x=236 y=156 size=10.0 font=Helvetica-Bold] Active Users
+[x=343 y=156 size=10.0 font=Helvetica-Bold] % of Total
+[x=437 y=156 size=10.0 font=Helvetica-Bold] MoM Change
+[x=96 y=180 size=10.0 font=Helvetica] North America
+[x=251 y=180 size=10.0 font=Helvetica] 84,200
+[x=357 y=180 size=10.0 font=Helvetica] 40%
+[x=458 y=180 size=10.0 font=Helvetica] +6%
+[x=96 y=204 size=10.0 font=Helvetica] Europe
+[x=251 y=204 size=10.0 font=Helvetica] 63,500
+[x=357 y=204 size=10.0 font=Helvetica] 30%
+[x=458 y=204 size=10.0 font=Helvetica] +4%
+[x=96 y=228 size=10.0 font=Helvetica] Asia Pacific
+[x=251 y=228 size=10.0 font=Helvetica] 42,000
+[x=357 y=228 size=10.0 font=Helvetica] 20%
+[x=458 y=228 size=10.0 font=Helvetica] +9%
+[x=96 y=252 size=10.0 font=Helvetica] Rest of World
+[x=251 y=252 size=10.0 font=Helvetica] 21,000
+[x=357 y=252 size=10.0 font=Helvetica] 10%
+[x=458 y=252 size=10.0 font=Helvetica] +2%
+[x=78 y=286 size=10.0 font=Helvetica] Asia Pacific showed the fastest month-over-month growth at 9%, suggesting continued investment in
+[x=78 y=298 size=10.0 font=Helvetica] that region is likely to pay off over the next two quarters.

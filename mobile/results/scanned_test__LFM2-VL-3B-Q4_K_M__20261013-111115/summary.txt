@@ -1,0 +1,16 @@
+file: scanned_test.pdf
+model: LFM2-VL-3B-Q4_K_M.gguf
+mmproj: mmproj-LFM2-VL-3B-Q8_0.gguf
+threads: 4
+gpu: false
+image_tokens: 512
+prompt: mobile (assets/mobile_system_prompt.txt)
+input: text layer for digital PDF pages, image otherwise
+model_start: warm (already loaded)
+pages: 2, read ok: 2
+model_load_s: 0.0
+pages_total_s: 181.5
+server_peak_rss_mb: 3226
+device: samsung SM-M356B, Android 16
+page 1: 81.9 s
+page 2: 99.6 s

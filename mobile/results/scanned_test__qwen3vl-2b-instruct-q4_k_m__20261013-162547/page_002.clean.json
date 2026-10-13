@@ -1,0 +1,90 @@
+{
+ "analysis": {
+  "n_blocks": 6,
+  "table_column_counts": [
+   4
+  ]
+ },
+ "blocks": [
+  {
+   "kind": "heading",
+   "text": "Facility Compliance Notes",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "The warehouse safety audit conducted this quarter identified one active violation, shown in the notice below. Facilities management has been notified and corrective signage has been ordered.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "image",
+   "text": "Warehouse Safety Notice",
+   "align": "left",
+   "size": "small",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "Forklifts must maintain a minimum clearance of 3 meters from loading dock edges.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "image",
+   "text": "Violation Code: WH-SAFE-014",
+   "align": "left",
+   "size": "small",
+   "bold": false
+  },
+  {
+   "kind": "table",
+   "has_header": true,
+   "n_data_rows": 5,
+   "n_cols": 4,
+   "header": [
+    "Equipment ID",
+    "Last Inspected",
+    "Status",
+    "Next Due"
+   ],
+   "rows": [
+    [
+     "FL-102",
+     "2026-07-12",
+     "Pass",
+     "2026-10-12"
+    ],
+    [
+     "FL-103",
+     "2026-07-15",
+     "Pass",
+     "2026-10-15"
+    ],
+    [
+     "FL-107",
+     "2026-07-18",
+     "Flagged",
+     "2026-08-01"
+    ],
+    [
+     "DK-3-GATE",
+     "2026-08-02",
+     "Pass",
+     "2026-11-02"
+    ]
+   ]
+  },
+  {
+   "kind": "caption",
+   "text": "Figure 1: Warehouse safety notice posted at Dock 3",
+   "align": "left",
+   "size": "small",
+   "bold": false
+  }
+ ]
+}

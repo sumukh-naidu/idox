@@ -1,0 +1,43 @@
+{
+ "analysis": {
+  "n_blocks": 5,
+  "table_column_counts": []
+ },
+ "blocks": [
+  {
+   "kind": "heading",
+   "text": "Sample Scanned Document",
+   "align": "center",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "paragraph",
+   "text": "This is page 2 of the sample document.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "End of document.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  }
+ ]
+}

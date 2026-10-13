@@ -1,0 +1,8 @@
+# Product Analytics Overview
+This report covers user growth and engagement for the product over the last five months. Monthly
+active users have grown steadily, with the largest jump occurring between March and April following the
+release of the mobile app redesign.
+## Monthly Active Users
+*Figure 1: Active users by month, in thousands*
+Retention also improved during this period, with week-4 retention rising from 38% in January to 47% in
+May.

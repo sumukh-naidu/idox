@@ -81,9 +81,13 @@ final class LlamaServer {
         }
         // Qwen (the 2B): 8-bit KV cache. Tested on 4 text-mode pages: 237/237 words,
         // 37/37 numbers, 60/60 table cells -- same as f16 -- with ~180 MB less peak memory.
-        if (name.contains("qwen")) {
+        // LFM2 (the 3B) gets it too, to fit the phone's free memory (accuracy not yet checked).
+        if (name.contains("qwen") || name.contains("lfm2")) {
             args.addAll(Arrays.asList("-ctk", "q8_0", "-ctv", "q8_0"));
         }
+        // The dot-product build keeps a prompt cache in RAM (default 8192 MB); peak memory
+        // rose ~350-600 MB with it. 512 MB still holds the reused instructions.
+        args.addAll(Arrays.asList("--cache-ram", "512"));
         if (gpu) {
             args.addAll(Arrays.asList("-ngl", "99", "--no-mmproj-offload"));
         } else {

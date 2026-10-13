@@ -1,0 +1,64 @@
+{
+  "analysis": {
+    "n_blocks": 7,
+    "table_column_counts": []
+  },
+  "blocks": [
+    {
+      "kind": "heading",
+      "text": "SAMPLE BUSINESS DOCUMENT",
+      "align": "center",
+      "size": "large",
+      "bold": false
+    },
+    {
+      "kind": "caption",
+      "text": "Scanned Page 1 of 2",
+      "align": "left",
+      "size": "small",
+      "bold": false
+    },
+    {
+      "kind": "heading",
+      "text": "Company Overview",
+      "align": "center",
+      "size": "large",
+      "bold": true
+    },
+    {
+      "kind": "paragraph",
+      "text": "This is a sample scanned PDF created for OCR testing.\nThe document contains ordinary business information\nwith headings, paragraphs, and a small table.",
+      "align": "left",
+      "size": "normal",
+      "bold": false
+    },
+    {
+      "kind": "heading",
+      "text": "Project Information",
+      "align": "center",
+      "size": "large",
+      "bold": true
+    },
+    {
+      "kind": "paragraph",
+      "text": "Project Name: Corporate Intelligence POC\nDocument Type: Sample scanned source\nStatus: Development\nPrepared for: OCR and document extraction testing",
+      "align": "left",
+      "size": "normal",
+      "bold": false
+    },
+    {
+      "kind": "heading",
+      "text": "Notes",
+      "align": "center",
+      "size": "large",
+      "bold": true
+    },
+    {
+      "kind": "paragraph",
+      "text": "Scanned documents may contain skew, noise, faint text,\nand imperfect characters. OCR systems must recover the\nunderlying text while preserving useful structure.",
+      "align": "left",
+      "size": "normal",
+      "bold": false
+    }
+  ]
+}

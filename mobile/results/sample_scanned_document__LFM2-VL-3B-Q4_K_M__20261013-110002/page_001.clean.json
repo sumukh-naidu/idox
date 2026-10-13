@@ -1,0 +1,43 @@
+{
+ "analysis": {
+  "n_blocks": 6,
+  "table_column_counts": []
+ },
+ "blocks": [
+  {
+   "kind": "heading",
+   "text": "Sample Scanned Document",
+   "align": "center",
+   "size": "large",
+   "bold": true
+  },
+  {
+   "kind": "paragraph",
+   "text": "This is a sample scanned document, page 1 of 2.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "It was generated to resemble a paper document that has been scanned using a standard flatbed or sheet-fed scanner.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "Typical characteristics of a scanned page include: - Slight rotation \/ skew - Uneven lighting or paper texture - Minor blur compared to a native digital PDF",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  },
+  {
+   "kind": "paragraph",
+   "text": "You can use this file to test OCR pipelines, PDF upload forms, or document viewers.",
+   "align": "left",
+   "size": "normal",
+   "bold": false
+  }
+ ]
+}

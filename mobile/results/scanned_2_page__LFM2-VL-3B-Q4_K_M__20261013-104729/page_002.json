@@ -1,0 +1,72 @@
+{
+  "analysis": {
+    "n_blocks": 8,
+    "table_column_counts": []
+  },
+  "blocks": [
+    {
+      "kind": "heading",
+      "text": "SAMPLE BUSINESS DOCUMENT",
+      "align": "center",
+      "size": "large",
+      "bold": true
+    },
+    {
+      "kind": "paragraph",
+      "text": "Scanned Page 2 of 2\nCompany Overview\nThis is a sample scanned PDF created for OCR testing. The document contains ordinary business information with headings, paragraphs, and a small table.",
+      "align": "left",
+      "size": "normal",
+      "bold": false
+    },
+    {
+      "kind": "heading",
+      "text": "Project Information",
+      "align": "center",
+      "size": "large",
+      "bold": true
+    },
+    {
+      "kind": "paragraph",
+      "text": "Project Name: Corporate Intelligence POC\nDocument type: Sample scanned source\nStatus: Development\nPrepared for: OCR and document extraction testing.",
+      "align": "left",
+      "size": "normal",
+      "bold": false
+    },
+    {
+      "kind": "heading",
+      "text": "Notes.",
+      "align": "center",
+      "size": "small",
+      "bold": false
+    },
+    {
+      "kind": "paragraph",
+      "text": "Scanned documents may contain skew, noise, faint text, and imperfect characters. OCR systems must recover the underlying text while preserving useful structure.",
+      "align": "left",
+      "size": "normal",
+      "bold": false
+    },
+    {
+      "kind": "table",
+      "has_header": true,
+      "n_data_rows": 3,
+      "n_cols": 2,
+      "header": [
+        "Field",
+        "Example Value"
+      ],
+      "rows": [
+        ["Revenue", "$12.5M"],
+        ["Employees", "245"],
+        ["Founded", "2018"]
+      ]
+    },
+    {
+      "kind": "caption",
+      "text": "CONFIDENTIAL — SAMPLE DATA FOR TESTING ONLY",
+      "align": "center",
+      "size": "small",
+      "bold": false
+    }
+  ]
+}

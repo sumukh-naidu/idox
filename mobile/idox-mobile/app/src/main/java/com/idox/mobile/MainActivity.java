@@ -453,6 +453,15 @@ public class MainActivity extends Activity {
                     source = "a drawing of the page (it has no text layer and no stored image"
                             + (tp != null && !tp.scanInfo.isEmpty() ? ": " + tp.scanInfo : "") + ")";
                 }
+                // LFM2 (the 3B) cuts a picture over ~1.05 MP (2x its pixel limit at 512 image
+                // tokens) into 512 px tiles plus an overview: an A4 scan became 6 tiles + overview,
+                // ~2,200 tokens, ~180 s of reading per page. Scaling it under that size first
+                // makes it one picture of 512 tokens, the same detail the 2B reads at.
+                if (model.getName().toLowerCase(java.util.Locale.ROOT).contains("lfm2")) {
+                    List<byte[]> fitted = new ArrayList<>();
+                    for (byte[] im : pageImgs) fitted.add(fitUnderTiling(im, 1_000_000));
+                    pageImgs = fitted;
+                }
             }
             log("page " + pageNo + " (" + (i + 1) + " of " + nPages + "): "
                     + (fromText ? "reading its text layer (" + tp.lines + " lines, " + tp.expectedBlocks
@@ -837,6 +846,24 @@ public class MainActivity extends Activity {
         ByteArrayOutputStream o = new ByteArrayOutputStream();
         bmp.compress(Bitmap.CompressFormat.PNG, 100, o);
         return o.toByteArray();
+    }
+
+    /** The picture scaled down (aspect kept) to at most maxPixels; unchanged if already that small. */
+    private byte[] fitUnderTiling(byte[] img, int maxPixels) {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(img, 0, img.length, o);
+        long px = (long) o.outWidth * o.outHeight;
+        if (px <= maxPixels || px <= 0) return img;
+        double s = Math.sqrt((double) maxPixels / px);
+        Bitmap full = BitmapFactory.decodeByteArray(img, 0, img.length);
+        Bitmap small = Bitmap.createScaledBitmap(full, (int) (o.outWidth * s), (int) (o.outHeight * s), true);
+        log(String.format(java.util.Locale.ROOT, "  scaled %dx%d -> %dx%d so the 3B reads it as one picture",
+                o.outWidth, o.outHeight, small.getWidth(), small.getHeight()));
+        byte[] out = png(small);
+        full.recycle();
+        small.recycle();
+        return out;
     }
 
     private String asset(String name) throws Exception {

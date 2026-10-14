@@ -64,8 +64,10 @@ SOURCE_TYPES = {
     "image": {"png", "jpg", "jpeg", "bmp", "webp"},
     "docx": {"docx"},
     "tiff": {"tif", "tiff"},
+    "excel": {"xlsx", "xlsm"},
+    "pptx": {"pptx"},
 }
-TYPE_NAMES = {"pdf": "PDF", "image": "Image", "docx": "Word", "tiff": "TIFF"}
+TYPE_NAMES = {"pdf": "PDF", "image": "Image", "docx": "Word", "tiff": "TIFF", "excel": "Excel", "pptx": "PowerPoint"}
 
 # Every conversion the app can run. "opts" lists the settings a job may carry.
 ROUTES = {
@@ -109,6 +111,29 @@ ROUTES = {
     "tiff_pdf": dict(src="tiff", label="Searchable PDF", model=False, script="tiff_to_pdf.py",
                      needs=["tesseract"],
                      note="Each frame becomes a page, unchanged, with a hidden text layer so it can be searched."),
+    "xlsx_img": dict(src="excel", label="Image (PNG / JPG / JPEG)", model=True, script="excel_to_image.py",
+                     needs=["calc"], opts=["format", "dpi", "quality", "sheets", "large"],
+                     note="One picture per sheet, drawn by LibreOffice Calc from the real file (number formats, "
+                          "merged cells, conditional formatting, charts). The model only plans how to cut a long "
+                          "sheet; it never changes a cell. Every text cell is checked on the picture's page."),
+    "xlsx_pdf": dict(src="excel", label="PDF", model=True, script="excel_to_office.py",
+                     needs=["calc"], extra=["--to", "pdf"], opts=['sheets'],
+                     note="Each sheet drawn by LibreOffice Calc exactly as in Excel; a very tall sheet is cut into pages between rows. The model labels the structure; values come from the file."),
+    "xlsx_docx": dict(src="excel", label="Word (.docx)", model=True, script="excel_to_office.py",
+                     needs=["calc"], extra=["--to", "docx"], opts=['sheets'],
+                     note="Headings, paragraphs and real Word tables, a page per sheet, charts as pictures. The model labels the structure; values come from the file as Excel shows them."),
+    "xlsx_pptx": dict(src="excel", label="PowerPoint (.pptx)", model=True, script="excel_to_office.py",
+                     needs=["calc"], extra=["--to", "pptx"], opts=['sheets'],
+                     note="A slide per section; long tables continue with the header repeated. The model labels the structure; values come from the file as Excel shows them."),
+    "xlsx_csv": dict(src="excel", label="CSV", model=True, script="excel_to_office.py",
+                     needs=["calc"], extra=["--to", "csv"], opts=['sheets', 'csv_scope'],
+                     note="One CSV per table (or per sheet). Values as Excel shows them; every file is read back and compared cell by cell."),
+    "ppt_pdf": dict(src="pptx", label="PDF", model=True, script="ppt_convert.py", needs=["impress"],
+                    extra=["--to", "pdf"], opts=["slides"],
+                    note="A page per slide, drawn by LibreOffice Impress, with a bookmark per slide. The model looks at each slide for a title and layout problems (about 25 s a slide); its claims are checked against the deck."),
+    "ppt_img": dict(src="pptx", label="Image (PNG / JPG / JPEG)", model=True, script="ppt_convert.py",
+                    needs=["impress"], extra=["--to", "png"], opts=["format", "dpi", "quality", "slides"],
+                    note="One picture per slide, drawn by LibreOffice Impress, named by its title. The model looks at each slide for a title and layout problems; its claims are checked against the deck."),
     "tiff_pdf_pic": dict(src="tiff", label="PDF, picture only", model=False,
                          script="tiff_to_pdf.py", extra=["--no-text"],
                          note="Each frame becomes a page, unchanged. No text layer."),
@@ -158,7 +183,7 @@ def public_config() -> dict:
     c["named"] = NAMED
     c["fallback"] = FALLBACK
     c["local_base"] = LOCAL_BASE
-    c["tools"] = {"soffice": bool(shutil.which("soffice") or shutil.which("libreoffice")),
+    c["tools"] = {"soffice": bool(shutil.which("soffice") or shutil.which("libreoffice")), "calc": tool_ok("calc"), "impress": tool_ok("impress"),
                   "tesseract": bool(shutil.which("tesseract"))}
     return c
 
@@ -182,6 +207,13 @@ def job_env(model: bool) -> dict:
 def tool_ok(name: str) -> bool:
     if name == "soffice":
         return bool(shutil.which("soffice") or shutil.which("libreoffice"))
+    if name == "impress":
+        exe = shutil.which("soffice") or shutil.which("libreoffice")
+        return bool(exe) and os.path.exists(os.path.join(os.path.dirname(os.path.realpath(exe)), "libsdlo.so"))
+    if name == "calc":                       # LibreOffice's spreadsheet part is its own package
+        exe = shutil.which("soffice") or shutil.which("libreoffice")
+        folder = os.path.dirname(os.path.realpath(exe)) if exe else ""
+        return bool(folder) and any(os.path.exists(os.path.join(folder, n)) for n in ("libsclo.so", "libsc.so"))
     return bool(shutil.which(name))
 
 
@@ -228,6 +260,36 @@ def clean_options(route: dict, opts: dict) -> dict:
         if scan not in ("text", "image", "both"):
             raise ValueError("Scanned pages: choose text, image or both")
         out["scan_mode"] = scan
+    fmt = str(opts.get("format", "") or "").strip().lower()
+    if fmt and "format" in allowed:
+        if fmt not in ("png", "jpg", "jpeg"):
+            raise ValueError("Picture format: choose png, jpg or jpeg")
+        out["format"] = fmt
+    quality = str(opts.get("quality", "") or "").strip()
+    if quality and "quality" in allowed:
+        if not quality.isdigit() or not 1 <= int(quality) <= 100:
+            raise ValueError("JPG quality should be a number from 1 to 100")
+        out["quality"] = int(quality)
+    slides = str(opts.get("slides", "") or "").replace(" ", "").lower()
+    if slides and slides != "all" and "slides" in allowed:
+        if not PAGES_RE.match(slides):
+            raise ValueError("Slides should look like 1, 1-3 or 2,4")
+        out["slides"] = slides
+    sheets = str(opts.get("sheets", "") or "").replace(" ", "").lower()
+    if sheets and sheets != "all" and "sheets" in allowed:
+        if not PAGES_RE.match(sheets):
+            raise ValueError("Sheets should look like 1, 1-3 or 2,4")
+        out["sheets"] = sheets
+    scope = str(opts.get("csv_scope", "") or "").strip()
+    if scope and "csv_scope" in allowed:
+        if scope not in ("tables", "sheet"):
+            raise ValueError("CSV: choose one file per table or per sheet")
+        out["csv_scope"] = scope
+    large = str(opts.get("large", "") or "").strip()
+    if large and "large" in allowed:
+        if large not in ("split", "scale"):
+            raise ValueError("A large sheet: choose split or scale")
+        out["large"] = large
     return out
 
 
@@ -250,6 +312,9 @@ def build_command(job: dict) -> list:
         cmd += ["--pages", o["pages"]]
     if o.get("dpi"):
         cmd += ["--dpi", str(o["dpi"])]
+    for key in ("format", "quality", "sheets", "large", "csv_scope", "slides"):
+        if o.get(key):
+            cmd += [f"--{key.replace('_', '-')}", str(o[key])]
     return cmd
 
 
@@ -282,9 +347,12 @@ PROBLEMS = [
     (re.compile(r"COULD NOT OPEN|SKIPPED:"), "The file could not be processed."),
     (re.compile(r"Traceback \(most recent call last\)"), "The script crashed."),
     (re.compile(r"EXTRACTION FAILED"), "The model could not read the file."),
+    (re.compile(r"CONVERSION FAILED|COULD NOT WRITE"), "The file could not be converted."),
 ]
 SUMMARY_LINES = re.compile(
     r"(VERDICT|verdict|pages verified|pages written|pages converted|pages in PDF|frames in file|"
+    r"sheets converted|sheets verified|pictures written|AI plan|plan repaired|model note|"
+    r"files written|slides:|read back|calculated cell|slides converted|slides verified|AI check|bookmark|"
     r"content check|image check|word coverage|paragraphs kept|table cells kept|"
     r"UNVERIFIED|OCR agreement|self-consistency|OCR grounding|OCR coverage|"
     r"note:|NO TABLE|FAILED|could not be read|dropped|restored|corrected|merged)")
@@ -308,6 +376,15 @@ def progress_of(job: dict, text: str):
     if script == "test_pdf.py":
         m = re.search(r"testing (\d+):", text)
         done = len(re.findall(r"^Tier 1 (?:--|FAILED)", text, re.M))
+    elif script == "ppt_convert.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  slide \d+: '", text, re.M))
+    elif script == "excel_to_office.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  sheet \d+ '.*': \d+ table\(s\)", text, re.M))
+    elif script == "excel_to_image.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  sheet \d+ '.*': \d+ picture\(s\)", text, re.M))
     elif script == "pdf_to_txt.py":
         m = re.search(r"converting (\d+):", text)
         done = len(re.findall(r"^  page \d+: (?:digital|scanned|blank)", text, re.M))

@@ -298,11 +298,14 @@ class ApiDocs(unittest.TestCase):
         self.assertIn("404", spec["paths"]["/jobs/{jid}"]["delete"]["responses"])
         self.assertIn("application/octet-stream", spec["paths"]["/jobs/{jid}/files/{name}"]["get"]["responses"]["200"]["content"])
 
-    def test_every_conversion_still_has_its_form(self):  # 17 earlier ones plus JPG to PDF (searchable picture)
+    def test_every_conversion_still_has_its_form(self):  # 17 earlier ones plus JPG to PDF (searchable picture) plus Excel to image, PDF, Word, PowerPoint, CSV
         spec = self.client.get("/openapi.json").json()
         posts = [p for p, o in spec["paths"].items() if "post" in o and p.startswith("/convert/")]
-        self.assertEqual(len(posts), 18)
+        self.assertEqual(len(posts), 25)
         self.assertIn("/convert/jpg-to-pdf-searchable", posts)
+        self.assertIn("/convert/excel-to-image", posts)
+        self.assertIn("/convert/excel-to-csv", posts)
+        self.assertIn("/convert/powerpoint-to-image", posts)
 
     def test_test_page_is_not_cached(self):
         r = self.client.get("/ui")

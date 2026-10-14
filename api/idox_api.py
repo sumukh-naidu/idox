@@ -37,6 +37,17 @@ ENDPOINTS
     POST   /convert/word-to-pdf         .docx -> .pdf                     (LibreOffice)
     POST   /convert/tiff-to-pdf         TIFF  -> searchable .pdf          (Tesseract)
     POST   /convert/tiff-to-pdf-picture TIFF  -> .pdf, picture only       (no model)
+    POST   /convert/excel-to-image      .xlsx -> one .png/.jpg/.jpeg per sheet (model plans it,
+                                                 LibreOffice Calc draws it)
+    POST   /convert/excel-to-pdf        .xlsx -> .pdf, each sheet drawn by LibreOffice Calc
+    POST   /convert/excel-to-word       .xlsx -> .docx: headings, paragraphs, real tables, charts
+    POST   /convert/excel-to-powerpoint .xlsx -> .pptx: a slide per section, long tables continued
+    POST   /convert/powerpoint-to-pdf   .pptx -> .pdf, a page per slide, bookmarked
+    POST   /convert/powerpoint-to-image .pptx -> one .png/.jpg/.jpeg per slide
+                                        (both: Impress draws; the model titles and checks slides)
+    POST   /convert/excel-to-csv        .xlsx -> one .csv per table (or per sheet)
+                                        (all four: the model labels the structure, values are
+                                         copied from the file as Excel shows them)
 
     GET    /jobs/{id}                   state, page progress, summary, files
     GET    /jobs/{id}/files/{name}      download one output file
@@ -59,6 +70,10 @@ and the file itself -- its type, its size, and that its contents really are that
 CONFIGURATION (environment variables, read at start)
     IDOX_BASE_URL       the model server (default http://10.0.3.66:8080, the Qwen3.6-35B on
                         the Mac mini; http://127.0.0.1:8090 is the local 2B)
+    IDOX_EXCEL_BASE_URL the model server that plans Excel -> image (default
+                        http://127.0.0.1:8090, the local 2B; it reads text only)
+    IDOX_PPT_BASE_URL   the model server that looks at drawn slides (default http://127.0.0.1:8090,
+                        the local 2B with its vision part)
     IDOX_API_KEY        sent to the model server if set (the tuhin-ai API needs one)
     IDOX_THINKING, IDOX_MAX_IMAGE_SIDE, IDOX_TIMEOUT
                         passed through to the converter if set (see blocks.py)
@@ -138,6 +153,23 @@ ROUTES = {
     "tiff_pdf": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",)),
     "tiff_pdf_pic": dict(script="tiff_to_pdf.py", model=False, extra=["--no-text"]),
     # the same script for one JPG: the picture, fitted to A4, with a hidden text layer (no model)
+    # Excel -> picture. The model only PLANS (regions, where to cut a long sheet); LibreOffice
+    # Calc draws every cell. It has its own model server because the plan is text, so the 2B suits it.
+    "xlsx_img": dict(script="excel_to_image.py", model=True, needs=("calc",),
+                     base_url=os.environ.get("IDOX_EXCEL_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "xlsx_pdf": dict(script="excel_to_office.py", model=True, needs=("calc",), extra=["--to", "pdf"],
+                     result='{stem}.pdf', base_url=os.environ.get("IDOX_EXCEL_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "xlsx_docx": dict(script="excel_to_office.py", model=True, needs=("calc",), extra=["--to", "docx"],
+                     result='{stem}.docx', base_url=os.environ.get("IDOX_EXCEL_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "xlsx_pptx": dict(script="excel_to_office.py", model=True, needs=("calc",), extra=["--to", "pptx"],
+                     result='{stem}.pptx', base_url=os.environ.get("IDOX_EXCEL_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "xlsx_csv": dict(script="excel_to_office.py", model=True, needs=("calc",), extra=["--to", "csv"],
+                     result='', base_url=os.environ.get("IDOX_EXCEL_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    # PowerPoint -> PDF / pictures. Impress draws every slide; the 2B (vision) looks at each drawn slide for a
+    # title (slides without one) and layout problems, which are checked against the deck before they count.
+    "ppt_pdf": dict(script="ppt_convert.py", model=True, needs=("impress",), extra=["--to", "pdf"],
+                    result="{stem}.pdf", base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "ppt_img": dict(script="ppt_convert.py", model=True, needs=("impress",), extra=["--to", "png"], base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
     "jpg_pdf_search": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",), extra=["--fit-a4"]),
 }
 
@@ -148,17 +180,37 @@ MAGIC = {".pdf": (b"%PDF-",),
          ".png": (b"\x89PNG\r\n\x1a\n",),
          ".tif": (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"),
          ".tiff": (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"),
-         ".docx": (b"PK\x03\x04",)}
+         ".docx": (b"PK\x03\x04",), ".xlsx": (b"PK\x03\x04",), ".xlsm": (b"PK\x03\x04",),
+         ".pptx": (b"PK\x03\x04",)}
 
 # External programs a route cannot run without, and how to check for each.
+def have_calc() -> bool:
+    """LibreOffice's spreadsheet part is a separate package (libreoffice-calc) from Writer."""
+    exe = shutil.which("soffice") or shutil.which("libreoffice")
+    if not exe:
+        return False
+    folder = os.path.dirname(os.path.realpath(exe))
+    return any(os.path.exists(os.path.join(folder, n)) for n in ("libsclo.so", "libsc.so"))
+
+
+def have_impress() -> bool:
+    """LibreOffice's presentation part is its own package too (libreoffice-impress)."""
+    exe = shutil.which("soffice") or shutil.which("libreoffice")
+    return bool(exe) and os.path.exists(os.path.join(os.path.dirname(os.path.realpath(exe)), "libsdlo.so"))
+
+
 TOOLS = {"soffice": lambda: bool(shutil.which("soffice") or shutil.which("libreoffice")),
+         "calc": have_calc, "impress": have_impress,
          "tesseract": lambda: bool(shutil.which("tesseract"))}
-TOOL_NAMES = {"soffice": "LibreOffice", "tesseract": "Tesseract"}
+TOOL_NAMES = {"soffice": "LibreOffice", "calc": "LibreOffice Calc", "impress": "LibreOffice Impress",
+              "tesseract": "Tesseract"}
 
 # Validated options and the converter flag each one becomes. scan_mode is test_pdf.py's
 # and is added with its output flags.
 OPTION_FLAGS = {"pages": "--pages", "dpi": "--dpi", "quality": "--quality",
-                "compression": "--compression", "mode": "--mode"}
+                "compression": "--compression", "mode": "--mode",
+                "format": "--format", "sheets": "--sheets", "large": "--large", "csv_scope": "--csv-scope",
+                "slides": "--slides"}
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -172,7 +224,7 @@ def build_command(job: dict) -> list:
     r, o, stem = ROUTES[job["route"]], job["options"], job["stem"]
     cmd = [PY, "-u", str(REPO / r["script"]), f"in/{stem}{job['ext']}"]
     if r["model"]:
-        cmd += ["--base-url", BASE_URL]
+        cmd += ["--base-url", r.get("base_url") or BASE_URL]
     if "flag" in r:
         # test_pdf.py: the Office file it is asked for, plus a Markdown copy of what
         # the model read.
@@ -215,6 +267,8 @@ PROBLEMS = [
 ]
 SUMMARY_LINES = re.compile(
     r"(VERDICT|verdict|pages verified|pages written|pages converted|pages in PDF|frames in file|"
+    r"sheets converted|sheets verified|pictures written|AI plan|plan repaired|model warning|"
+    r"files written|slides:|read back|calculated cell|slides converted|slides verified|AI check|bookmark|"
     r"content check|image check|word coverage|paragraphs kept|table cells kept|"
     r"UNVERIFIED|OCR agreement|self-consistency|OCR grounding|OCR coverage|"
     r"note:|NO TABLE|FAILED|could not be read|dropped|restored|corrected|merged)")
@@ -254,6 +308,15 @@ def progress_of(job: dict, text: str):
     elif script in ("pdf_to_jpg.py", "pdf_to_png.py"):
         m = re.search(r"converting (\d+) at", text)
         done = len(re.findall(r"^  page \d+: (?:\d+x\d+px|FAILED)", text, re.M))
+    elif script == "ppt_convert.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  slide \d+: '", text, re.M))
+    elif script == "excel_to_office.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  sheet \d+ '.*': \d+ table\(s\)", text, re.M))
+    elif script == "excel_to_image.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  sheet \d+ '.*': \d+ picture\(s\)", text, re.M))
     elif script == "pdf_to_txt.py":
         m = re.search(r"converting (\d+):", text)
         done = len(re.findall(r"^  page \d+: (?:digital|scanned|blank)", text, re.M))
@@ -523,6 +586,22 @@ def check_upload(f: UploadFile, exts: tuple) -> UploadFile:
         f.file.seek(0)
         if not ok:
             raise ValueError("the file is not a real .docx file (no Word document inside)")
+    if ext == ".pptx":
+        try:
+            ok = "ppt/presentation.xml" in zipfile.ZipFile(f.file).namelist()
+        except zipfile.BadZipFile:
+            ok = False
+        f.file.seek(0)
+        if not ok:
+            raise ValueError("the file is not a real .pptx file (no presentation inside)")
+    if ext in (".xlsx", ".xlsm"):
+        try:
+            ok = "xl/workbook.xml" in zipfile.ZipFile(f.file).namelist()
+        except zipfile.BadZipFile:
+            ok = False
+        f.file.seek(0)
+        if not ok:
+            raise ValueError(f"the file is not a real {ext} file (no workbook inside)")
     return f
 
 
@@ -564,7 +643,7 @@ class Conversion(BaseModel):
 
     def options(self) -> dict:
         """The options as a job keeps them. All pages is the converters' own default."""
-        o = self.model_dump(exclude={"file"})
+        o = {k: v for k, v in self.model_dump(exclude={"file"}).items() if v is not None}
         if o.get("pages") == "all":
             del o["pages"]
         return o
@@ -594,6 +673,68 @@ class TiffFile(Conversion):
 class WordFile(Conversion):
     EXTS = (".docx",)
     file: UploadFile = Field(description="The Word document (.docx) to convert.")
+
+
+class ExcelFile(Conversion):
+    EXTS = (".xlsx", ".xlsm")
+    file: UploadFile = Field(description="The Excel workbook (.xlsx or .xlsm) to convert.")
+
+
+def sheet_list(sheets: str) -> str:
+    """'all', or sheet positions such as 1, 1-3 or 2,4 (the first sheet is 1)."""
+    sheets = (sheets or "").replace(" ", "").lower()
+    if not sheets or sheets == "all":
+        return "all"
+    try:
+        return page_range(sheets)
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("pages should be", "sheets should be")
+                         .replace("page range", "sheet range").replace("pages start", "sheets start")) from None
+
+
+class ExcelToImage(ExcelFile):
+    format: Literal["png", "jpg", "jpeg"] = Field(
+        "png", description="Picture format. png is lossless (sharp text, bigger files); jpg and jpeg are "
+                           "the same format with a different file ending (smaller, text edges soften).")
+    dpi: Optional[Dpi] = Field(
+        None, description="Resolution, 30-600. Leave empty for the format's default: 200 for png, 150 for "
+                          "jpg and jpeg. A very wide sheet is drawn at a lower dpi to stay under 5000 px.")
+    quality: Optional[int] = Field(
+        None, ge=1, le=100, description="jpg / jpeg quality, 1-100 (default 90). Ignored for png.")
+    sheets: Annotated[str, AfterValidator(sheet_list)] = Field(
+        "all", description="all, or the sheets to draw by position, e.g. 1, 1-3 or 2,4. Hidden and empty sheets "
+                           "are skipped.")
+    large: Literal["split", "scale"] = Field(
+        "split", description="A sheet too tall for one picture (over 4000 px): 'split' cuts it into parts "
+                             "between rows (never through a line of text); 'scale' draws it smaller instead.")
+
+
+class PptFile(Conversion):
+    EXTS = (".pptx",)
+    file: UploadFile = Field(description="The PowerPoint deck (.pptx) to convert.")
+    slides: Annotated[str, AfterValidator(sheet_list)] = Field(
+        "all", description="all, or the slides to convert by number, e.g. 1, 1-3 or 2,4. Hidden slides are left out.")
+
+
+class PptToImage(PptFile):
+    format: Literal["png", "jpg", "jpeg"] = Field(
+        "png", description="Picture format: png is lossless (sharp text, bigger files); jpg and jpeg are the same "
+                           "format with a different file ending.")
+    dpi: Optional[Dpi] = Field(None, description="Resolution, 30-600. Empty: 200 for png, 150 for jpg / jpeg "
+                                                 "(a 13.3-inch slide at 200 dpi is 2667 px wide).")
+    quality: Optional[int] = Field(None, ge=1, le=100, description="jpg / jpeg quality, 1-100 (default 90).")
+
+
+class ExcelSheets(ExcelFile):
+    sheets: Annotated[str, AfterValidator(sheet_list)] = Field(
+        "all", description="all, or the sheets to convert by position, e.g. 1, 1-3 or 2,4. Hidden and empty "
+                           "sheets are skipped.")
+
+
+class ExcelToCsv(ExcelSheets):
+    csv_scope: Literal["tables", "sheet"] = Field(
+        "tables", description="'tables': one CSV per table found on a sheet (header plus rows, no titles or notes); "
+                              "'sheet': one CSV per whole sheet.")
 
 
 class PdfToWord(PdfFile):
@@ -811,6 +952,8 @@ def conversion(group: str, path: str, route_id: str, model: type, title: str, ab
 
 
 PDF, IMAGE, OTHER = "From PDF", "From an image", "From Word or TIFF"
+EXCEL = "From Excel"
+PPT = "From PowerPoint"
 conversion(PDF, "pdf-to-word", "pdf_docx", PdfToWord, "PDF → Word",
            "PDF -> Word (.docx). Every page is read by the vision model, digital and scanned. "
            "A Markdown copy of what the model read (.md) is also produced.")
@@ -870,6 +1013,41 @@ conversion(IMAGE, "jpg-to-tiff", "jpg_tiff", JpgToTiff, "JPG → TIFF",
            "JPG -> TIFF (<name>.tiff), lossless. No model. The TIFF is read back and checked "
            "against the JPG.")
 
+conversion(EXCEL, "excel-to-image", "xlsx_img", ExcelToImage, "Excel → Image",
+           "Excel (.xlsx) -> PNG, JPG or JPEG, one picture per sheet (a sheet too tall for one picture is split into "
+           "parts, or scaled with large=scale). LibreOffice Calc draws every cell, number format, fill, merged cell, "
+           "conditional format and chart from the real file; the Qwen 2B only PLANS how to cut a long sheet and what "
+           "its regions are, and can never change a cell. If the model server is down the picture is still drawn, "
+           "from plain rules. Each picture is read back and every text cell is checked against the page it was cut "
+           "from; a failed check makes the job 'review'. Needs LibreOffice Calc.")
+EXCEL_HOW = (" The values come from the workbook exactly as Excel shows them (LibreOffice Calc calculates the "
+             "formulas); the Qwen 2B only labels the structure (titles, table headers, totals, notes), and its labels "
+             "are checked against the file. If the model server is down the structure comes from plain rules. "
+             "Needs LibreOffice Calc.")
+conversion(EXCEL, "excel-to-pdf", "xlsx_pdf", ExcelSheets, "Excel → PDF",
+           "Excel (.xlsx) -> PDF. Each sheet is drawn by LibreOffice Calc as Excel shows it (number formats, "
+           "conditional formatting, charts); a sheet taller than 20 inches is cut into pages between rows, never "
+           "through a line of text. Tables saved without borders get thin borders. Every text cell is checked in "
+           "the PDF." + EXCEL_HOW)
+conversion(EXCEL, "excel-to-word", "xlsx_docx", ExcelSheets, "Excel → Word",
+           "Excel (.xlsx) -> Word (.docx): each sheet on its own page, as headings, paragraphs and real Word "
+           "tables; charts and pictures as images in their place. Checked by word coverage." + EXCEL_HOW)
+conversion(EXCEL, "excel-to-powerpoint", "xlsx_pptx", ExcelSheets, "Excel → PowerPoint",
+           "Excel (.xlsx) -> PowerPoint (.pptx): a slide per section; a long table continues on more slides with "
+           "its header repeated; charts and pictures on the slide where they belong. Checked by word coverage."
+           + EXCEL_HOW)
+conversion(EXCEL, "excel-to-csv", "xlsx_csv", ExcelToCsv, "Excel → CSV",
+           "Excel (.xlsx) -> CSV (UTF-8): one file per table, or one per sheet with csv_scope=sheet. Values as "
+           "Excel shows them. Every CSV is read back and compared cell by cell." + EXCEL_HOW)
+PPT_HOW = (" Every slide is drawn by LibreOffice Impress (text, tables, charts, pictures, theme); hidden slides are "
+           "left out. The Qwen 2B looks at each drawn slide: it suggests a title for slides without one (used only if "
+           "its words are on the slide) and reports layout problems, which are checked against the deck before they "
+           "count. Each slide's text is checked on its page. About 25 s per slide with the model. Needs LibreOffice "
+           "Impress.")
+conversion(PPT, "powerpoint-to-pdf", "ppt_pdf", PptFile, "PowerPoint → PDF",
+           "PowerPoint (.pptx) -> PDF, a page per slide, with a bookmark per slide (its title)." + PPT_HOW)
+conversion(PPT, "powerpoint-to-image", "ppt_img", PptToImage, "PowerPoint → Image",
+           "PowerPoint (.pptx) -> PNG, JPG or JPEG, one picture per slide: <name>/slide_01_<title>.png, ..." + PPT_HOW)
 conversion(OTHER, "word-to-pdf", "docx_pdf", WordFile, "Word → PDF",
            "Word (.docx) -> PDF, rendered by LibreOffice. No model. The PDF is then checked "
            "against the Word file: word coverage, paragraphs and table cells kept.")

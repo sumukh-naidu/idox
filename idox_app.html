@@ -162,7 +162,7 @@ dialog::backdrop { background: rgba(8, 16, 15, .55); }
           <strong>Drop files here, or click to choose</strong>
           <small>PDF, Word (.docx), images (PNG, JPG, WebP, BMP) and TIFF</small>
         </div>
-        <input type="file" id="picker" multiple hidden accept=".pdf,.docx,.png,.jpg,.jpeg,.bmp,.webp,.tif,.tiff,.xlsx,.xlsm,.pptx">
+        <input type="file" id="picker" multiple hidden accept=".pdf,.docx,.png,.jpg,.jpeg,.bmp,.webp,.tif,.tiff,.xlsx,.xlsm,.pptx,.csv">
         <div class="files" id="files"></div>
         <button class="btn primary go" id="go" type="button" hidden>Convert</button>
         <p class="note" id="goNote" style="margin-top:10px" hidden></p>
@@ -255,7 +255,8 @@ const srcOf = name => {
   if (["png", "jpg", "jpeg", "bmp", "webp"].includes(ext)) return "image";
   if (["tif", "tiff"].includes(ext)) return "tiff";
   if (["xlsx", "xlsm"].includes(ext)) return "excel";
-  if (ext === "pptx") return "pptx"; return null;
+  if (ext === "pptx") return "pptx";
+  if (ext === "csv") return "csv"; return null;
 };
 
 /* ---------- engine chip and banner ---------- */
@@ -331,7 +332,7 @@ function paintFiles() {
       if (route.opts.includes("pages")) g.append(field("Pages", "text", "all", p, "pages", "e.g. 1-3"));
       if (route.opts.includes("format")) g.append(choice("Picture format", p, "format", [["png", "PNG (lossless)"], ["jpg", "JPG"], ["jpeg", "JPEG"]]));
       if (route.opts.includes("dpi")) g.append(field("Resolution (dpi)", "number", "", p, "dpi",
-        route.id === "pdf_tiff" ? "300" : (route.id === "xlsx_img" || route.id === "ppt_img") ? ((p.opts.format || "png") === "png" ? "200" : "150") : "150"));
+        route.id === "pdf_tiff" ? "300" : (route.id === "xlsx_img" || route.id === "ppt_img" || route.id === "csv_img") ? ((p.opts.format || "png") === "png" ? "200" : "150") : "150"));
       if (route.opts.includes("quality") && (p.opts.format || "png") !== "png") g.append(field("JPG quality (1-100)", "number", "", p, "quality", "90"));
       if (route.opts.includes("slides")) g.append(field("Slides", "text", "all", p, "slides", "e.g. 1-3"));
       if (route.opts.includes("sheets")) g.append(field("Sheets", "text", "all", p, "sheets", "e.g. 1-3"));

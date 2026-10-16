@@ -9,8 +9,10 @@ import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-if REPO not in sys.path:
-    sys.path.insert(0, REPO)
+SCRIPTS = os.path.join(REPO, "scripts")          # the converter scripts the tests import and run
+for p in (REPO, SCRIPTS):                        # REPO for the api package, SCRIPTS for blocks, to_docx, ...
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 # A digital and a scanned copy of the same made-up agreement, already in the repo.
 FIXTURES = os.path.join(REPO, "idocx_ai", "features", "fr_ai_04_translation", "input")
@@ -24,7 +26,7 @@ def load_script_defs(filename):
     The converter scripts do their work the moment they are imported, so they cannot be imported; this reads
     just their functions and constants. Once a script has a __main__ guard, a plain import works instead.
     """
-    src = open(os.path.join(REPO, filename), encoding="utf-8").read()
+    src = open(os.path.join(SCRIPTS, filename), encoding="utf-8").read()
     cut = src.find("\nparser = argparse")
     if cut < 0:
         cut = src.find("\nif __name__")

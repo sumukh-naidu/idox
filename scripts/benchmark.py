@@ -3,15 +3,15 @@
 benchmark.py -- latency and accuracy of every idox conversion on four fixed inputs,
 so two machines can be compared like for like.
 
-    .venv/bin/python benchmark.py run            run everything on THIS machine
-    .venv/bin/python benchmark.py score DIR      score a folder of outputs (from any machine)
-    .venv/bin/python benchmark.py report DIR     rebuild report.md from DIR
+    .venv/bin/python scripts/benchmark.py run            run everything on THIS machine
+    .venv/bin/python scripts/benchmark.py score DIR      score a folder of outputs (from any machine)
+    .venv/bin/python scripts/benchmark.py report DIR     rebuild report.md from DIR
 
 THE FOUR INPUTS (the same on both machines)
-    pdf_to_word_input/text_only_1page.pdf     a dense one-page digital PDF, text only
-    pdf_to_word_input/sample.pdf              one page: headings, a bullet list, a small table
-    image_to_word_input/hi.png                two short lines on a dark background
-    benchmark_input/sample_125dpi.png         sample.pdf rendered at 125 dpi
+    input/pdf_to_word_input/text_only_1page.pdf     a dense one-page digital PDF, text only
+    input/pdf_to_word_input/sample.pdf              one page: headings, a bullet list, a small table
+    input/image_to_word_input/hi.png                two short lines on a dark background
+    input/benchmark_input/sample_125dpi.png         sample.pdf rendered at 125 dpi
 
 WHAT "run" DOES
     - restarts the llama.cpp server before EVERY model conversion, so its first run is cold;
@@ -58,8 +58,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent
-sys.path.insert(0, str(REPO))
+REPO = Path(__file__).resolve().parent.parent       # the repo root (this file lives in scripts/)
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # the sibling scripts it imports
 
 HOME = Path.home()
 LLAMA = HOME / ".local/opt/llama.cpp/llama-b11247/llama-server"
@@ -71,10 +71,10 @@ SERVER_ARGS = ["--port", str(PORT), "--host", "127.0.0.1", "--no-webui", "--ctx-
                "--image-min-tokens", "512", "--image-max-tokens", "512", "--parallel", "1"]
 
 INPUTS = {
-    "text_only_1page.pdf": "pdf_to_word_input/text_only_1page.pdf",
-    "sample.pdf": "pdf_to_word_input/sample.pdf",
-    "hi.png": "image_to_word_input/hi.png",
-    "sample_125dpi.png": "benchmark_input/sample_125dpi.png",
+    "text_only_1page.pdf": "input/pdf_to_word_input/text_only_1page.pdf",
+    "sample.pdf": "input/pdf_to_word_input/sample.pdf",
+    "hi.png": "input/image_to_word_input/hi.png",
+    "sample_125dpi.png": "input/benchmark_input/sample_125dpi.png",
 }
 HI_PNG_TRUTH = "Hello, this is a demo!\nGenerated as a PNG image with text"
 
@@ -694,7 +694,7 @@ def main():
     global LLAMA, MODEL, MMPROJ, PORT, BASE_URL, SERVER_ARGS
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run"); r.add_argument("--out", default=str(REPO / "benchmark_output")); r.add_argument("--runs", type=int, default=3)
+    r = sub.add_parser("run"); r.add_argument("--out", default=str(REPO / "output/benchmark_output")); r.add_argument("--runs", type=int, default=3)
     r.add_argument("--llama-server", help=f"path to llama-server (default {LLAMA})")
     r.add_argument("--model", help=f"path to the language model .gguf (default {MODEL})")
     r.add_argument("--mmproj", help=f"path to the vision projector .gguf (default {MMPROJ})")

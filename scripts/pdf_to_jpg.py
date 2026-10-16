@@ -32,7 +32,7 @@ than passed: checks 1 and 2 still apply.
 Output layout: every PDF gets its own subfolder, one JPG per page, so several
 PDFs never mix and a multi-page PDF stays together:
 
-    pdf_to_jpg_input/report.pdf  ->  pdf_to_jpg_output/report/page_001.jpg
+    input/pdf_to_jpg_input/report.pdf  ->  output/pdf_to_jpg_output/report/page_001.jpg
                                                               page_002.jpg
                                                               ...
 
@@ -40,9 +40,9 @@ JPG and JPEG are the same format; only the file ending differs. The default is
 .jpg; --ext jpeg names the files page_001.jpeg instead. The pictures are identical.
 
 Usage:
-    .venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/report.pdf
-    .venv/bin/python pdf_to_jpg.py pdf_to_jpg_input/*.pdf
-    .venv/bin/python pdf_to_jpg.py report.pdf --pages 1-3 --dpi 200 --quality 95
+    .venv/bin/python scripts/pdf_to_jpg.py input/pdf_to_jpg_input/report.pdf
+    .venv/bin/python scripts/pdf_to_jpg.py input/pdf_to_jpg_input/*.pdf
+    .venv/bin/python scripts/pdf_to_jpg.py report.pdf --pages 1-3 --dpi 200 --quality 95
 """
 
 import argparse
@@ -57,8 +57,8 @@ from PIL import Image
 import ocr
 from blocks import normalize, squash
 
-PDF_DIR = "pdf_to_jpg_input"
-JPG_OUT_DIR = "pdf_to_jpg_output"
+PDF_DIR = "input/pdf_to_jpg_input"
+JPG_OUT_DIR = "output/pdf_to_jpg_output"
 
 # A page whose rendered longest side would exceed this is drawn at a lower dpi
 # instead. Some scanners declare the page box in PIXELS rather than points (see

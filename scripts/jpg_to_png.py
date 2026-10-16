@@ -33,9 +33,9 @@ This catches a faulty write or read. Both decodes use Pillow, so it does not tes
 JPEG decoder.
 
 Usage:
-    .venv/bin/python jpg_to_png.py jpg_to_png_input/photo.jpg
-    .venv/bin/python jpg_to_png.py jpg_to_png_input/*.jpg
-    .venv/bin/python jpg_to_png.py a.jpg b.jpeg --outdir somewhere
+    .venv/bin/python scripts/jpg_to_png.py input/jpg_to_png_input/photo.jpg
+    .venv/bin/python scripts/jpg_to_png.py input/jpg_to_png_input/*.jpg
+    .venv/bin/python scripts/jpg_to_png.py a.jpg b.jpeg --outdir somewhere
 """
 
 import argparse
@@ -46,8 +46,8 @@ import time
 
 from PIL import Image, ImageChops, ImageOps
 
-JPG_DIR = "jpg_to_png_input"
-PNG_OUT_DIR = "jpg_to_png_output"
+JPG_DIR = "input/jpg_to_png_input"
+PNG_OUT_DIR = "output/jpg_to_png_output"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 KEEP_MODES = ("RGB", "L")          # modes saved as they are; everything else becomes RGB
 

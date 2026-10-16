@@ -34,14 +34,14 @@ rather than passed. Check 3 already proves the PNG equals the render.
 Output layout, the same as pdf_to_jpg.py: every PDF gets its own subfolder, one
 PNG per page:
 
-    pdf_to_png_input/report.pdf  ->  pdf_to_png_output/report/page_001.png
+    input/pdf_to_png_input/report.pdf  ->  output/pdf_to_png_output/report/page_001.png
                                                               page_002.png
                                                               ...
 
 Usage:
-    .venv/bin/python pdf_to_png.py pdf_to_png_input/report.pdf
-    .venv/bin/python pdf_to_png.py pdf_to_png_input/*.pdf
-    .venv/bin/python pdf_to_png.py report.pdf --pages 1-3 --dpi 300
+    .venv/bin/python scripts/pdf_to_png.py input/pdf_to_png_input/report.pdf
+    .venv/bin/python scripts/pdf_to_png.py input/pdf_to_png_input/*.pdf
+    .venv/bin/python scripts/pdf_to_png.py report.pdf --pages 1-3 --dpi 300
 """
 
 import argparse
@@ -56,8 +56,8 @@ from PIL import Image
 import ocr
 from blocks import normalize, squash
 
-PDF_DIR = "pdf_to_png_input"
-PNG_OUT_DIR = "pdf_to_png_output"
+PDF_DIR = "input/pdf_to_png_input"
+PNG_OUT_DIR = "output/pdf_to_png_output"
 
 # A page whose rendered longest side would exceed this is drawn at a lower dpi
 # instead. Some scanners declare the page box in PIXELS rather than points (see

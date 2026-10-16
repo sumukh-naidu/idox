@@ -39,9 +39,9 @@ decoded again from disk, and for each page:
 Both decodes use Pillow, so this catches a faulty write or read, not a fault in Pillow's JPEG decoder.
 
 Usage:
-    .venv/bin/python jpg_to_tiff.py jpg_to_tiff_input/photo.jpg --outdir jpg_to_tiff_output
-    .venv/bin/python jpg_to_tiff.py jpg_to_tiff_input/*.jpg --compression deflate
-    .venv/bin/python jpg_to_tiff.py jpg_to_tiff_input/*.jpg --combine album
+    .venv/bin/python scripts/jpg_to_tiff.py input/jpg_to_tiff_input/photo.jpg --outdir output/jpg_to_tiff_output
+    .venv/bin/python scripts/jpg_to_tiff.py input/jpg_to_tiff_input/*.jpg --compression deflate
+    .venv/bin/python scripts/jpg_to_tiff.py input/jpg_to_tiff_input/*.jpg --combine album
 """
 
 import argparse
@@ -53,8 +53,8 @@ import time
 
 from PIL import Image, ImageChops, ImageOps, TiffImagePlugin
 
-JPG_DIR = "jpg_to_tiff_input"
-TIFF_OUT_DIR = "jpg_to_tiff_output"
+JPG_DIR = "input/jpg_to_tiff_input"
+TIFF_OUT_DIR = "output/jpg_to_tiff_output"
 KEEP_MODES = ("RGB", "L")                       # saved as they are; everything else becomes RGB
 COMPRESSIONS = {"lzw": ("tiff_lzw", 5, "LZW"), "deflate": ("tiff_deflate", 8, "Deflate")}
 

@@ -290,7 +290,14 @@ def build_xlsx(pages: List[Page], path: str, image_sets: List[list] = None,
                 problems.append(f"{where}: empty {block.kind}, skipped")
                 continue
 
-            _write_cell(ws, row, 1, text, bold=(block.kind == "heading"))
+            cell = _write_cell(ws, row, 1, text, bold=(block.kind == "heading"))
+            # A heading centred in the source stays centred: "Center Across Selection" over the
+            # width of the widest table, as Excel itself does for a title over a table. Any other
+            # heading keeps the default left alignment.
+            if block.kind == "heading" and getattr(block, "align", "left") == "center":
+                span = max([b.n_cols for pg in pages for b in pg.blocks if isinstance(b, TableBlock)] + [1])
+                for c in range(1, span + 1):
+                    ws.cell(row=row, column=c).alignment = Alignment(horizontal="centerContinuous", vertical="top")
             row += 2              # blank row after each piece of prose
 
         # Anything whose fraction landed past the last block goes at the end.

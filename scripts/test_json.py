@@ -9,7 +9,7 @@ The schema itself now lives in blocks.py, shared with test_pdf.py so the two
 cannot drift apart. Read the comment block at the top of blocks.py for why the
 schema is shaped the way it is -- it is the most useful thing learned so far.
 
-Run:  .venv/bin/python test_json.py
+Run:  .venv/bin/python scripts/test_json.py
 """
 
 import time

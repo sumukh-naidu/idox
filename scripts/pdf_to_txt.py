@@ -38,7 +38,7 @@ read from and, when the match is close, replaces the block with the PDF's exact
 words. This removes misreads, and it stops the repair step from inserting a second,
 correct copy beside a misread paragraph (which made pages 1.4x too long).
 
-Output:   pdf_to_txt_input/report.pdf  ->  pdf_to_txt_output/report.txt
+Output:   input/pdf_to_txt_input/report.pdf  ->  output/pdf_to_txt_output/report.txt
 Pages are separated by a line reading  ----- Page N -----
 
 HOW IT PROVES EVERYTHING WAS EXTRACTED. The saved .txt is read back, split into
@@ -54,8 +54,8 @@ pages at the markers, and every page is compared with the PDF's text layer
   (1-6 apply to digital pages. Scanned pages get 1 plus an advisory OCR figure.)
 
 Usage:
-    .venv/bin/python pdf_to_txt.py pdf_to_txt_input/report.pdf --base-url http://127.0.0.1:8090
-    .venv/bin/python pdf_to_txt.py pdf_to_txt_input/*.pdf --pages 1-3
+    .venv/bin/python scripts/pdf_to_txt.py input/pdf_to_txt_input/report.pdf --base-url http://127.0.0.1:8090
+    .venv/bin/python scripts/pdf_to_txt.py input/pdf_to_txt_input/*.pdf --pages 1-3
 """
 
 import argparse
@@ -89,8 +89,8 @@ from blocks import (
     ungrounded_text_blocks,
 )
 
-PDF_DIR = "pdf_to_txt_input"
-TXT_OUT_DIR = "pdf_to_txt_output"
+PDF_DIR = "input/pdf_to_txt_input"
+TXT_OUT_DIR = "output/pdf_to_txt_output"
 
 MARKER = "----- Page {n} -----"
 MARKER_RE = re.compile(r"^----- Page (\d+) -----$", re.M)

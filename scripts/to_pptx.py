@@ -273,6 +273,23 @@ def _split_headings(blocks):
     return out
 
 
+def _centre_title(title, slide_width):
+    """Centre a slide title whose heading is centred in the source. The layout's title box
+    covers only part of the slide, so it is stretched across the slide between the margins.
+    Its top and height are read first and written back with it: setting only left and width
+    would leave the box with no vertical position, and the title would jump off the slide.
+    Only the box's width and the paragraphs' alignment change; font, size and style do not."""
+    from pptx.enum.text import PP_ALIGN
+
+    top, height = title.top, title.height          # inherited from the layout when not set
+    if top is None or height is None:
+        return
+    title.left, title.top = Inches(MARGIN_IN), top
+    title.width, title.height = slide_width - Inches(2 * MARGIN_IN), height
+    for para in title.text_frame.paragraphs:
+        para.alignment = PP_ALIGN.CENTER
+
+
 def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
     """Write one slide per page. Returns a list of problems found.
 
@@ -304,7 +321,10 @@ def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
             None,
         )
         if title_idx is not None:
-            slide.shapes.title.text = blocks.pop(title_idx).text
+            head = blocks.pop(title_idx)
+            slide.shapes.title.text = head.text
+            if getattr(head, "align", "left") == "center":
+                _centre_title(slide.shapes.title, prs.slide_width)
         else:
             slide.shapes.title.text = ""
 

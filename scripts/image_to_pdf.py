@@ -28,8 +28,8 @@ not ground truth -- OCR is a reading of the pixels, not the document -- but
 real, independent evidence instead of nothing.
 
 Usage:
-    .venv/bin/python image_to_pdf.py image_input/photo.jpg
-    .venv/bin/python image_to_pdf.py image_input/*.png --model qwen3-vl:2b-instruct
+    .venv/bin/python scripts/image_to_pdf.py input/image_input/photo.jpg
+    .venv/bin/python scripts/image_to_pdf.py input/image_input/*.png --model qwen3-vl:2b-instruct
 """
 
 import argparse
@@ -57,8 +57,8 @@ from blocks import (
 )
 from to_docx import build_docx
 
-IMAGE_DIR = "image_input"
-PDF_OUT_DIR = "pdf_out_img"
+IMAGE_DIR = "input/image_input"
+PDF_OUT_DIR = "output/pdf_out_img"
 
 
 # --- copied from word_to_pdf.py, on purpose -------------------------------

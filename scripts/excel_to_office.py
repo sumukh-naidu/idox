@@ -41,9 +41,9 @@ HOW IT PROVES NOTHING WAS LOST. The written file is read back:
 
 Needs LibreOffice Calc:  sudo apt-get install -y libreoffice-calc
 Usage:
-    .venv/bin/python excel_to_office.py excel_to_image_input/sample_sales_report.xlsx --to docx
-    .venv/bin/python excel_to_office.py report.xlsx --to csv --csv-scope sheet
-    .venv/bin/python excel_to_office.py report.xlsx --to pptx --sheets 1 --no-ai
+    .venv/bin/python scripts/excel_to_office.py input/excel_to_image_input/sample_sales_report.xlsx --to docx
+    .venv/bin/python scripts/excel_to_office.py report.xlsx --to csv --csv-scope sheet
+    .venv/bin/python scripts/excel_to_office.py report.xlsx --to pptx --sheets 1 --no-ai
 """
 
 import argparse
@@ -64,8 +64,8 @@ import excel_to_image as x2i
 from blocks import LayoutAnalysis, Page, TableBlock, TextBlock
 
 TARGETS = ("pdf", "docx", "pptx", "csv")
-OUT_DIRS = {"pdf": "excel_to_pdf_output", "docx": "excel_to_word_output",
-            "pptx": "excel_to_ppt_output", "csv": "excel_to_csv_output"}
+OUT_DIRS = {"pdf": "output/excel_to_pdf_output", "docx": "output/excel_to_word_output",
+            "pptx": "output/excel_to_ppt_output", "csv": "output/excel_to_csv_output"}
 SLIDE_ROWS = 12           # data rows per slide; a longer table continues on the next slide
 SLIDE_PARAGRAPHS = 6      # text blocks per slide
 PDF_MAX_PAGE_PT = 1440    # a sheet taller than 20 inches is cut into pages
@@ -150,7 +150,8 @@ TOTAL_RE = re.compile(r"^\s*(sub)?\s*totals?\b|^\s*grand total\b|^\s*sum\b", re.
 # ---------------------------------------------------------------------------
 def plan_sheet(sheet: dict, target: str, base_url: str, use_ai: bool):
     """(regions, cut rows, notes, line for the log)."""
-    plan, why = None, "turned off (--no-ai)"
+    plan, why = None, ("already planned by " + os.environ["IDOX_PLANNED_BY"]) if os.environ.get("IDOX_PLANNED_BY") \
+        else "turned off (--no-ai)"
     if use_ai and sheet["cells"]:
         try:
             plan, secs, toks = x2i.ask_model(base_url, DOC_TEMPLATE.format(target=target),
@@ -352,7 +353,10 @@ def slides_for(sheet: dict, grid: dict, items: list, pics: list, multi: bool) ->
     state = {"cur": None, "heading": None}
 
     def heading(text: str) -> TextBlock:
-        return TextBlock(kind="heading", text=text, align="left", size="large", bold=True)
+        # a repeat of the current heading ("... (continued)", a chart's slide) keeps its alignment
+        src = state["heading"]
+        align = src.align if src is not None and text.startswith(src.text) else "left"
+        return TextBlock(kind="heading", text=text, align=align, size="large", bold=True)
 
     def title_text() -> str:
         return state["heading"].text if state["heading"] else sheet["name"]

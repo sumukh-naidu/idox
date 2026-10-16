@@ -23,8 +23,8 @@ OCR reading instead of reporting N/A -- OCR is still not ground truth, only a
 second, differently-fallible opinion.
 
 Usage:
-    .venv/bin/python image_to_excel.py image_to_excel_input/table_photo.jpg
-    .venv/bin/python image_to_excel.py image_to_excel_input/*.png
+    .venv/bin/python scripts/image_to_excel.py input/image_to_excel_input/table_photo.jpg
+    .venv/bin/python scripts/image_to_excel.py input/image_to_excel_input/*.png
 """
 
 import argparse
@@ -49,8 +49,8 @@ from blocks import (
 )
 from to_xlsx import build_xlsx
 
-IMAGE_DIR = "image_to_excel_input"
-XLSX_OUT_DIR = "image_to_excel_output"
+IMAGE_DIR = "input/image_to_excel_input"
+XLSX_OUT_DIR = "output/image_to_excel_output"
 
 
 def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool:

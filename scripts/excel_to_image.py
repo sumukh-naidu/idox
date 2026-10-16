@@ -51,15 +51,15 @@ MAX_SIDE_PX is drawn at a lower dpi instead.
 
 Output layout, the same as pdf_to_png.py: every workbook gets its own subfolder:
 
-    excel_to_image_input/report.xlsx  ->  excel_to_image_output/report/sheet_01_Sales.png
+    input/excel_to_image_input/report.xlsx  ->  output/excel_to_image_output/report/sheet_01_Sales.png
                                                                        sheet_02_Costs_part_01.png
                                                                        sheet_02_Costs_part_02.png
 
 Needs LibreOffice Calc:  sudo apt-get install -y libreoffice-calc
 Usage:
-    .venv/bin/python excel_to_image.py excel_to_image_input/report.xlsx
-    .venv/bin/python excel_to_image.py report.xlsx --format jpg --quality 85
-    .venv/bin/python excel_to_image.py report.xlsx --sheets 1,3 --large scale --no-ai
+    .venv/bin/python scripts/excel_to_image.py input/excel_to_image_input/report.xlsx
+    .venv/bin/python scripts/excel_to_image.py report.xlsx --format jpg --quality 85
+    .venv/bin/python scripts/excel_to_image.py report.xlsx --sheets 1,3 --large scale --no-ai
 """
 
 import argparse
@@ -81,8 +81,8 @@ from openpyxl import load_workbook
 from PIL import Image
 from pydantic import BaseModel, Field
 
-EXCEL_DIR = "excel_to_image_input"
-IMG_OUT_DIR = "excel_to_image_output"
+EXCEL_DIR = "input/excel_to_image_input"
+IMG_OUT_DIR = "output/excel_to_image_output"
 
 # The 2B served by llama-server on this machine. The model reads text only here (an
 # outline of the sheet), so no mmproj is needed. IDOX_BASE_URL or --base-url override.
@@ -539,9 +539,17 @@ def row_positions(sheet: dict, lines: list) -> dict:
     return pos
 
 
+def ink(b) -> tuple:
+    """The part of a line's box that holds its letters. LibreOffice's line boxes include the
+    font's full ascent and descent, so in a tightly packed table neighbouring rows' boxes
+    overlap and no y touches none of them; the letters themselves sit in the middle."""
+    h = b[3] - b[1]
+    return b[1] + 0.2 * h, b[3] - 0.2 * h
+
+
 def safe_cut(y: float, lines: list) -> bool:
-    """A cut at y crosses no line of text."""
-    return not any(b[1] < y < b[3] for _, b in lines)
+    """A cut at y crosses no letters of any line of text."""
+    return not any(ink(b)[0] < y < ink(b)[1] for _, b in lines)
 
 
 def choose_cuts(page_h: float, max_part: float, split_rows: list, pos: dict, lines: list) -> list:
@@ -555,7 +563,7 @@ def choose_cuts(page_h: float, max_part: float, split_rows: list, pos: dict, lin
             y = pos[above[-1]][1] + 1
             if safe_cut(y, lines):
                 cands.append(y)
-    gaps = sorted({round(b[3] + 0.5, 2) for _, b in lines if safe_cut(b[3] + 0.5, lines)})
+    gaps = sorted({round(y, 2) for _, b in lines for y in (ink(b)[1] + 0.3, ink(b)[0] - 0.3) if safe_cut(y, lines)})
     cuts, start = [], 0.0
     while page_h - start > max_part:
         limit = start + max_part
@@ -770,7 +778,8 @@ def run(xlsx: str, out_dir: str, fmt: str, dpi: int, quality: int, sheets_spec: 
         elif use_ai and s["cells"]:
             why = f"only the first {MAX_AI_SHEETS} sheets are planned by the model"
         else:
-            why = "turned off (--no-ai)" if not use_ai else "no cells"
+            why = (("already planned by " + os.environ["IDOX_PLANNED_BY"]) if os.environ.get("IDOX_PLANNED_BY")
+                   else "turned off (--no-ai)") if not use_ai else "no cells"
         used_ai = plan is not None
         regions, cuts, notes = repair_plan(plan or default_plan(s), s) if s["cells"] else ([], [], [])
         plans[s["index"]] = {"regions": regions, "cuts": cuts, "notes": notes, "ai": used_ai,
@@ -846,7 +855,7 @@ def run(xlsx: str, out_dir: str, fmt: str, dpi: int, quality: int, sheets_spec: 
                 problems += [f"{fname}: {m}" for m in check_image(path, fmt, (pix.width, pix.height), bool(s["cells"]))]
                 parts.append((fname, pix.width, pix.height, os.path.getsize(path)))
             if cuts:
-                cut_through = [t[:30] for t, b in lines if any(b[1] < y < b[3] for y in cuts)]
+                cut_through = [t[:30] for t, b in lines if any(ink(b)[0] < y < ink(b)[1] for y in cuts)]
                 if cut_through:
                     problems.append(f"{len(cut_through)} line(s) of text lie across a cut, e.g. {cut_through[0]!r}")
                 infos.append(f"{len(parts)} parts, cut at pt " + ", ".join(f"{y:.0f}" for y in cuts))

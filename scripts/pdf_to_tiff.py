@@ -12,7 +12,7 @@ Compared with JPG, two things change:
   - LZW and Deflate are LOSSLESS, so the file can be checked far more strictly
     than a JPG: the saved pixels must equal a fresh render of the page exactly.
 
-Output:   pdf_to_tiff_input/report.pdf  ->  pdf_to_tiff_output/report.tiff
+Output:   input/pdf_to_tiff_input/report.pdf  ->  output/pdf_to_tiff_output/report.tiff
 
 HOW IT PROVES EVERYTHING WAS CONVERTED. Writing a file is not the same as the
 file containing the document, so the saved TIFF is opened again and every frame
@@ -34,9 +34,9 @@ A scanned page has no text layer, so 6 and 7 are reported as not applicable
 rather than passed. Check 4 already proves the frame equals the render.
 
 Usage:
-    .venv/bin/python pdf_to_tiff.py pdf_to_tiff_input/report.pdf
-    .venv/bin/python pdf_to_tiff.py pdf_to_tiff_input/*.pdf
-    .venv/bin/python pdf_to_tiff.py report.pdf --pages 1-3 --dpi 200 --compression deflate
+    .venv/bin/python scripts/pdf_to_tiff.py input/pdf_to_tiff_input/report.pdf
+    .venv/bin/python scripts/pdf_to_tiff.py input/pdf_to_tiff_input/*.pdf
+    .venv/bin/python scripts/pdf_to_tiff.py report.pdf --pages 1-3 --dpi 200 --compression deflate
 """
 
 import argparse
@@ -52,8 +52,8 @@ from PIL import Image
 import ocr
 from blocks import normalize, squash
 
-PDF_DIR = "pdf_to_tiff_input"
-TIFF_OUT_DIR = "pdf_to_tiff_output"
+PDF_DIR = "input/pdf_to_tiff_input"
+TIFF_OUT_DIR = "output/pdf_to_tiff_output"
 
 COMPRESSIONS = {"lzw": "tiff_lzw", "deflate": "tiff_deflate"}
 

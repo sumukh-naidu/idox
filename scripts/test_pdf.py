@@ -29,10 +29,10 @@ THE THREE CHECKS, AND HOW MUCH EACH IS WORTH
    not "the model is wrong".
 
 Usage:
-    .venv/bin/python test_pdf.py <file.pdf>
-    .venv/bin/python test_pdf.py <file.pdf> --pages 1-3
-    .venv/bin/python test_pdf.py <file.pdf> --pages 2 --dpi 200
-    .venv/bin/python test_pdf.py <file.pdf> --out result.md
+    .venv/bin/python scripts/test_pdf.py <file.pdf>
+    .venv/bin/python scripts/test_pdf.py <file.pdf> --pages 1-3
+    .venv/bin/python scripts/test_pdf.py <file.pdf> --pages 2 --dpi 200
+    .venv/bin/python scripts/test_pdf.py <file.pdf> --out result.md
 """
 
 import argparse

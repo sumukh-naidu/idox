@@ -6,8 +6,8 @@ noise. This reads the real structure back out and prints it, which is also the
 honest way to check the conversion: it reports what is ACTUALLY IN THE FILE,
 not what the converter meant to put there.
 
-    .venv/bin/python show_docx.py output.docx
-    .venv/bin/python show_docx.py output.docx --styles    # show Word styles too
+    .venv/bin/python scripts/show_docx.py output.docx
+    .venv/bin/python scripts/show_docx.py output.docx --styles    # show Word styles too
 
 Merged cells are reported as such -- a spanning divider row should appear as
 one wide cell, not as the same text repeated across the row.

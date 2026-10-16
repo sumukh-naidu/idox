@@ -3,7 +3,7 @@
 idox_app.py -- a small local web app: upload a file, pick a conversion, download
 the result.
 
-    .venv/bin/python idox_app.py            then open  http://127.0.0.1:8765
+    .venv/bin/python scripts/idox_app.py            then open  http://127.0.0.1:8765
 
 WHY A SERVER AT ALL. Every converter here is a Python script, and a web page cannot
 run Python. This file is the missing piece: it serves idox_app.html, receives the
@@ -50,7 +50,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-REPO = Path(__file__).resolve().parent
+SCRIPTS = Path(__file__).resolve().parent      # the converter scripts, this file among them
+REPO = SCRIPTS.parent                          # the repo root: idox_app.html, input/, output/
 PY = sys.executable
 PAGE = REPO / "idox_app.html"
 
@@ -66,8 +67,9 @@ SOURCE_TYPES = {
     "tiff": {"tif", "tiff"},
     "excel": {"xlsx", "xlsm"},
     "pptx": {"pptx"},
+    "csv": {"csv"},
 }
-TYPE_NAMES = {"pdf": "PDF", "image": "Image", "docx": "Word", "tiff": "TIFF", "excel": "Excel", "pptx": "PowerPoint"}
+TYPE_NAMES = {"pdf": "PDF", "image": "Image", "docx": "Word", "tiff": "TIFF", "excel": "Excel", "pptx": "PowerPoint", "csv": "CSV"}
 
 # Every conversion the app can run. "opts" lists the settings a job may carry.
 ROUTES = {
@@ -131,6 +133,22 @@ ROUTES = {
     "ppt_pdf": dict(src="pptx", label="PDF", model=True, script="ppt_convert.py", needs=["impress"],
                     extra=["--to", "pdf"], opts=["slides"],
                     note="A page per slide, drawn by LibreOffice Impress, with a bookmark per slide. The model looks at each slide for a title and layout problems (about 25 s a slide); its claims are checked against the deck."),
+    "csv_xlsx": dict(src="csv", label="Excel (.xlsx)", model=True, script="csv_convert.py", needs=["calc"],
+                    extra=["--to", "xlsx"], opts=[], note="A formatted table: title, bold header, borders, numbers as numbers. The model plans the table (header, title, column types), checked against the data; numbers shown exactly as the CSV wrote them. About 15-30 s for the plan."),
+    "csv_pdf": dict(src="csv", label="PDF", model=True, script="csv_convert.py", needs=["calc"],
+                    extra=["--to", "pdf"], opts=[], note="The formatted table drawn by LibreOffice; long tables cut into pages. The model plans the table (header, title, column types), checked against the data; numbers shown exactly as the CSV wrote them. About 15-30 s for the plan."),
+    "csv_docx": dict(src="csv", label="Word (.docx)", model=True, script="csv_convert.py", needs=["calc"],
+                    extra=["--to", "docx"], opts=[], note="The table as a real Word table. The model plans the table (header, title, column types), checked against the data; numbers shown exactly as the CSV wrote them. About 15-30 s for the plan."),
+    "csv_pptx": dict(src="csv", label="PowerPoint (.pptx)", model=True, script="csv_convert.py", needs=["calc"],
+                    extra=["--to", "pptx"], opts=[], note="The table on slides, long tables continued. The model plans the table (header, title, column types), checked against the data; numbers shown exactly as the CSV wrote them. About 15-30 s for the plan."),
+    "csv_img": dict(src="csv", label="Image (PNG / JPG / JPEG)", model=True, script="csv_convert.py", needs=["calc"],
+                    extra=["--to", "png"], opts=['format', 'dpi', 'quality'], note="Pictures of the formatted table; long tables split. The model plans the table (header, title, column types), checked against the data; numbers shown exactly as the CSV wrote them. About 15-30 s for the plan."),
+    "ppt_docx": dict(src="pptx", label="Word (.docx)", model=True, script="ppt_to_office.py",
+                     extra=["--to", "docx"], opts=["slides"], note="A section per slide: title, text, tables, chart data, pictures, speaker notes. The deck's own text, tables, chart data and pictures (copied exactly), read from the file. The model plans every slide (titles, headings, lists, table headers and names), checked against the slide; about 15-25 s per slide."),
+    "ppt_xlsx": dict(src="pptx", label="Excel (.xlsx)", model=True, script="ppt_to_office.py",
+                     extra=["--to", "xlsx"], opts=["slides"], note="Tables and chart data as real grids, text in column A. The deck's own text, tables, chart data and pictures (copied exactly), read from the file. The model plans every slide (titles, headings, lists, table headers and names), checked against the slide; about 15-25 s per slide."),
+    "ppt_csv": dict(src="pptx", label="CSV", model=True, script="ppt_to_office.py",
+                    extra=["--to", "csv"], opts=["slides"], note="One CSV per table (chart data included); no tables gives deck_text.csv. The deck's own text, tables, chart data and pictures (copied exactly), read from the file. The model plans every slide (titles, headings, lists, table headers and names), checked against the slide; about 15-25 s per slide."),
     "ppt_img": dict(src="pptx", label="Image (PNG / JPG / JPEG)", model=True, script="ppt_convert.py",
                     needs=["impress"], extra=["--to", "png"], opts=["format", "dpi", "quality", "slides"],
                     note="One picture per slide, drawn by LibreOffice Impress, named by its title. The model looks at each slide for a title and layout problems; its claims are checked against the deck."),
@@ -192,7 +210,7 @@ def job_env(model: bool) -> dict:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith("IDOX_") and k != "TUHIN_AI_KEY"}
     env["PYTHONUNBUFFERED"] = "1"
-    env["PYTHONPATH"] = str(REPO)
+    env["PYTHONPATH"] = str(SCRIPTS)
     if model:
         with CONFIG_LOCK:
             if CONFIG["backend"] == "tuhin":
@@ -296,7 +314,7 @@ def clean_options(route: dict, opts: dict) -> dict:
 def build_command(job: dict) -> list:
     r, o = ROUTES[job["route"]], job["options"]
     stem, inp = job["stem"], f"in/{job['stem']}.{job['ext']}"
-    script = str(REPO / r["script"])
+    script = str(SCRIPTS / r["script"])
     if r["script"] == "test_pdf.py":
         cmd = [PY, "-u", script, inp, "--base-url", job["base_url"],
                r["flag"], f"out/{stem}.{r['ext']}", "--out", f"out/{stem}.md",
@@ -353,6 +371,7 @@ SUMMARY_LINES = re.compile(
     r"(VERDICT|verdict|pages verified|pages written|pages converted|pages in PDF|frames in file|"
     r"sheets converted|sheets verified|pictures written|AI plan|plan repaired|model note|"
     r"files written|slides:|read back|calculated cell|slides converted|slides verified|AI check|bookmark|"
+    r"AI reading|picture \d+:|embedded object:|CSV files|word coverage|AI plan|display check|plan checked|used:|"
     r"content check|image check|word coverage|paragraphs kept|table cells kept|"
     r"UNVERIFIED|OCR agreement|self-consistency|OCR grounding|OCR coverage|"
     r"note:|NO TABLE|FAILED|could not be read|dropped|restored|corrected|merged)")
@@ -376,6 +395,12 @@ def progress_of(job: dict, text: str):
     if script == "test_pdf.py":
         m = re.search(r"testing (\d+):", text)
         done = len(re.findall(r"^Tier 1 (?:--|FAILED)", text, re.M))
+    elif script == "csv_convert.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  (?:sheet|slide) \d+ '.*': \d+ (?:picture|table)", text, re.M))
+    elif script == "ppt_to_office.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  slide \d+: '", text, re.M))
     elif script == "ppt_convert.py":
         m = re.search(r"converting (\d+) as", text)
         done = len(re.findall(r"^  slide \d+: '", text, re.M))

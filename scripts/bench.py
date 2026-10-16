@@ -5,9 +5,9 @@ compared instead of guessed at.
 Run it once before a change and once after; it appends to bench_results.json
 and prints a comparison against the previous run.
 
-    .venv/bin/python bench.py                      # default page/dpi
-    .venv/bin/python bench.py --label "igpu on"    # tag the run
-    .venv/bin/python bench.py --dpi 150
+    .venv/bin/python scripts/bench.py                      # default page/dpi
+    .venv/bin/python scripts/bench.py --label "igpu on"    # tag the run
+    .venv/bin/python scripts/bench.py --dpi 150
 
 WHAT IT REPORTS, AND WHY EACH MATTERS
 

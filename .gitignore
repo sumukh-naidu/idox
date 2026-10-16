@@ -53,3 +53,5 @@ mobile/**/.gradle/
 mobile/**/local.properties
 mobile/**/jniLibs/
 mobile/llama_dotprod_libs/
+input/
+output/

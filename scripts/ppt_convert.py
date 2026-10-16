@@ -35,9 +35,9 @@ HOW IT PROVES NOTHING WAS LOST (read back from the written files):
 
 Needs LibreOffice Impress:  sudo apt-get install -y libreoffice-impress
 Usage:
-    .venv/bin/python ppt_convert.py ppt_to_pdf_input/deck.pptx --to pdf
-    .venv/bin/python ppt_convert.py ppt_to_image_input/deck.pptx --to png
-    .venv/bin/python ppt_convert.py deck.pptx --to jpg --quality 85 --slides 1-3 --no-ai
+    .venv/bin/python scripts/ppt_convert.py input/ppt_to_pdf_input/deck.pptx --to pdf
+    .venv/bin/python scripts/ppt_convert.py input/ppt_to_image_input/deck.pptx --to png
+    .venv/bin/python scripts/ppt_convert.py deck.pptx --to jpg --quality 85 --slides 1-3 --no-ai
 """
 
 import argparse
@@ -59,8 +59,8 @@ from pptx import Presentation
 from pptx.util import Emu
 from pydantic import BaseModel, Field
 
-OUT_DIRS = {"pdf": "ppt_to_pdf_output", "png": "ppt_to_image_output",
-            "jpg": "ppt_to_image_output", "jpeg": "ppt_to_image_output"}
+OUT_DIRS = {"pdf": "output/ppt_to_pdf_output", "png": "output/ppt_to_image_output",
+            "jpg": "output/ppt_to_image_output", "jpeg": "output/ppt_to_image_output"}
 FORMATS = {"png": {"dpi": 200}, "jpg": {"dpi": 150, "quality": 90}, "jpeg": {"dpi": 150, "quality": 90}}
 DEFAULT_BASE_URL = os.environ.get("IDOX_BASE_URL", "http://127.0.0.1:8090")
 AI_SIDE_PX = 1024          # the slide picture sent to the model, longest side
@@ -455,7 +455,7 @@ def main():
     parser.add_argument("--to", choices=("pdf", "png", "jpg", "jpeg"), required=True)
     parser.add_argument("--format", choices=("png", "jpg", "jpeg"), default=None,
                         help="the picture format; overrides --to when given (used by the API and web app)")
-    parser.add_argument("--outdir", default=None, help="default ppt_to_pdf_output or ppt_to_image_output")
+    parser.add_argument("--outdir", default=None, help="default output/ppt_to_pdf_output or output/ppt_to_image_output")
     parser.add_argument("--dpi", type=int, default=None, help="pictures: default 200 for png, 150 for jpg / jpeg")
     parser.add_argument("--quality", type=int, default=None, help="jpg / jpeg quality 1-100 (default 90)")
     parser.add_argument("--slides", default="all", help="e.g. 1, 1-3, 2,4 (default: all visible slides)")

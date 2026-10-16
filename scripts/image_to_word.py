@@ -28,9 +28,9 @@ and 4 (coverage) cannot run, because there is no ground truth to check
 against. The extraction here is UNVERIFIED by design, not because of a bug.
 
 Usage:
-    .venv/bin/python image_to_word.py image_to_word_input/photo.jpg
-    .venv/bin/python image_to_word.py image_to_word_input/*.png --base-url http://127.0.0.1:8090
-    .venv/bin/python image_to_word.py image_to_word_input/photo.jpg --mode image
+    .venv/bin/python scripts/image_to_word.py input/image_to_word_input/photo.jpg
+    .venv/bin/python scripts/image_to_word.py input/image_to_word_input/*.png --base-url http://127.0.0.1:8090
+    .venv/bin/python scripts/image_to_word.py input/image_to_word_input/photo.jpg --mode image
 """
 
 import argparse
@@ -58,8 +58,8 @@ from blocks import (
 )
 from to_docx import build_docx
 
-IMAGE_DIR = "image_to_word_input"
-DOCX_OUT_DIR = "image_to_word_output"
+IMAGE_DIR = "input/image_to_word_input"
+DOCX_OUT_DIR = "output/image_to_word_output"
 
 # A screenshot/photo has no physical "page size" the way a PDF does, so there
 # is no real DPI to convert pixels to inches with. 96 is the standard

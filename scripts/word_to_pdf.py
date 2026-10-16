@@ -30,9 +30,9 @@ That leaves the real question: did everything actually make it across? That is
 what the verification below is for, and it is where the work in this file is.
 
 Usage:
-    .venv/bin/python word_to_pdf.py report.docx
-    .venv/bin/python word_to_pdf.py report.docx --out out/report.pdf
-    .venv/bin/python word_to_pdf.py *.docx --outdir converted/
+    .venv/bin/python scripts/word_to_pdf.py report.docx
+    .venv/bin/python scripts/word_to_pdf.py report.docx --out out/report.pdf
+    .venv/bin/python scripts/word_to_pdf.py *.docx --outdir converted/
 """
 
 import argparse
@@ -312,7 +312,7 @@ def run(docx_path: str, out_dir: str, keep_going: bool) -> bool:
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("files", nargs="+", help=".docx file(s), globs allowed")
-parser.add_argument("--outdir", default="pdf_out", help="where PDFs go")
+parser.add_argument("--outdir", default="output/pdf_out", help="where PDFs go")
 parser.add_argument("--out", help="exact output path (single input only)")
 args = parser.parse_args()
 

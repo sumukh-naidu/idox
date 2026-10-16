@@ -14,7 +14,7 @@ for the invisible text layer. (image_to_pdf.py is the model-based route: it
 re-typesets the page from what the model reads, which is slower and can change
 letters. Use it only when a rebuilt, re-typeset PDF is wanted.)
 
-Output:   tiff_to_pdf_input/report.tiff  ->  tiff_to_pdf_output/report.pdf
+Output:   input/tiff_to_pdf_input/report.tiff  ->  output/tiff_to_pdf_output/report.pdf
 
 PAGE SIZE is the frame's physical size: pixels / dpi * 72 points, using the dpi
 stored in the TIFF, so a 300 dpi A4 scan becomes an A4 page. A frame with no
@@ -43,9 +43,9 @@ page is checked against the TIFF frame it came from (see check_page()):
                   saved PDF's text, so searching works.
 
 Usage:
-    .venv/bin/python tiff_to_pdf.py tiff_to_pdf_input/report.tiff
-    .venv/bin/python tiff_to_pdf.py tiff_to_pdf_input/*.tif*
-    .venv/bin/python tiff_to_pdf.py scan.tiff --no-text     # picture only, no OCR
+    .venv/bin/python scripts/tiff_to_pdf.py input/tiff_to_pdf_input/report.tiff
+    .venv/bin/python scripts/tiff_to_pdf.py input/tiff_to_pdf_input/*.tif*
+    .venv/bin/python scripts/tiff_to_pdf.py scan.tiff --no-text     # picture only, no OCR
 """
 
 import argparse
@@ -65,8 +65,8 @@ from PIL import Image, ImageSequence
 import ocr
 from blocks import normalize, squash
 
-TIFF_DIR = "tiff_to_pdf_input"
-PDF_OUT_DIR = "tiff_to_pdf_output"
+TIFF_DIR = "input/tiff_to_pdf_input"
+PDF_OUT_DIR = "output/tiff_to_pdf_output"
 
 DEFAULT_DPI = 300
 # A frame with no stored resolution is fitted inside this box (A4, in points) in whichever

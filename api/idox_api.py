@@ -43,6 +43,13 @@ ENDPOINTS
     POST   /convert/excel-to-word       .xlsx -> .docx: headings, paragraphs, real tables, charts
     POST   /convert/excel-to-powerpoint .xlsx -> .pptx: a slide per section, long tables continued
     POST   /convert/powerpoint-to-pdf   .pptx -> .pdf, a page per slide, bookmarked
+    POST   /convert/csv-to-excel        .csv  -> formatted .xlsx (numbers as numbers, shown as written)
+    POST   /convert/csv-to-pdf | csv-to-word | csv-to-powerpoint | csv-to-image
+                                        (the model plans header, title and column types; checked)
+    POST   /convert/powerpoint-to-word  .pptx -> .docx: titles, text, tables, chart data, pictures, notes
+    POST   /convert/powerpoint-to-excel .pptx -> .xlsx: tables and chart data as grids, text, pictures
+    POST   /convert/powerpoint-to-csv   .pptx -> one .csv per table (chart data included)
+                                        (all three: content from the deck; the model plans each slide)
     POST   /convert/powerpoint-to-image .pptx -> one .png/.jpg/.jpeg per slide
                                         (both: Impress draws; the model titles and checks slides)
     POST   /convert/excel-to-csv        .xlsx -> one .csv per table (or per sheet)
@@ -72,6 +79,7 @@ CONFIGURATION (environment variables, read at start)
                         the Mac mini; http://127.0.0.1:8090 is the local 2B)
     IDOX_EXCEL_BASE_URL the model server that plans Excel -> image (default
                         http://127.0.0.1:8090, the local 2B; it reads text only)
+    IDOX_CSV_BASE_URL   the model server that plans CSV tables (default http://127.0.0.1:8090, the local 2B)
     IDOX_PPT_BASE_URL   the model server that looks at drawn slides (default http://127.0.0.1:8090,
                         the local 2B with its vision part)
     IDOX_API_KEY        sent to the model server if set (the tuhin-ai API needs one)
@@ -110,7 +118,8 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
-REPO = Path(__file__).resolve().parent.parent      # the scripts live one folder up
+REPO = Path(__file__).resolve().parent.parent      # the repo root
+SCRIPTS = REPO / "scripts"                          # the converter scripts live in scripts/
 PY = sys.executable
 
 BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.66:8080").rstrip("/")
@@ -169,7 +178,25 @@ ROUTES = {
     # title (slides without one) and layout problems, which are checked against the deck before they count.
     "ppt_pdf": dict(script="ppt_convert.py", model=True, needs=("impress",), extra=["--to", "pdf"],
                     result="{stem}.pdf", base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    # PowerPoint -> Word / Excel / CSV: the deck's own text, tables, chart data and pictures (copied exactly);
+    # the 2B plans every slide's structure, checked against the slide.
+    "ppt_docx": dict(script="ppt_to_office.py", model=True, extra=["--to", "docx"], result="{stem}.docx", base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "ppt_xlsx": dict(script="ppt_to_office.py", model=True, extra=["--to", "xlsx"], result="{stem}.xlsx", base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "ppt_csv": dict(script="ppt_to_office.py", model=True, extra=["--to", "csv"], base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
     "ppt_img": dict(script="ppt_convert.py", model=True, needs=("impress",), extra=["--to", "png"], base_url=os.environ.get("IDOX_PPT_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    # CSV -> Excel / PDF / Word / PowerPoint / picture. The 2B plans the table (header, title, column types),
+    # checked against the data; a formatted workbook shows every value as the CSV wrote it, then the Excel
+    # converters draw / write it.
+    "csv_xlsx": dict(script="csv_convert.py", model=True, needs=("calc",), extra=["--to", "xlsx"],
+                    result='{stem}.xlsx', base_url=os.environ.get("IDOX_CSV_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "csv_pdf": dict(script="csv_convert.py", model=True, needs=("calc",), extra=["--to", "pdf"],
+                    result='{stem}.pdf', base_url=os.environ.get("IDOX_CSV_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "csv_docx": dict(script="csv_convert.py", model=True, needs=("calc",), extra=["--to", "docx"],
+                    result='{stem}.docx', base_url=os.environ.get("IDOX_CSV_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "csv_pptx": dict(script="csv_convert.py", model=True, needs=("calc",), extra=["--to", "pptx"],
+                    result='{stem}.pptx', base_url=os.environ.get("IDOX_CSV_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
+    "csv_img": dict(script="csv_convert.py", model=True, needs=("calc",), extra=["--to", "png"],
+                    base_url=os.environ.get("IDOX_CSV_BASE_URL", "http://127.0.0.1:8090").rstrip("/")),
     "jpg_pdf_search": dict(script="tiff_to_pdf.py", model=False, needs=("tesseract",), extra=["--fit-a4"]),
 }
 
@@ -222,7 +249,7 @@ JOBS_LOCK = threading.Lock()
 def build_command(job: dict) -> list:
     """The argument list for one job, run from the job's folder. Never a shell string."""
     r, o, stem = ROUTES[job["route"]], job["options"], job["stem"]
-    cmd = [PY, "-u", str(REPO / r["script"]), f"in/{stem}{job['ext']}"]
+    cmd = [PY, "-u", str(SCRIPTS / r["script"]), f"in/{stem}{job['ext']}"]
     if r["model"]:
         cmd += ["--base-url", r.get("base_url") or BASE_URL]
     if "flag" in r:
@@ -245,7 +272,7 @@ def job_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("IDOX_")}
     env.update({k: os.environ[k] for k in PASS_THROUGH if os.environ.get(k)})
     env["PYTHONUNBUFFERED"] = "1"
-    env["PYTHONPATH"] = str(REPO)
+    env["PYTHONPATH"] = str(SCRIPTS)
     return env
 
 
@@ -269,6 +296,7 @@ SUMMARY_LINES = re.compile(
     r"(VERDICT|verdict|pages verified|pages written|pages converted|pages in PDF|frames in file|"
     r"sheets converted|sheets verified|pictures written|AI plan|plan repaired|model warning|"
     r"files written|slides:|read back|calculated cell|slides converted|slides verified|AI check|bookmark|"
+    r"AI reading|picture \d+:|embedded object:|CSV files|word coverage|AI plan|display check|plan checked|used:|"
     r"content check|image check|word coverage|paragraphs kept|table cells kept|"
     r"UNVERIFIED|OCR agreement|self-consistency|OCR grounding|OCR coverage|"
     r"note:|NO TABLE|FAILED|could not be read|dropped|restored|corrected|merged)")
@@ -308,6 +336,12 @@ def progress_of(job: dict, text: str):
     elif script in ("pdf_to_jpg.py", "pdf_to_png.py"):
         m = re.search(r"converting (\d+) at", text)
         done = len(re.findall(r"^  page \d+: (?:\d+x\d+px|FAILED)", text, re.M))
+    elif script == "csv_convert.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  (?:sheet|slide) \d+ '.*': \d+ (?:picture|table)", text, re.M))
+    elif script == "ppt_to_office.py":
+        m = re.search(r"converting (\d+) as", text)
+        done = len(re.findall(r"^  slide \d+: '", text, re.M))
     elif script == "ppt_convert.py":
         m = re.search(r"converting (\d+) as", text)
         done = len(re.findall(r"^  slide \d+: '", text, re.M))
@@ -574,9 +608,9 @@ def check_upload(f: UploadFile, exts: tuple) -> UploadFile:
         raise ValueError("the file is empty")
     if size > MAX_UPLOAD:
         raise ValueError(f"the file is larger than {MAX_UPLOAD // (1024 * 1024)} MB")
-    head = f.file.read(16)
+    head = f.file.read(4096 if ext == ".csv" else 16)
     f.file.seek(0)
-    if not head.startswith(MAGIC[ext]):
+    if ext != ".csv" and not head.startswith(MAGIC[ext]):
         raise ValueError(f"the file is not a real {ext} file (its contents do not match)")
     if ext == ".docx":
         try:
@@ -586,6 +620,11 @@ def check_upload(f: UploadFile, exts: tuple) -> UploadFile:
         f.file.seek(0)
         if not ok:
             raise ValueError("the file is not a real .docx file (no Word document inside)")
+    if ext == ".csv":
+        f.file.seek(0)
+        if b"\x00" in head and not head.startswith((b"\xff\xfe", b"\xfe\xff")):
+            raise ValueError("the file is not a real .csv file (it is not text)")
+        return f
     if ext == ".pptx":
         try:
             ok = "ppt/presentation.xml" in zipfile.ZipFile(f.file).namelist()
@@ -707,6 +746,18 @@ class ExcelToImage(ExcelFile):
     large: Literal["split", "scale"] = Field(
         "split", description="A sheet too tall for one picture (over 4000 px): 'split' cuts it into parts "
                              "between rows (never through a line of text); 'scale' draws it smaller instead.")
+
+
+class CsvFile(Conversion):
+    EXTS = (".csv",)
+    file: UploadFile = Field(description="The CSV file to convert (any of , ; tab | as the delimiter; UTF-8, "
+                                         "UTF-16 or Windows-1252).")
+
+
+class CsvToImage(CsvFile):
+    format: Literal["png", "jpg", "jpeg"] = Field("png", description="Picture format.")
+    dpi: Optional[Dpi] = Field(None, description="Resolution, 30-600. Empty: 200 for png, 150 for jpg / jpeg.")
+    quality: Optional[int] = Field(None, ge=1, le=100, description="jpg / jpeg quality, 1-100 (default 90).")
 
 
 class PptFile(Conversion):
@@ -954,6 +1005,7 @@ def conversion(group: str, path: str, route_id: str, model: type, title: str, ab
 PDF, IMAGE, OTHER = "From PDF", "From an image", "From Word or TIFF"
 EXCEL = "From Excel"
 PPT = "From PowerPoint"
+CSV = "From CSV"
 conversion(PDF, "pdf-to-word", "pdf_docx", PdfToWord, "PDF → Word",
            "PDF -> Word (.docx). Every page is read by the vision model, digital and scanned. "
            "A Markdown copy of what the model read (.md) is also produced.")
@@ -1039,6 +1091,24 @@ conversion(EXCEL, "excel-to-powerpoint", "xlsx_pptx", ExcelSheets, "Excel → Po
 conversion(EXCEL, "excel-to-csv", "xlsx_csv", ExcelToCsv, "Excel → CSV",
            "Excel (.xlsx) -> CSV (UTF-8): one file per table, or one per sheet with csv_scope=sheet. Values as "
            "Excel shows them. Every CSV is read back and compared cell by cell." + EXCEL_HOW)
+CSV_HOW = (" The Qwen 2B plans the table: is the first row a header, a title, and each column's type (text, number, "
+           "currency, percent, date, id). Each answer is checked against the data: a column becomes numbers only if "
+           "95% of its values parse as numbers, ids stay text, the title must come from the file. Numbers are "
+           "stored as numbers but shown exactly as the CSV wrote them, and LibreOffice checks that every cell "
+           "displays as written. About 15-30 s for the plan. Needs LibreOffice Calc.")
+conversion(CSV, "csv-to-excel", "csv_xlsx", CsvFile, "CSV → Excel",
+           "CSV -> Excel (.xlsx): a formatted table with a title, bold header, borders, numbers as numbers and a "
+           "frozen header row." + CSV_HOW)
+conversion(CSV, "csv-to-pdf", "csv_pdf", CsvFile, "CSV → PDF",
+           "CSV -> PDF: the formatted table drawn by LibreOffice Calc; a long table is cut into pages between rows."
+           + CSV_HOW)
+conversion(CSV, "csv-to-word", "csv_docx", CsvFile, "CSV → Word",
+           "CSV -> Word (.docx): the title and the table as a real Word table." + CSV_HOW)
+conversion(CSV, "csv-to-powerpoint", "csv_pptx", CsvFile, "CSV → PowerPoint",
+           "CSV -> PowerPoint (.pptx): the table on slides, a long table continued with its header repeated."
+           + CSV_HOW)
+conversion(CSV, "csv-to-image", "csv_img", CsvToImage, "CSV → Image",
+           "CSV -> PNG, JPG or JPEG pictures of the formatted table; a long table is split into parts." + CSV_HOW)
 PPT_HOW = (" Every slide is drawn by LibreOffice Impress (text, tables, charts, pictures, theme); hidden slides are "
            "left out. The Qwen 2B looks at each drawn slide: it suggests a title for slides without one (used only if "
            "its words are on the slide) and reports layout problems, which are checked against the deck before they "
@@ -1046,6 +1116,21 @@ PPT_HOW = (" Every slide is drawn by LibreOffice Impress (text, tables, charts, 
            "Impress.")
 conversion(PPT, "powerpoint-to-pdf", "ppt_pdf", PptFile, "PowerPoint → PDF",
            "PowerPoint (.pptx) -> PDF, a page per slide, with a bookmark per slide (its title)." + PPT_HOW)
+PPT_OFFICE = (" The deck's own text (bullets as lists), tables, chart data (as tables) and SmartArt text are read from "
+              "the file, never retyped; pictures are copied exactly as the deck holds them. The Qwen 2B plans every "
+              "slide: a title for slides without one, the role of each text block (heading, paragraph, list, caption), "
+              "each table's header row and name, and text that is really a table -- each used only where the slide "
+              "agrees. The result is checked against the words LibreOffice draws on each slide. About 15-25 s per slide.")
+conversion(PPT, "powerpoint-to-word", "ppt_docx", PptFile, "PowerPoint → Word",
+           "PowerPoint (.pptx) -> Word (.docx): a section per slide with its title, text, real tables, chart data "
+           "with the chart's picture, pictures and speaker notes." + PPT_OFFICE)
+conversion(PPT, "powerpoint-to-excel", "ppt_xlsx", PptFile, "PowerPoint → Excel",
+           "PowerPoint (.pptx) -> Excel (.xlsx): the slides one after another in one sheet; tables and chart data as "
+           "real grids (numbers as numbers), text in column A, pictures in place." + PPT_OFFICE)
+conversion(PPT, "powerpoint-to-csv", "ppt_csv", PptFile, "PowerPoint → CSV",
+           "PowerPoint (.pptx) -> CSV: one file per table in the deck (slide tables, chart data, tables read from "
+           "pictures, tab-separated text); a deck with no table gives deck_text.csv, one text block per row. Every "
+           "CSV is read back and compared cell by cell." + PPT_OFFICE)
 conversion(PPT, "powerpoint-to-image", "ppt_img", PptToImage, "PowerPoint → Image",
            "PowerPoint (.pptx) -> PNG, JPG or JPEG, one picture per slide: <name>/slide_01_<title>.png, ..." + PPT_HOW)
 conversion(OTHER, "word-to-pdf", "docx_pdf", WordFile, "Word → PDF",

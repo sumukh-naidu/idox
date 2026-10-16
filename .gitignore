@@ -12,14 +12,37 @@ __pycache__/
 # Model weights - far too large for git, never commit
 models_manual/
 
-# Generated output
+# --- Generated output: every *_output/ folder, plus the scratch/test dirs that
+# hold converted files, rendered pages, logs and benchmark numbers. Kept local
+# so a run's results can be inspected without polluting the repo.
+*_output/
+render/
+ppt_review/
 pdf_out/
 pdf_out_img/
-pdf_to_word_output/
 scanned_pdf_output/
 xlsx_output/
-render/
+pdf_to_word_output/
+pdf_to_csv_output/
+pdf_to_ppt_output/
+image_to_csv_output/
+image_to_excel_output/
+image_to_pdf_output/
+image_to_ppt_output/
+image_to_word_output/
+image_to_xml_output/
+word_to_csv_output/
+word_to_image_output/
+word_to_ppt_output/
+word_to_xlsx_output/
+word_to_xml_output/
+
+# Loose converted files written next to inputs
+my_output.csv
+*.formatted.csv
 *.docx
+*.pptx
+*.xlsx
 *.log
 bench_results.json
 
@@ -45,3 +68,5 @@ End-of-Day_Report___Day_7.pdf
 
 # OS
 .DS_Store
+input/
+output/

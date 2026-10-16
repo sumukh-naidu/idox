@@ -123,9 +123,14 @@ def read_deck(path: str) -> tuple:
     slides = []
     for i, sl in enumerate(prs.slides, 1):
         hidden = sl._element.get("show") == "0"
-        texts, off, pics, charts = [], [], 0, 0
+        texts, off, pics, charts, drawn_shapes = [], [], 0, 0, 0
         for sh in sl.shapes:
             texts += shape_texts(sh)
+            # an EMPTY text box or title placeholder draws nothing: it is not content
+            is_empty_text = getattr(sh, "has_text_frame", False) and not shape_texts(sh) \
+                and sh.shape_type in (14, 17, None) and not getattr(sh, "has_table", False)
+            if not is_empty_text:
+                drawn_shapes += 1
             if sh.shape_type == 13:
                 pics += 1
             if getattr(sh, "has_chart", False):
@@ -143,7 +148,7 @@ def read_deck(path: str) -> tuple:
             pass
         slides.append({"index": i, "hidden": hidden, "text": "\n".join(texts), "title": title,
                        "off_slide": off, "pictures": pics, "charts": charts,
-                       "has_content": bool(texts) or pics > 0 or charts > 0 or len(sl.shapes) > 0})
+                       "has_content": bool(texts) or pics > 0 or charts > 0 or drawn_shapes > 0})
     return W, H, slides
 
 

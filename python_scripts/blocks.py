@@ -303,6 +303,88 @@ Before extracting anything, settle the decisions that are easy to get wrong:
 which regions are genuinely tables, how many columns each has, which rows break
 the grid, and which identifiers must be copied character by character.
 
+The analysis has two fields. n_blocks is the number of blocks you will write in stage 2: count EVERY paragraph of
+body text as one block, every heading as one block, every table as one block, and a bulleted list as one block. A
+page of running text normally holds several paragraphs, so n_blocks is normally 5 or more; it is 1 only for a page
+with a single short paragraph. When unsure, give the LARGER number. table_column_counts lists the column count of
+each real table, or [] when there is none.
+
+Keep this stage SHORT. Lists and numbers, not sentences. It exists so that you
+commit to a column count before you start transcribing -- not to explain
+yourself.
+
+STAGE 2 -- ACT (the "blocks" field)
+Now extract the page, following the analysis you just wrote. Apply these rules
+in order of importance:
+
+1. EVERY piece of text on the page becomes a block, from the very first line at the top to the very last line at
+   the bottom. ONE paragraph is ONE block: begin a new block at each blank line, indented line or change of
+   subject. Never put several paragraphs, or the whole page, into one block. A page of five paragraphs and one
+   table is SIX blocks, not one.
+
+2. A region is a table ONLY if it has a repeating grid of aligned cells across
+   several rows. A strip of spaced-out label/value pairs is a PARAGRAPH --
+   emit it as a paragraph, never drop it.
+
+3. A row spanning the full width of a table -- a section divider or group
+   heading -- is its OWN row. Put its text in the first cell and fill the
+   remaining cells with empty strings "". NEVER merge it into the next row:
+   that shifts every value in that row into the wrong column.
+
+4. Every data row must contain exactly as many cells as the header. Count
+   before you write. Use "" for blank cells rather than omitting them.
+   n_data_rows must equal the number of rows you output, divider rows
+   included.
+
+5. Copy text character by character. Dots, underscores, slashes and hyphens in
+   identifiers are significant: crm.team._action_assign_leads is NOT the same
+   as crm.team_action_assign_leads. Never tidy, expand, correct or complete
+   anything you see.
+
+6. Transcribe only what is printed. Never summarise, compute or infer.
+
+7. Record how each block LOOKS, not only what it says. Set align to 'center'
+   for anything centred across the page and 'right' for anything pushed to the
+   right margin. Set size to 'large' for titles and letterheads, 'small' for
+   footers and fine print. Set bold when the type is heavy. A letterhead is
+   usually large, centred and bold; a date line is often right-aligned; a
+   footer is usually small and centred.
+
+8. Where lines are separate on the page -- the lines of an address, a
+   signature block -- put REAL line breaks between them inside the block's
+   text. Never write the two characters backslash-n.
+
+9. Write exactly n_blocks blocks, and do not stop early: the last block must end with the last line printed on
+   the page. If text remains below what you have written, you have not finished."""
+
+
+USER_PROMPT = "Count the paragraphs, then extract every block on this page, from the first line to the last line."
+
+# Test hook, off by default: IDOX_SYSTEM_PROMPT_FILE (a text file) and IDOX_USER_PROMPT replace the two prompts above
+# for one run, so prompt wording can be compared without editing this file. Nothing changes unless they are set.
+if os.environ.get("IDOX_SYSTEM_PROMPT_FILE"):
+    with open(os.environ["IDOX_SYSTEM_PROMPT_FILE"], encoding="utf-8") as _fh:
+        SYSTEM_PROMPT = _fh.read()
+if os.environ.get("IDOX_USER_PROMPT"):
+    USER_PROMPT = os.environ["IDOX_USER_PROMPT"]
+_PROMPT_OVERRIDDEN = bool(os.environ.get("IDOX_SYSTEM_PROMPT_FILE") or os.environ.get("IDOX_USER_PROMPT"))
+
+# The prompt above is written for a full page of running text: it makes the model count its blocks and not stop early,
+# which is what a 4B model needs on a dense page (97-99% of the words against 86-91%). On a SHORT picture (a crop, a
+# screenshot, a single small page) the same wording makes it skip a centred title or the heading above a table
+# (measured on two such pictures: 17 of 22 phrases against 19 with the plain prompt below). So pictures shorter than
+# SHORT_PICTURE_PX are read with the plain prompt.
+SHORT_PICTURE_PX = 1400
+SYSTEM_PROMPT_SHORT = """You extract the contents of document page images exactly as printed.
+
+You work in two stages, and the response format enforces their order. The
+analysis is written before you transcribe anything.
+
+STAGE 1 -- OBSERVE (the "analysis" field)
+Before extracting anything, settle the decisions that are easy to get wrong:
+which regions are genuinely tables, how many columns each has, which rows break
+the grid, and which identifiers must be copied character by character.
+
 Keep this stage SHORT. Lists and numbers, not sentences. It exists so that you
 commit to a column count before you start transcribing -- not to explain
 yourself.
@@ -347,9 +429,21 @@ in order of importance:
 8. Where lines are separate on the page -- the lines of an address, a
    signature block -- put REAL line breaks between them inside the block's
    text. Never write the two characters backslash-n."""
+USER_PROMPT_SHORT = "Analyse this page briefly, then extract every block on it."
 
 
-USER_PROMPT = "Analyse this page briefly, then extract every block on it."
+def prompts_for(image_path: str):
+    """(system prompt, user prompt) for this picture: the page prompt, or the plain one for a short picture."""
+    if _PROMPT_OVERRIDDEN:
+        return SYSTEM_PROMPT, USER_PROMPT
+    try:
+        from PIL import Image
+        with Image.open(image_path) as im:
+            if im.height < SHORT_PICTURE_PX:
+                return SYSTEM_PROMPT_SHORT, USER_PROMPT_SHORT
+    except Exception:
+        pass
+    return SYSTEM_PROMPT, USER_PROMPT
 
 
 # ===========================================================================
@@ -1334,11 +1428,12 @@ def extract_page(image_path: str, model: str = MODEL_NAME,
         )
 
     schema_cls = Page if include_look else PageNoLook
+    _sys_prompt, _user_prompt = prompts_for(image_path)
     response = ollama.chat(
         model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": USER_PROMPT, "images": [image_path]},
+            {"role": "system", "content": _sys_prompt},
+            {"role": "user", "content": _user_prompt, "images": [image_path]},
         ],
         format=schema_cls.model_json_schema(),   # decoder cannot emit invalid JSON
         options={
@@ -1465,13 +1560,14 @@ def _extract_page_raw_server(image_path: str, base_url: str,
     mime = _mime_of(raw)
 
     schema_cls = Page if include_look else PageNoLook
+    _sys_prompt, _user_prompt = prompts_for(image_path)
     started = _time.time()
     body = {
         "model": os.environ.get("IDOX_MODEL", "manual") or "manual",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _sys_prompt},
             {"role": "user", "content": [
-                {"type": "text", "text": USER_PROMPT},
+                {"type": "text", "text": _user_prompt},
                 {"type": "image_url",
                  "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
             ]},

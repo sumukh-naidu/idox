@@ -260,7 +260,7 @@ def job_dir(jid: str) -> Path:
 def save_job(job: dict) -> None:
     keep = {k: v for k, v in job.items() if k not in ("cancel", "pid", "base_url")}
     tmp = job_dir(job["id"]) / "job.json.tmp"
-    tmp.write_text(json.dumps(keep, indent=1))
+    tmp.write_text(json.dumps(keep, indent=1), encoding="utf-8")
     tmp.replace(job_dir(job["id"]) / "job.json")
 
 

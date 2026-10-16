@@ -28,11 +28,12 @@ and 4 (coverage) cannot run, because there is no ground truth to check
 against. The extraction here is UNVERIFIED by design, not because of a bug.
 
 Usage:
-    .venv/bin/python image_to_word.py image_to_word_input/photo.jpg
-    .venv/bin/python image_to_word.py image_to_word_input/*.png --base-url http://127.0.0.1:8090
-    .venv/bin/python image_to_word.py image_to_word_input/photo.jpg --mode image
+    .venv/bin/python python_scripts/image_to_word.py input/image_to_word_input/photo.jpg
+    .venv/bin/python python_scripts/image_to_word.py input/image_to_word_input/*.png --base-url http://127.0.0.1:8090
+    .venv/bin/python python_scripts/image_to_word.py input/image_to_word_input/photo.jpg --mode image
 """
 
+import paths
 import argparse
 import glob
 import hashlib
@@ -56,10 +57,11 @@ from blocks import (
     fix_trailing_heading_after_table,
     merge_nested_tables,
 )
+from image_tiles import extract_page_auto
 from to_docx import build_docx
 
-IMAGE_DIR = "image_to_word_input"
-DOCX_OUT_DIR = "image_to_word_output"
+IMAGE_DIR = paths.inp("image_to_word_input")
+DOCX_OUT_DIR = paths.out("image_to_word_output")
 
 # A screenshot/photo has no physical "page size" the way a PDF does, so there
 # is no real DPI to convert pixels to inches with. 96 is the standard
@@ -123,7 +125,8 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None,
 
     started = time.time()
     try:
-        page, timing = extract_page(
+        # a full-page picture is read in 2 strips (more of a dense page's words); a shorter one is read whole
+        page, timing = extract_page_auto(
             image_path, model=model, return_timing=True, base_url=base_url
         )
     except Exception as exc:

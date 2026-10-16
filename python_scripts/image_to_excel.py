@@ -23,10 +23,11 @@ OCR reading instead of reporting N/A -- OCR is still not ground truth, only a
 second, differently-fallible opinion.
 
 Usage:
-    .venv/bin/python image_to_excel.py image_to_excel_input/table_photo.jpg
-    .venv/bin/python image_to_excel.py image_to_excel_input/*.png
+    .venv/bin/python python_scripts/image_to_excel.py input/image_to_excel_input/table_photo.jpg
+    .venv/bin/python python_scripts/image_to_excel.py input/image_to_excel_input/*.png
 """
 
+import paths
 import argparse
 import glob
 import os
@@ -47,10 +48,11 @@ from blocks import (
     fix_trailing_heading_after_table,
     merge_nested_tables,
 )
+from image_tiles import extract_page_auto
 from to_xlsx import build_xlsx
 
-IMAGE_DIR = "image_to_excel_input"
-XLSX_OUT_DIR = "image_to_excel_output"
+IMAGE_DIR = paths.inp("image_to_excel_input")
+XLSX_OUT_DIR = paths.out("image_to_excel_output")
 
 
 def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool:
@@ -62,7 +64,8 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
 
     started = time.time()
     try:
-        page, timing = extract_page(
+        # a full-page picture is read in 2 strips (more of a dense page's words); a shorter one is read whole
+        page, timing = extract_page_auto(
             image_path, model=model, return_timing=True, base_url=base_url
         )
     except Exception as exc:

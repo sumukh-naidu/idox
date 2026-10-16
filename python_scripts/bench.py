@@ -157,6 +157,6 @@ if history:
               f"-- a speed win that loses content is not a win")
 
 history.append(result)
-with open(RESULTS, "w") as fh:
+with open(RESULTS, "w", encoding="utf-8") as fh:
     json.dump(history, fh, indent=2)
 print(f"\nsaved to {RESULTS} ({len(history)} runs recorded)")

@@ -30,14 +30,16 @@ That leaves the real question: did everything actually make it across? That is
 what the verification below is for, and it is where the work in this file is.
 
 Usage:
-    .venv/bin/python word_to_pdf.py report.docx
-    .venv/bin/python word_to_pdf.py report.docx --out out/report.pdf
-    .venv/bin/python word_to_pdf.py *.docx --outdir converted/
+    .venv/bin/python python_scripts/word_to_pdf.py report.docx
+    .venv/bin/python python_scripts/word_to_pdf.py report.docx --out out/report.pdf
+    .venv/bin/python python_scripts/word_to_pdf.py *.docx --outdir converted/
 """
 
+import paths
 import argparse
 import glob
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -81,6 +83,9 @@ def find_soffice() -> str:
         path = shutil.which(name)
         if path:
             return path
+    for folder in (r"C:\Program Files\LibreOffice\program", r"C:\Program Files (x86)\LibreOffice\program"):
+        if os.path.exists(os.path.join(folder, "soffice.exe")):
+            return os.path.join(folder, "soffice.exe")
     raise SystemExit(
         "LibreOffice not found. Install it with:\n"
         "    sudo apt-get install -y libreoffice-writer"
@@ -100,7 +105,7 @@ def convert(docx_path: str, out_dir: str, timeout: int = 180) -> str:
     with tempfile.TemporaryDirectory() as profile:
         result = subprocess.run(
             [soffice,
-             f"-env:UserInstallation=file://{profile}",
+             f"-env:UserInstallation={pathlib.Path(profile).as_uri()}",
              "--headless", "--norestore",
              "--convert-to", "pdf",
              "--outdir", out_dir,
@@ -312,7 +317,7 @@ def run(docx_path: str, out_dir: str, keep_going: bool) -> bool:
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("files", nargs="+", help=".docx file(s), globs allowed")
-parser.add_argument("--outdir", default="pdf_out", help="where PDFs go")
+parser.add_argument("--outdir", default=paths.out("pdf_out"), help="where PDFs go")
 parser.add_argument("--out", help="exact output path (single input only)")
 args = parser.parse_args()
 

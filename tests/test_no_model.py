@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 import _load
-from _load import AGREEMENT, AGREEMENT_SCANNED, REPO
+from _load import AGREEMENT, AGREEMENT_SCANNED, REPO, SCRIPTS
 
 import pymupdf
 
@@ -326,7 +326,7 @@ class ImageRoutes(unittest.TestCase):
 
     def run_script(self, script, *extra):
         with tempfile.TemporaryDirectory() as d:
-            r = subprocess.run([sys.executable, os.path.join(REPO, script), AGREEMENT, "--outdir", d, *extra],
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, script), AGREEMENT, "--outdir", d, *extra],
                                capture_output=True, text=True, timeout=300)
             top = os.listdir(d)
             inner = os.path.join(d, top[0]) if top else d
@@ -386,7 +386,7 @@ class ScriptsAreImportable(unittest.TestCase):
     def test_import_has_no_side_effects(self):
         code = ("import pdf_to_txt, pdf_to_jpg, pdf_to_png, pdf_to_tiff; "
                 "print(all(callable(m.main) for m in (pdf_to_txt, pdf_to_jpg, pdf_to_png, pdf_to_tiff)))")
-        r = subprocess.run([sys.executable, "-W", "ignore", "-c", code], capture_output=True, text=True, cwd=REPO, timeout=120)
+        r = subprocess.run([sys.executable, "-W", "ignore", "-c", code], capture_output=True, text=True, cwd=SCRIPTS, timeout=120)
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         self.assertEqual(r.stdout.strip().splitlines()[-1], "True")
 
@@ -396,7 +396,7 @@ class PdfToTextWithoutModel(unittest.TestCase):
 
     def test_falls_back_to_the_text_layer(self):
         with tempfile.TemporaryDirectory() as d:
-            r = subprocess.run([sys.executable, "-W", "ignore", os.path.join(REPO, "pdf_to_txt.py"), AGREEMENT,
+            r = subprocess.run([sys.executable, "-W", "ignore", os.path.join(SCRIPTS, "pdf_to_txt.py"), AGREEMENT,
                                 "--outdir", d, "--base-url", "http://127.0.0.1:9"],
                                capture_output=True, text=True, timeout=300)
             self.assertNotIn("Traceback", r.stderr)
@@ -513,7 +513,7 @@ class TiffPageSize(unittest.TestCase):
         self.addCleanup(shutil.rmtree, d, True)
         src = os.path.join(d, "in.tiff")
         make_tiff(src, size, dpi)
-        args = [sys.executable, "-W", "ignore", os.path.join(REPO, "tiff_to_pdf.py"), src, "--outdir", d]
+        args = [sys.executable, "-W", "ignore", os.path.join(SCRIPTS, "tiff_to_pdf.py"), src, "--outdir", d]
         if not text:
             args.append("--no-text")
         r = subprocess.run(args, capture_output=True, text=True, timeout=300)
@@ -568,7 +568,7 @@ class JpgSearchablePicture(unittest.TestCase):
         return path, d
 
     def convert(self, path, d, *flags):
-        r = subprocess.run([sys.executable, "-W", "ignore", os.path.join(REPO, "tiff_to_pdf.py"), path, "--outdir", d, *flags],
+        r = subprocess.run([sys.executable, "-W", "ignore", os.path.join(SCRIPTS, "tiff_to_pdf.py"), path, "--outdir", d, *flags],
                            capture_output=True, text=True, timeout=300)
         self.assertEqual(r.returncode, 0, r.stdout[-500:] + r.stderr[-300:])
         return pymupdf.open(os.path.join(d, "receipt.pdf"))
@@ -721,7 +721,7 @@ class ModelAddress(unittest.TestCase):
         e = {k: v for k, v in os.environ.items() if k != "IDOX_BASE_URL"}
         e.update(env)
         r = subprocess.run([sys.executable, "-W", "ignore", "-c", "import blocks; print(blocks.DEFAULT_BASE_URL)"],
-                           capture_output=True, text=True, cwd=REPO, env=e, timeout=120)
+                           capture_output=True, text=True, cwd=SCRIPTS, env=e, timeout=120)
         return r.stdout.strip().splitlines()[-1]
 
     def test_unset_keeps_the_old_default(self):
@@ -760,11 +760,11 @@ class ExcelNumbers(unittest.TestCase):
             "ws = load_workbook(p).active\n"
             "cells = {c.coordinate: (type(c.value).__name__, c.value, c.number_format) for r in ws.iter_rows() for c in r if c.value is not None}\n"
             "import json; print(json.dumps({'cells': cells, 'coverage': verify_xlsx(p, 'Reference 2026 Paper A4 450.00 3,200.00 Amount Toner')[0]}))\n"
-        ) % REPO
+        ) % SCRIPTS
         e = {k: v for k, v in os.environ.items() if k != "IDOX_XLSX_NUMBERS"}
         e.update(env)
         r = subprocess.run([sys.executable, "-W", "ignore", "-c", code], capture_output=True, text=True, env=e,
-                           timeout=120, cwd=REPO)
+                           timeout=120, cwd=SCRIPTS)
         self.assertEqual(r.returncode, 0, r.stderr[-500:])
         return json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -794,7 +794,7 @@ class ModelDown(unittest.TestCase):
 
     def test_exit_code_is_non_zero_when_every_page_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            r = subprocess.run([sys.executable, os.path.join(REPO, "test_pdf.py"), AGREEMENT, "--docx",
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "test_pdf.py"), AGREEMENT, "--docx",
                                 os.path.join(d, "x.docx"), "--base-url", "http://127.0.0.1:9"],
                                capture_output=True, text=True, timeout=300, cwd=d)
         self.assertIn("Tier 1 FAILED", r.stdout)

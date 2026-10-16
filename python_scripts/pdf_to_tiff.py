@@ -1,53 +1,50 @@
 """
-pdf_to_png.py -- convert a PDF into PNG images, one PNG per page.
+pdf_to_tiff.py -- convert a PDF into ONE multi-page TIFF (one frame per page).
 
-NO MODEL IS INVOLVED HERE, for the same reason as pdf_to_jpg.py: a PNG is a
-picture of the page, so the correct conversion is to draw the page exactly as a
-PDF viewer would. PyMuPDF draws it and writes the PNG. Works identically on
-digital and scanned PDFs.
+NO MODEL IS INVOLVED HERE, for the same reason as pdf_to_jpg.py: a TIFF is a
+picture of the page, so the correct conversion is to draw each page exactly as a
+PDF viewer would. PyMuPDF draws it, Pillow writes the frames. Works identically
+on digital and scanned PDFs.
 
-Compared with JPG, one thing changes: PNG is LOSSLESS. Text edges stay sharp
-(no JPEG smudging around letters), and the file can be checked as strictly as
-pdf_to_tiff.py checks its frames -- the saved pixels must equal a fresh render of
-the page exactly. The price is size: a page of text is usually a few times larger
-than the same page as JPG; a page of photos can be far larger.
+Compared with JPG, two things change:
+
+  - TIFF holds every page in ONE file, which is the usual reason to want it.
+  - LZW and Deflate are LOSSLESS, so the file can be checked far more strictly
+    than a JPG: the saved pixels must equal a fresh render of the page exactly.
+
+Output:   input/pdf_to_tiff_input/report.pdf  ->  output/pdf_to_tiff_output/report.tiff
 
 HOW IT PROVES EVERYTHING WAS CONVERTED. Writing a file is not the same as the
-file containing the page, so each PNG is opened again from disk and checked
-against the PDF (see check_page()):
+file containing the document, so the saved TIFF is opened again and every frame
+is checked against the PDF (see check_frame()):
 
-  1. DIMENSIONS   the PNG is the page's size at the chosen dpi.
-  2. DPI          the resolution stored in the file matches what was drawn, so
-                  the page prints at its real size.
-  3. PIXEL-EXACT  the PNG is byte-for-byte identical to a fresh render of that
-                  page. Only possible because PNG is lossless.
-  4. NOT BLANK    a page that has text, images or drawings did not come out white.
-  5. TEXT LINES   (digital pages) every line in the PDF's text layer sits on ink
-                  in the PNG, looked up by coordinates. No OCR involved.
-  6. OCR WORDS    (digital pages, needs tesseract) an independent reading of the
-                  PNG must contain the PDF's own words. OCR is a reading, not the
-                  document, so only a real gap (below 90%) fails.
+  1. FRAMES       the TIFF has exactly as many frames as pages requested.
+  2. DIMENSIONS   each frame is the page's size at the chosen dpi.
+  3. DPI          the resolution stored in the file matches what was drawn.
+  4. PIXEL-EXACT  each frame is byte-for-byte identical to a fresh render of that
+                  page. Only possible because the compression is lossless.
+  5. NOT BLANK    a page with text, images or drawings did not come out white.
+  6. TEXT LINES   (digital pages) every line in the PDF's text layer sits on ink
+                  in the frame, looked up by coordinates. No OCR involved.
+  7. OCR WORDS    (digital pages, needs tesseract) an independent reading of the
+                  frame must contain the PDF's own words. OCR is a reading, not
+                  the document, so only a real gap (below 90%) fails.
 
-A scanned page has no text layer, so 5 and 6 are reported as not applicable
-rather than passed. Check 3 already proves the PNG equals the render.
-
-Output layout, the same as pdf_to_jpg.py: every PDF gets its own subfolder, one
-PNG per page:
-
-    pdf_to_png_input/report.pdf  ->  pdf_to_png_output/report/page_001.png
-                                                              page_002.png
-                                                              ...
+A scanned page has no text layer, so 6 and 7 are reported as not applicable
+rather than passed. Check 4 already proves the frame equals the render.
 
 Usage:
-    .venv/bin/python pdf_to_png.py pdf_to_png_input/report.pdf
-    .venv/bin/python pdf_to_png.py pdf_to_png_input/*.pdf
-    .venv/bin/python pdf_to_png.py report.pdf --pages 1-3 --dpi 300
+    .venv/bin/python python_scripts/pdf_to_tiff.py input/pdf_to_tiff_input/report.pdf
+    .venv/bin/python python_scripts/pdf_to_tiff.py input/pdf_to_tiff_input/*.pdf
+    .venv/bin/python python_scripts/pdf_to_tiff.py report.pdf --pages 1-3 --dpi 200 --compression deflate
 """
 
+import paths
 import argparse
 import glob
 import os
 import sys
+import tempfile
 import time
 
 import pymupdf
@@ -56,14 +53,16 @@ from PIL import Image
 import ocr
 from blocks import normalize, squash
 
-PDF_DIR = "pdf_to_png_input"
-PNG_OUT_DIR = "pdf_to_png_output"
+PDF_DIR = paths.inp("pdf_to_tiff_input")
+TIFF_OUT_DIR = paths.out("pdf_to_tiff_output")
+
+COMPRESSIONS = {"lzw": "tiff_lzw", "deflate": "tiff_deflate"}
 
 # A page whose rendered longest side would exceed this is drawn at a lower dpi
 # instead. Some scanners declare the page box in PIXELS rather than points (see
 # _sane_page_rect() in test_pdf.py), so a scan can claim to be 23.6 x 30.6 inches.
-# The cap keeps such files a sensible size. A3 at 300 dpi is 4,962 px, so genuine
-# large pages are not affected.
+# At 300 dpi that is 7,000 x 9,000 px -- a huge frame for what is really a Letter
+# page. A3 at 300 dpi is 4,962 px, so genuine large pages are not affected.
 MAX_SIDE_PX = 5000
 
 # A region has "ink" when its brightest and darkest pixels differ by more than
@@ -94,6 +93,14 @@ def page_dpi_for(page, dpi: int) -> int:
     return dpi
 
 
+def render(page, dpi: int):
+    """Draw one page. alpha=False draws on white, since a frame has no need of
+    transparency and a transparent page would otherwise come out black."""
+    pix = page.get_pixmap(dpi=dpi, alpha=False)
+    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    return img
+
+
 def _has_ink(gray: Image.Image, bbox, scale: float) -> bool:
     x0, y0, x1, y1 = (int(v * scale) for v in bbox)
     x0, y0 = max(x0, 0), max(y0, 0)
@@ -104,19 +111,16 @@ def _has_ink(gray: Image.Image, bbox, scale: float) -> bool:
     return hi - lo > INK_CONTRAST
 
 
-def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
-    """Verify one saved PNG against the PDF page it came from.
+def check_frame(page, frame: Image.Image, want_dpi: int, use_ocr: bool):
+    """Verify one frame read back from the saved TIFF against its PDF page.
 
     Returns (problems, info). info carries what was measured, for the report.
     """
     problems, info = [], {}
-
-    with Image.open(png_path) as im:
-        stored = im.info.get("dpi")
-        rgb = im.convert("RGB")
+    rgb = frame.convert("RGB")
     gray = rgb.convert("L")
 
-    # 1. dimensions
+    # 2. dimensions
     want_w = page.rect.width * want_dpi / 72.0
     want_h = page.rect.height * want_dpi / 72.0
     info["size"] = rgb.size
@@ -124,14 +128,14 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
         problems.append(f"size {rgb.size} but the page at {want_dpi} dpi should "
                         f"be about {want_w:.0f}x{want_h:.0f}")
 
-    # 2. dpi stored in the file (PNG keeps it in pixels per metre, so allow
-    # the rounding that conversion causes)
+    # 3. dpi stored in the file
+    stored = frame.info.get("dpi")
     info["dpi"] = stored
     if not stored or abs(stored[0] - want_dpi) > 0.5 or abs(stored[1] - want_dpi) > 0.5:
         problems.append(f"the file stores dpi {stored} but the page was drawn "
                         f"at {want_dpi}")
 
-    # 3. pixel-exact against a fresh render (lossless format makes this valid)
+    # 4. pixel-exact against a fresh render (lossless compression makes this valid)
     fresh = page.get_pixmap(dpi=want_dpi, alpha=False)
     exact = (rgb.size == (fresh.width, fresh.height)
              and rgb.tobytes() == fresh.samples)
@@ -145,7 +149,7 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
         else:
             problems.append("pixels cannot match a fresh render (different size)")
 
-    # 4. not blank, when the PDF says the page has content
+    # 5. not blank, when the PDF says the page has content
     source_text = page.get_text()
     has_text = bool(source_text.strip())
     has_content = (has_text or bool(page.get_images(full=True))
@@ -153,7 +157,7 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
     lo, hi = gray.getextrema()
     info["blank_pdf_page"] = not has_content
     if has_content and hi - lo <= INK_CONTRAST:
-        problems.append("the page has content in the PDF but the PNG is blank")
+        problems.append("the page has content in the PDF but the frame is blank")
 
     if not has_text:
         # Nothing to compare text against. A page with no content is simply
@@ -163,7 +167,7 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
         info["scanned"] = has_content
         return problems, info
 
-    # 5. every text line of the PDF sits on ink
+    # 6. every text line of the PDF sits on ink
     scale = rgb.width / page.rect.width
     lines = [
         ("".join(sp["text"] for sp in ln["spans"]).strip(), ln["bbox"])
@@ -176,14 +180,22 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
     if bare:
         shown = "; ".join(repr(t[:40]) for t in bare[:3])
         more = f" (+{len(bare) - 3} more)" if len(bare) > 3 else ""
-        problems.append(f"{len(bare)} text line(s) have no ink in the PNG: "
+        problems.append(f"{len(bare)} text line(s) have no ink in the frame: "
                         f"{shown}{more}")
 
-    # 6. an independent OCR reading contains the PDF's own words. The PNG
-    # already carries its dpi, which tesseract needs for its layout analysis.
+    # 7. an independent OCR reading contains the PDF's own words
     info["ocr"] = None
     if use_ocr and ocr.have_tesseract():
-        read = ocr.ocr_image(png_path)
+        fd, tmp = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            # Tell tesseract the real resolution. Without a dpi in the file it
+            # guesses (about 70), and its layout analysis then misses words --
+            # measured: 88% instead of 100% on the same page.
+            rgb.save(tmp, dpi=(want_dpi, want_dpi))
+            read = ocr.ocr_image(tmp)
+        finally:
+            os.unlink(tmp)
         got, got_sq = normalize(read), squash(read)
         words = {w for w in normalize(source_text).split() if len(w) > 3}
         if words:
@@ -196,12 +208,12 @@ def check_page(page, png_path: str, want_dpi: int, use_ocr: bool):
                 # on this alone), so it is reported but never fails the page. The exact checks above
                 # (size, blank page, ink under every text line) still decide PASS or FAIL.
                 info["ocr_warning"] = (
-                    f"OCR read only {cov:.0%} of the PDF's words from the PNG "
+                    f"OCR read only {cov:.0%} of the PDF's words from the frame "
                     f"({len(missing)} missing, e.g. {', '.join(missing[:6])})")
     return problems, info
 
 
-def run(pdf_path: str, out_dir: str, dpi: int, pages: str,
+def run(pdf_path: str, out_dir: str, dpi: int, compression: str, pages: str,
         use_ocr: bool = True) -> bool:
     name = os.path.splitext(os.path.basename(pdf_path))[0]
     print("=" * 72)
@@ -224,45 +236,66 @@ def run(pdf_path: str, out_dir: str, dpi: int, pages: str,
               f"(the PDF has {doc.page_count})")
         return False
 
-    pdf_out = os.path.join(out_dir, name)
-    os.makedirs(pdf_out, exist_ok=True)
-    print(f"  {doc.page_count} page(s), converting {len(targets)} at {dpi} dpi "
-          f"-> {pdf_out}/")
-
-    started = time.time()
-    total_bytes = 0
-    results = []            # one (pno, problems, info) per page that was written
-    failed_pages = []       # pages that could not be written at all
-    for pno in targets:
-        page = doc[pno]
-        page_dpi = page_dpi_for(page, dpi)
-        if page_dpi != dpi:
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{name}.tiff")
+    dpis = [page_dpi_for(doc[p], dpi) for p in targets]
+    print(f"  {doc.page_count} page(s), converting {len(targets)} at {dpi} dpi, "
+          f"{compression.upper()} compression -> {path}")
+    for pno, d in zip(targets, dpis):
+        if d != dpi:
+            page = doc[pno]
             print(f"  page {pno + 1}: declared {page.rect.width / 72:.1f}x"
                   f"{page.rect.height / 72:.1f}in is very large -- drawn at "
-                  f"{page_dpi} dpi instead of {dpi}")
+                  f"{d} dpi instead of {dpi}")
 
-        path = os.path.join(pdf_out, f"page_{pno + 1:03d}.png")
-        try:
-            # alpha=False: the page is drawn on white, as a viewer shows it. A
-            # transparent PNG would show the desktop or a black box behind the
-            # text in many viewers. get_pixmap(dpi=) also stores the dpi, which
-            # PyMuPDF writes into the PNG.
-            pix = page.get_pixmap(dpi=page_dpi, alpha=False)
-            pix.save(path)
-        except Exception as exc:
-            print(f"  page {pno + 1}: FAILED to write: {exc}")
-            failed_pages.append(pno + 1)
+    started = time.time()
+
+    # Frames are produced one at a time and handed straight to the writer, so a
+    # long PDF never holds every 300 dpi page in memory at once (one Letter page
+    # is about 25 MB).
+    def frame(i):
+        img = render(doc[targets[i]], dpis[i])
+        # Each frame carries its OWN dpi and compression.
+        img.encoderinfo = {"dpi": (dpis[i], dpis[i]),
+                           "compression": COMPRESSIONS[compression]}
+        return img
+
+    try:
+        first = frame(0)
+        first.save(path, "TIFF", save_all=True,
+                   append_images=(frame(i) for i in range(1, len(targets))),
+                   dpi=(dpis[0], dpis[0]),
+                   compression=COMPRESSIONS[compression])
+    except Exception as exc:
+        print(f"  FAILED to write the TIFF: {exc}")
+        return False
+    size = os.path.getsize(path)
+    print(f"  wrote {size / 1024:.0f} KB in {time.time() - started:.1f}s "
+          f"-- now reading it back to verify")
+
+    # Everything below reads the SAVED file, not what was in memory.
+    results = []
+    try:
+        tif = Image.open(path)
+        n_frames = getattr(tif, "n_frames", 1)
+    except Exception as exc:
+        print(f"  VERDICT: FAIL -- the saved TIFF cannot be opened: {exc}")
+        return False
+
+    for i, (pno, d) in enumerate(zip(targets, dpis)):
+        if i >= n_frames:
+            results.append((pno + 1, ["frame is missing from the TIFF"], {}))
+            print(f"  page {pno + 1}: frame is missing from the TIFF  [FAIL]")
             continue
-
-        total_bytes += os.path.getsize(path)
-        # Verified from the SAVED file, not from the pixmap in memory.
         try:
-            problems, info = check_page(page, path, page_dpi, use_ocr)
+            tif.seek(i)
+            problems, info = check_frame(doc[pno], tif, d, use_ocr)
         except Exception as exc:
-            problems, info = [f"could not read the PNG back: {exc}"], {}
+            problems, info = [f"could not read the frame back: {exc}"], {}
         results.append((pno + 1, problems, info))
 
-        parts = [f"{pix.width}x{pix.height}px", f"{os.path.getsize(path) / 1024:.0f} KB"]
+        w, h = info.get("size", (0, 0))
+        parts = [f"{w}x{h}px"]
         if info.get("exact"):
             parts.append("pixel-exact")
         if info.get("blank_pdf_page"):
@@ -279,26 +312,27 @@ def run(pdf_path: str, out_dir: str, dpi: int, pages: str,
             print(f"       - {p}")
         if info.get("ocr_warning"):
             print(f"       ~ warning (advisory, does not fail the page): {info['ocr_warning']}")
+    tif.close()
 
-    written = len(results)
+    frames_ok = n_frames == len(targets)
     n_bad = sum(1 for _, problems, _ in results if problems)
-    ok = written == len(targets) and n_bad == 0
+    ok = frames_ok and n_bad == 0
 
     print()
-    print(f"  --- verification (read back from the saved PNGs) ---")
-    print(f"  pages converted:  {written}/{len(targets)}"
-          + (f"   NOT written: {failed_pages}" if failed_pages else ""))
-    print(f"  pages verified:   {written - n_bad}/{written}")
+    print("  --- verification (read back from the saved TIFF) ---")
+    print(f"  frames in file:   {n_frames} (expected {len(targets)})"
+          f"  [{'PASS' if frames_ok else 'FAIL'}]")
+    print(f"  pages verified:   {len(results) - n_bad}/{len(results)}")
     n_text = sum(1 for _, _, i in results if i.get("lines"))
     n_scan = sum(1 for _, _, i in results if i.get("scanned"))
     if n_scan:
-        print(f"  note: {n_scan} page(s) have no text layer (scanned). Size, dpi, "
-              f"pixel and blank checks ran; text checks cannot, so those pages "
-              f"are verified as 'drawn exactly', not as 'every word present'.")
+        print(f"  note: {n_scan} page(s) have no text layer (scanned). Every check "
+              f"except the text and OCR ones ran, so those pages are verified as "
+              f"'pixel-exact to the PDF', not as 'every word present'.")
     if n_text and use_ocr and not ocr.have_tesseract():
         print(f"  note: tesseract not installed -- OCR word check skipped "
               f"({ocr.install_hint()})")
-    print(f"  {total_bytes / 1024:.0f} KB total, {time.time() - started:.1f}s")
+    print(f"  {size / 1024:.0f} KB total, {time.time() - started:.1f}s")
     print(f"  VERDICT: {'PASS -- every page converted and verified' if ok else 'FAIL -- see the problems above'}")
     print()
     return ok
@@ -309,10 +343,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("pdfs", nargs="+", help="PDF file(s), globs allowed")
-    parser.add_argument("--outdir", default=PNG_OUT_DIR,
-                        help=f"where the per-PDF folders go (default {PNG_OUT_DIR})")
-    parser.add_argument("--dpi", type=int, default=150,
-                        help="render resolution (default 150, the same as pdf_to_jpg.py)")
+    parser.add_argument("--outdir", default=TIFF_OUT_DIR,
+                        help=f"where the TIFF files go (default {TIFF_OUT_DIR})")
+    parser.add_argument("--dpi", type=int, default=300,
+                        help="render resolution (default 300)")
+    parser.add_argument("--compression", choices=sorted(COMPRESSIONS), default="lzw",
+                        help="lossless compression: lzw (default, opens everywhere) "
+                             "or deflate (about 30%% smaller, a few old viewers "
+                             "cannot open it)")
     parser.add_argument("--pages", default="all",
                         help="e.g. 1, 1-3, 2,4 (default: all)")
     parser.add_argument("--no-ocr", action="store_true",
@@ -332,7 +370,8 @@ def main():
         if not os.path.exists(path):
             print(f"skipping {path}: not found")
             continue
-        if run(path, args.outdir, args.dpi, args.pages, use_ocr=not args.no_ocr):
+        if run(path, args.outdir, args.dpi, args.compression, args.pages,
+               use_ocr=not args.no_ocr):
             ok += 1
         else:
             fail += 1

@@ -74,6 +74,9 @@ class StyledTable(TableBlock):
     row_heights: List[float] = []    # points, one per row written (header first)
     font: Optional[str] = None
     size_pt: Optional[float] = None
+    header_align: List[str] = []     # "left" / "center" / "right" per column, for the header row
+    col_align: List[str] = []        # the same for the data rows (the column's most common alignment)
+    header_fill: Optional[str] = None  # hex colour behind the header row, when the PDF shades it
 
 
 def word_font(pdf_name: str) -> str:
@@ -254,7 +257,63 @@ def _styled_paragraphs(group_lines, block, body, page_w, col_left, col_right, co
     return out
 
 
-def _style_table(block: TableBlock, detected, lines: List[_Line]):
+CELL_PAD_MAX = 10.0   # a cell's text starting within this many points of its left edge is left-aligned
+
+
+def _cell_align(cell, lines: List[_Line]) -> Optional[str]:
+    """left / center / right for the text inside one cell rectangle, from how it sits between the cell's edges."""
+    cx0, cy0, cx1, cy1 = cell
+    inside = [l for l in lines if l.x0 >= cx0 - 1 and l.x1 <= cx1 + 1 and l.y0 >= cy0 - 1 and l.y1 <= cy1 + 1]
+    if not inside:
+        return None
+    left, right = min(l.x0 for l in inside) - cx0, cx1 - max(l.x1 for l in inside)
+    if left <= CELL_PAD_MAX:
+        return "left"
+    if abs(left - right) <= max(6.0, 0.1 * (cx1 - cx0)):
+        return "center"
+    if right <= CELL_PAD_MAX:
+        return "right"
+    return "left"
+
+
+def _column_aligns(rows, lines: List[_Line], n_cols: int) -> List[str]:
+    """The most common alignment in each column over the given detected rows ("left" where nothing could be read)."""
+    out = []
+    for c in range(n_cols):
+        votes = Counter()
+        for row in rows:
+            if c < len(row.cells) and row.cells[c] is not None:
+                a = _cell_align(row.cells[c], lines)
+                if a:
+                    votes[a] += 1
+        out.append(votes.most_common(1)[0][0] if votes else "left")
+    return out
+
+
+def _header_fill(row_bbox, drawings) -> Optional[str]:
+    """Hex colour of the shading behind a table row, or None when the row is on the plain page.
+
+    Shaded cells are usually drawn one rectangle each, so the area one non-white colour covers inside the row is
+    added up; the colour covering at least half of the row wins.
+    """
+    rx0, ry0, rx1, ry1 = row_bbox
+    area = max(1.0, (rx1 - rx0) * (ry1 - ry0))
+    covered = Counter()
+    for d in drawings or []:
+        fill = d.get("fill")
+        rect = d.get("rect")
+        if not fill or rect is None or min(fill) > 0.97:
+            continue
+        ix = max(0.0, min(rx1, rect.x1) - max(rx0, rect.x0))
+        iy = max(0.0, min(ry1, rect.y1) - max(ry0, rect.y0))
+        covered["".join(f"{round(v * 255):02X}" for v in fill[:3])] += ix * iy
+    if not covered:
+        return None
+    colour, got = covered.most_common(1)[0]
+    return colour if got >= 0.5 * area else None
+
+
+def _style_table(block: TableBlock, detected, lines: List[_Line], drawings=None):
     """Match a model table to the PDF's table by shared cell text; copy its geometry."""
     cells = {_key(c) for row in [block.header] + list(block.rows) for c in row if _key(c)}
     best, best_hits = None, 0
@@ -282,10 +341,15 @@ def _style_table(block: TableBlock, detected, lines: List[_Line]):
     width = len(block.header) if block.has_header else len(block.rows[0]) if block.rows else 0
     heights = [r.bbox[3] - r.bbox[1] for r in best.rows]
     n_rows = len(block.rows) + (1 if block.has_header else 0)
+    head_rows = best.rows[:1] if block.has_header else []
+    data_rows = best.rows[1:] if block.has_header else best.rows
     return StyledTable(**block.model_dump(), y0=y0, y1=y1,
                        col_widths=widths if len(widths) == width else [],
                        row_heights=heights if len(heights) == n_rows else [],
-                       font=font, size_pt=size)
+                       font=font, size_pt=size,
+                       header_align=_column_aligns(head_rows, lines, width) if head_rows else [],
+                       col_align=_column_aligns(data_rows, lines, width),
+                       header_fill=_header_fill(best.rows[0].bbox, drawings) if block.has_header and best.rows else None)
 
 
 def restyle_page(page, pdf_page, has_images: bool) -> dict:
@@ -312,12 +376,16 @@ def restyle_page(page, pdf_page, has_images: bool) -> dict:
         detected = pdf_page.find_tables().tables
     except Exception:
         detected = []
+    try:
+        drawings = pdf_page.get_drawings() if detected else []
+    except Exception:
+        drawings = []
 
     used = [False] * len(lines)
     new_blocks, hint = [], 0
     for block in page.blocks:
         if isinstance(block, TableBlock):
-            styled = _style_table(block, detected, lines) if detected else block
+            styled = _style_table(block, detected, lines, drawings) if detected else block
             if styled is not block:
                 info["tables"] += 1
                 info["lowest"] = max(info["lowest"], styled.y1)
@@ -346,8 +414,31 @@ def restyle_page(page, pdf_page, has_images: bool) -> dict:
             info["lowest"] = max(info["lowest"], p.top + p.n_lines * p.line_h)
         new_blocks.extend(paras)
         info["text"] += 1
-    page.blocks[:] = new_blocks
+    page.blocks[:] = _margin_blocks_to_their_ends(new_blocks, pdf_page.rect.height)
     return info
+
+
+HEADER_ZONE, FOOTER_ZONE = 0.06, 0.92      # fractions of the page height: running header / running footer
+
+
+def _margin_blocks_to_their_ends(blocks, page_h: float):
+    """Put a running header first and a running footer last.
+
+    A PDF's text stream often lists the footer (or header) before the body, and the model follows that order. Word then
+    spaces the footer down to the page bottom and the whole body falls onto the next page, so the document gains a
+    nearly blank page for every real one. Only text blocks measured from the PDF carry a position; the order of
+    everything else is kept.
+    """
+    head, body, foot = [], [], []
+    for b in blocks:
+        y = getattr(b, "y0", None) if isinstance(b, StyledText) else None
+        if y is not None and y >= FOOTER_ZONE * page_h:
+            foot.append(b)
+        elif y is not None and y <= HEADER_ZONE * page_h:
+            head.append(b)
+        else:
+            body.append(b)
+    return head + body + foot
 
 
 def restyle_document(pages, pdf_pages, is_digital, image_sets, layout):
@@ -384,3 +475,27 @@ def restyle_document(pages, pdf_pages, is_digital, image_sets, layout):
     if lowest:
         new_layout["bottom_pt"] = max(10.0, min(new_layout["bottom_pt"], new_layout["height_pt"] - lowest - 14))
     return out, new_layout, notes
+
+
+def measure_tables(pages, pdf_pages, is_digital):
+    """Copies of the pages where each table carries the PDF's measured look (column widths, per-column alignment,
+    header fill). Text blocks are left exactly as the model returned them. Used by the PowerPoint and Excel writers,
+    which style tables but do not need the Word-only text geometry."""
+    out = []
+    for i, page in enumerate(pages):
+        if not is_digital[i] or not any(isinstance(b, TableBlock) for b in page.blocks):
+            out.append(page)
+            continue
+        pdf_page = pdf_pages[i]
+        try:
+            lines = page_lines(pdf_page)
+            detected = pdf_page.find_tables().tables
+            drawings = pdf_page.get_drawings()
+        except Exception:
+            out.append(page)
+            continue
+        copy = page.model_copy(deep=True)
+        copy.blocks = [_style_table(b, detected, lines, drawings) if isinstance(b, TableBlock) and detected else b
+                       for b in copy.blocks]
+        out.append(copy)
+    return out

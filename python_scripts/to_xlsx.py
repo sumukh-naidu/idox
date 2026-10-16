@@ -46,7 +46,7 @@ from typing import List
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from blocks import Page, TableBlock, normalize, squash
@@ -109,7 +109,7 @@ def as_number(text: str):
     return (value, fmt) if cell_display(value, fmt) == text else None
 
 
-def _write_cell(ws, row: int, col: int, value: str, bold: bool = False, allow_number: bool = False):
+def _write_cell(ws, row: int, col: int, value: str, bold: bool = False, allow_number: bool = False, wrap: bool = False):
     """Write one cell. Literal text unless `allow_number` is set and the value is an unambiguous number."""
     cell = ws.cell(row=row, column=col)
     text = "" if value is None else str(value)
@@ -123,10 +123,20 @@ def _write_cell(ws, row: int, col: int, value: str, bold: bool = False, allow_nu
             # The same mechanism Excel uses when a cell is formatted as Text: the
             # content displays unchanged but is never parsed as a formula.
             cell.quotePrefix = True
-    cell.alignment = Alignment(vertical="top", wrap_text=False)
+    cell.alignment = Alignment(vertical="top", wrap_text=wrap)
     if bold:
         cell.font = Font(bold=True)
     return cell
+
+
+def _look(cell, aligns, index: int, fill: str = None):
+    """Copy the source table's measured look onto a cell: horizontal alignment, and the header fill."""
+    if index < len(aligns):
+        cell.alignment = Alignment(horizontal=aligns[index], vertical="top", wrap_text=cell.alignment.wrap_text)
+    if fill:
+        cell.fill = PatternFill("solid", fgColor=fill)
+        if sum(int(fill[i:i + 2], 16) for i in (0, 2, 4)) / 3 < 110:      # dark fill: light text, as in the source
+            cell.font = Font(bold=bool(cell.font and cell.font.bold), color="FFFFFF")
 
 
 def _autosize(ws, max_width: int = 60):
@@ -262,9 +272,14 @@ def build_xlsx(pages: List[Page], path: str, image_sets: List[list] = None,
                     problems.append(f"{where}: table skipped (no columns)")
                     continue
 
+                head_align = getattr(block, "header_align", None) or []
+                col_align = getattr(block, "col_align", None) or []
+                fill = getattr(block, "header_fill", None)
+
                 if block.has_header:
                     for i, label in enumerate(block.header[:width], start=1):
-                        _write_cell(ws, row, i, label, bold=True)
+                        cell = _write_cell(ws, row, i, label, bold=True)
+                        _look(cell, (head_align or col_align), i - 1, fill)
                     row += 1
 
                 for r, source_row in enumerate(block.rows):
@@ -279,7 +294,7 @@ def build_xlsx(pages: List[Page], path: str, image_sets: List[list] = None,
                         )
                     cells = (list(source_row) + [""] * width)[:width]
                     for i, value in enumerate(cells, start=1):
-                        _write_cell(ws, row, i, value, allow_number=True)
+                        _look(_write_cell(ws, row, i, value, allow_number=True), col_align, i - 1)
                     row += 1
 
                 row += 1          # blank row after each table
@@ -290,7 +305,8 @@ def build_xlsx(pages: List[Page], path: str, image_sets: List[list] = None,
                 problems.append(f"{where}: empty {block.kind}, skipped")
                 continue
 
-            _write_cell(ws, row, 1, text, bold=(block.kind == "heading"))
+            # prose wraps inside its cell: a long paragraph, or a title and paragraph in one block, stays readable
+            _write_cell(ws, row, 1, text, bold=(block.kind == "heading"), wrap=True)
             row += 2              # blank row after each piece of prose
 
         # Anything whose fraction landed past the last block goes at the end.

@@ -95,7 +95,8 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
-REPO = Path(__file__).resolve().parent.parent      # the scripts live one folder up
+REPO = Path(__file__).resolve().parent.parent      # the project root
+SCRIPTS = REPO / "python_scripts"          # the scripts live here
 PY = sys.executable
 
 BASE_URL = os.environ.get("IDOX_BASE_URL", "http://10.0.3.66:8080").rstrip("/")
@@ -170,7 +171,7 @@ JOBS_LOCK = threading.Lock()
 def build_command(job: dict) -> list:
     """The argument list for one job, run from the job's folder. Never a shell string."""
     r, o, stem = ROUTES[job["route"]], job["options"], job["stem"]
-    cmd = [PY, "-u", str(REPO / r["script"]), f"in/{stem}{job['ext']}"]
+    cmd = [PY, "-u", str(SCRIPTS / r["script"]), f"in/{stem}{job['ext']}"]
     if r["model"]:
         cmd += ["--base-url", BASE_URL]
     if "flag" in r:
@@ -193,7 +194,7 @@ def job_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("IDOX_")}
     env.update({k: os.environ[k] for k in PASS_THROUGH if os.environ.get(k)})
     env["PYTHONUNBUFFERED"] = "1"
-    env["PYTHONPATH"] = str(REPO)
+    env["PYTHONPATH"] = str(SCRIPTS)
     return env
 
 

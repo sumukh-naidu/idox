@@ -28,13 +28,15 @@ not ground truth -- OCR is a reading of the pixels, not the document -- but
 real, independent evidence instead of nothing.
 
 Usage:
-    .venv/bin/python image_to_pdf.py image_input/photo.jpg
-    .venv/bin/python image_to_pdf.py image_input/*.png --model qwen3-vl:2b-instruct
+    .venv/bin/python python_scripts/image_to_pdf.py input/image_input/photo.jpg
+    .venv/bin/python python_scripts/image_to_pdf.py input/image_input/*.png --model qwen3-vl:2b-instruct
 """
 
+import paths
 import argparse
 import glob
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -55,10 +57,11 @@ from blocks import (
     fix_trailing_heading_after_table,
     merge_nested_tables,
 )
+from image_tiles import extract_page_auto
 from to_docx import build_docx
 
-IMAGE_DIR = "image_input"
-PDF_OUT_DIR = "pdf_out_img"
+IMAGE_DIR = paths.inp("image_input")
+PDF_OUT_DIR = paths.out("pdf_out_img")
 
 
 # --- copied from word_to_pdf.py, on purpose -------------------------------
@@ -73,6 +76,9 @@ def find_soffice() -> str:
         path = shutil.which(name)
         if path:
             return path
+    for folder in (r"C:\Program Files\LibreOffice\program", r"C:\Program Files (x86)\LibreOffice\program"):
+        if os.path.exists(os.path.join(folder, "soffice.exe")):
+            return os.path.join(folder, "soffice.exe")
     raise SystemExit(
         "LibreOffice not found. Install it with:\n"
         "    sudo apt-get install -y libreoffice-writer"
@@ -87,11 +93,11 @@ def docx_to_pdf(docx_path: str, out_dir: str, timeout: int = 180) -> str:
     with tempfile.TemporaryDirectory() as profile:
         result = subprocess.run(
             [soffice,
-             f"-env:UserInstallation=file://{profile}",
+             f"-env:UserInstallation={pathlib.Path(profile).as_uri()}",
              "--headless", "--norestore",
              "--convert-to", "pdf",
-             "--outdir", out_dir,
-             docx_path],
+             "--outdir", os.path.abspath(out_dir),
+             os.path.abspath(docx_path)],
             capture_output=True, text=True, timeout=timeout,
         )
 
@@ -116,7 +122,8 @@ def run(image_path: str, model: str, out_dir: str, base_url: str = None) -> bool
 
     started = time.time()
     try:
-        page, timing = extract_page(
+        # a full-page picture is read in 2 strips (more of a dense page's words); a shorter one is read whole
+        page, timing = extract_page_auto(
             image_path, model=model, return_timing=True, base_url=base_url
         )
     except Exception as exc:

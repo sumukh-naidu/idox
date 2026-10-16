@@ -20,10 +20,10 @@ page, unremarked. A slide does not flow -- it is a fixed canvas, and content
 that overflows it is simply cut off or crushed. Two decisions follow from
 that, made deliberately, not as a first draft to improve on later:
 
-  ONE PDF PAGE IS ALWAYS ONE SLIDE. A page's content is never split across
-  several slides to make it fit. If a page is dense, the slide is dense --
-  visually honest about what was actually on the source page, rather than
-  inventing a split point the source never had.
+  A PAGE THAT FITS IS ONE SLIDE; A PAGE THAT DOES NOT FIT CONTINUES. Nothing is squeezed to fit (that crushed text and
+  ran it off the slide). The extra slides are titled "<title> (cont.)". A run of text breaks between its lines (one
+  over-long paragraph at a sentence end), a table breaks between rows with its header repeated, and a table that fits
+  a fresh slide is moved whole rather than split. This replaces the earlier rule "one PDF page is always one slide".
 
   THE FIRST HEADING ON THE PAGE BECOMES THE SLIDE TITLE. Any other headings
   that follow it become bold sub-headers inside the slide body instead of
@@ -34,6 +34,8 @@ import re
 from typing import List
 
 from pptx import Presentation
+from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
 from pptx.util import Emu, Inches, Pt
 
 from blocks import Page, TableBlock, normalize, squash
@@ -203,7 +205,37 @@ def _add_table(slide, block: TableBlock, top_in: float,
     for para in [c.text_frame.paragraphs[0] for row in table.rows for c in row.cells]:
         para.font.size = Pt(11)
 
+    _apply_table_look(table, block, width)
     return top_in + height_in + 0.2
+
+
+_PPT_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+
+
+def _apply_table_look(table, block, width: int):
+    """Copy the source table's look when it was measured (PDF/Word sources): column widths, per-column
+    alignment, and the header's fill colour. A table without measurements keeps PowerPoint's default style."""
+    widths = getattr(block, "col_widths", None) or []
+    if len(widths) == width and sum(widths) > 0:
+        total = sum(widths)
+        for c, w in enumerate(widths):
+            table.columns[c].width = Inches(CONTENT_WIDTH_IN * w / total)
+    head_align = getattr(block, "header_align", None) or []
+    col_align = getattr(block, "col_align", None) or []
+    fill = getattr(block, "header_fill", None)
+    for r, row in enumerate(table.rows):
+        is_head = block.has_header and r == 0
+        aligns = head_align if (is_head and head_align) else col_align
+        for c, cell in enumerate(row.cells):
+            if c < len(aligns):
+                cell.text_frame.paragraphs[0].alignment = _PPT_ALIGN.get(aligns[c], PP_ALIGN.LEFT)
+            if is_head and fill:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor.from_string(fill)
+                light = sum(int(fill[i:i + 2], 16) for i in (0, 2, 4)) / 3 > 150
+                for run in cell.text_frame.paragraphs[0].runs:
+                    run.font.color.rgb = RGBColor(0, 0, 0) if light else RGBColor(255, 255, 255)
+                    run.font.bold = True
 
 
 def _add_image(slide, img: dict, top_in: float, problems: List[str], where: str) -> float:
@@ -273,8 +305,44 @@ def _split_headings(blocks):
     return out
 
 
+TABLE_ROW_IN = 0.35          # height of one table row; _add_table() uses the same figure
+
+
+def _text_height_in(lines: List[dict]) -> float:
+    """Estimated height of one text box holding these lines (the same estimate _add_text_block() uses)."""
+    wanted = 0.1
+    for line in lines:
+        font_pt = 18 if line["bold"] else 14
+        wanted += _wrapped_line_count(line["text"], font_pt, CONTENT_WIDTH_IN) * (font_pt * LINE_HEIGHT_FACTOR) / 72
+    return wanted
+
+
+def _split_line(line: dict, room_in: float):
+    """Split one text line that is taller than room_in into (piece that fits, remainder), at a sentence or word end."""
+    font_pt = 18 if line["bold"] else 14
+    rows_fit = max(int((room_in - 0.1) / (font_pt * LINE_HEIGHT_FACTOR / 72)), 1)
+    per_row = max(int((CONTENT_WIDTH_IN * 72) / (font_pt * CHAR_WIDTH_FACTOR)), 1)
+    budget = int(rows_fit * per_row * 0.9)
+    text = line["text"]
+    if len(text) <= budget:
+        return line, None
+    cut = max(text.rfind(". ", 0, budget), text.rfind("? ", 0, budget), text.rfind("! ", 0, budget))
+    if cut < budget * 0.4:                       # no sentence end in the second half of the budget: cut at a word
+        cut = text.rfind(" ", 0, budget)
+    if cut <= 0:
+        cut = budget
+    piece = text[:cut + 1].strip()
+    rest = text[cut + 1:].strip()
+    return dict(line, text=piece), (dict(line, text=rest) if rest else None)
+
+
 def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
-    """Write one slide per page. Returns a list of problems found.
+    """Write the pages as slides. Returns a list of problems found.
+
+    A page that fits is ONE slide. A page that does not fit CONTINUES onto further slides titled "<title> (cont.)":
+    a run of text breaks between lines (a single over-long paragraph at a sentence end), a table breaks between rows
+    with its header row repeated, and a picture that no longer fits moves to the next slide. Nothing is squeezed to
+    fit, so no text is crushed or runs off the slide.
 
     image_sets, when given, is one list of extracted images per page, each
     carrying the fraction of that page's text sitting above it -- the same
@@ -290,8 +358,6 @@ def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
     for pno, page in enumerate(pages, start=1):
         images = (image_sets[pno - 1] if image_sets
                   and pno - 1 < len(image_sets) else [])
-
-        slide = prs.slides.add_slide(layout)
         blocks = _split_headings(list(page.blocks))
 
         # The first heading that is a short line becomes the slide title; it is
@@ -303,10 +369,7 @@ def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
              and len(b.text.strip()) <= MAX_TITLE_CHARS),
             None,
         )
-        if title_idx is not None:
-            slide.shapes.title.text = blocks.pop(title_idx).text
-        else:
-            slide.shapes.title.text = ""
+        title_text = blocks.pop(title_idx).text if title_idx is not None else ""
 
         n = len(blocks)
         pending = sorted(
@@ -314,33 +377,118 @@ def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
             key=lambda t: t[0],
         )
 
-        # The real title box's own bottom edge, not a guessed constant --
-        # confirmed necessary: a fixed 1.4in guess sat above the actual
-        # title placeholder's bottom edge (1.55in) on the real template,
-        # overlapping the first body text box on every slide.
-        title_shape = slide.shapes.title
-        if title_shape.top is not None and title_shape.height is not None:
-            top_in = (title_shape.top + title_shape.height) / 914400 + BODY_GAP_IN
-        else:
-            top_in = BODY_TOP_IN
+        state = {"slide": None, "top": 0.0, "start": 0.0, "count": 0}
+
+        def start_slide():
+            """A fresh slide for this page (the first one, or a continuation)."""
+            slide = prs.slides.add_slide(layout)
+            state["count"] += 1
+            # The "Title Only" placeholder ships left-aligned in a 9in box, so a short
+            # title sits off to the left with dead space beside it. The REAL title
+            # placeholder is kept (outline view and screen readers need it) but is
+            # stretched across the full slide width and centred.
+            ts = slide.shapes.title
+            t_top, t_height = ts.top, ts.height          # read BEFORE moving it: setting only left/width zeroes these
+            if t_top is not None and t_height is not None:
+                top = (t_top + t_height) / 914400 + BODY_GAP_IN
+            else:
+                top = BODY_TOP_IN
+                t_top, t_height = Inches(0.30), Inches(1.25)
+            title_text_to_show = (title_text if state["count"] == 1
+                                  else f"{title_text} (cont.)".strip())
+            ts.left, ts.top = Inches(0.0), t_top
+            ts.width, ts.height = Inches(SLIDE_WIDTH_IN), t_height
+            tf = ts.text_frame
+            tf.word_wrap = True
+            tf.text = title_text_to_show
+            para = tf.paragraphs[0]
+            para.font.size = Pt(28)
+            para.font.bold = True
+            para.alignment = PP_ALIGN.CENTER
+            state.update(slide=slide, top=top, start=top)
+
+        def room():
+            return SLIDE_HEIGHT_IN - BOTTOM_MARGIN_IN - state["top"]
+
+        def at_top():
+            return state["top"] <= state["start"] + 1e-6
+
+        def full_room():
+            return SLIDE_HEIGHT_IN - BOTTOM_MARGIN_IN - state["start"]
+
+        start_slide()
         pending_lines: List[dict] = []
 
         def flush_text(where: str):
-            nonlocal top_in, pending_lines
-            if pending_lines:
-                top_in = _add_text_block(slide, pending_lines, top_in, problems, where)
-                pending_lines = []
+            nonlocal pending_lines
+            lines = pending_lines
+            pending_lines = []
+            while lines:
+                fit, used = [], 0
+                for line in lines:
+                    if _text_height_in(fit + [line]) <= room():
+                        fit.append(line)
+                    else:
+                        break
+                rest = lines[len(fit):]
+                if not fit:
+                    if not at_top():
+                        start_slide()
+                        continue
+                    # one line taller than a whole slide: split it at a sentence end
+                    piece, remainder = _split_line(lines[0], room())
+                    fit = [piece]
+                    rest = ([remainder] if remainder else []) + lines[1:]
+                state["top"] = _add_text_block(state["slide"], fit, state["top"], problems, where)
+                lines = rest
+                if lines:
+                    start_slide()
+
+        def emit_table(block: TableBlock, where: str):
+            if not block.rows:
+                problems.append(f"{where}: table skipped (no rows)")
+                return
+            head = 1 if block.has_header else 0
+            rows = list(block.rows)
+            while rows:
+                cap = min(room(), MAX_ELEMENT_HEIGHT_IN)
+                need = (len(rows) + head) * TABLE_ROW_IN
+                if need <= cap:
+                    take = len(rows)
+                elif not at_top() and need <= min(full_room(), MAX_ELEMENT_HEIGHT_IN):
+                    start_slide()                # the whole table fits a fresh slide: move it, do not split it
+                    continue
+                else:
+                    take = int(cap / TABLE_ROW_IN) - head
+                    if take < 2 and not at_top():
+                        start_slide()
+                        continue
+                    take = max(take, 1)
+                    left = len(rows) - take
+                    if 0 < left < 3 and take > 4:
+                        take -= 3 - left         # never leave a slide holding one or two orphan rows
+                part = block.model_copy(update={"rows": rows[:take], "n_data_rows": len(rows[:take])})
+                state["top"] = _add_table(state["slide"], part, state["top"], problems, where)
+                rows = rows[take:]
+                if rows:
+                    start_slide()
+
+        def emit_image(img: dict, where: str):
+            height_in = min(img.get("height_in") or 2.0, MAX_ELEMENT_HEIGHT_IN)
+            if not at_top() and height_in > room():
+                start_slide()
+            state["top"] = _add_image(state["slide"], img, state["top"], problems, where)
 
         for bno, block in enumerate(blocks):
             where = f"page {pno} block[{bno}]"
 
             while pending and pending[0][0] <= bno:
                 flush_text(where)
-                top_in = _add_image(slide, pending.pop(0)[1], top_in, problems, where)
+                emit_image(pending.pop(0)[1], where)
 
             if isinstance(block, TableBlock):
                 flush_text(where)
-                top_in = _add_table(slide, block, top_in, problems, where)
+                emit_table(block, where)
                 continue
 
             text = block.text.strip()
@@ -356,7 +504,7 @@ def build_pptx(pages: List[Page], path: str, image_sets: List[list] = None):
 
         flush_text(f"page {pno} end")
         for _, im in pending:
-            top_in = _add_image(slide, im, top_in, problems, f"page {pno} end")
+            emit_image(im, f"page {pno} end")
 
     prs.save(path)
     return problems

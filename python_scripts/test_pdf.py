@@ -29,12 +29,13 @@ THE THREE CHECKS, AND HOW MUCH EACH IS WORTH
    not "the model is wrong".
 
 Usage:
-    .venv/bin/python test_pdf.py <file.pdf>
-    .venv/bin/python test_pdf.py <file.pdf> --pages 1-3
-    .venv/bin/python test_pdf.py <file.pdf> --pages 2 --dpi 200
-    .venv/bin/python test_pdf.py <file.pdf> --out result.md
+    .venv/bin/python python_scripts/test_pdf.py <file.pdf>
+    .venv/bin/python python_scripts/test_pdf.py <file.pdf> --pages 1-3
+    .venv/bin/python python_scripts/test_pdf.py <file.pdf> --pages 2 --dpi 200
+    .venv/bin/python python_scripts/test_pdf.py <file.pdf> --out result.md
 """
 
+import paths
 import argparse
 import hashlib
 import os
@@ -58,17 +59,21 @@ from blocks import (
     fix_trailing_heading_after_table,
     merge_nested_tables,
     normalize,
+    snap_to_text_layer,
     ungrounded_table_blocks,
     ungrounded_text_blocks,
 )
 import crop_reread
+from repair import drop_spurious_blocks, reorder_blocks, restore_missing_lines
 import ocr
 import pdf_look
 from to_docx import build_docx, verify_docx, verify_images
+from to_csv import build_csv, verify_csv
 from to_pptx import build_pptx, verify_pptx
+from to_xml import build_xml, verify_xml
 from to_xlsx import build_xlsx, verify_xlsx
 
-RENDER_DIR = "render"
+RENDER_DIR = paths.out("render")
 IMAGE_DIR = os.path.join(RENDER_DIR, "images")
 
 
@@ -331,6 +336,101 @@ def repair_missing_lines(page, pdf_page, missing_lines):
     return Page(analysis=page.analysis, blocks=blocks), repairs, skipped
 
 
+def _table_anchor(blocks, header, pdf_page):
+    """Where in the page's word stream a restored table belongs, as a block index.
+
+    A table sits in reading order with the text around it, so we locate the
+    block whose text immediately precedes the table's first cell in the PDF's
+    own word stream and insert right after it. Unambiguous only: if the same
+    opening words occur more than once, fall back to the end of the page, so a
+    restored table never lands in the middle of an unrelated paragraph.
+    """
+    SHINGLE = 6
+
+    def block_words(b):
+        if isinstance(b, TableBlock):
+            return [w for w in (normalize(t) for t in
+                                " ".join(list(b.header) + [c for r in b.rows for c in r]).split()) if w]
+        return [w for w in (normalize(t) for t in b.text.split()) if w]
+
+    pdf_norm = []
+    for b in pdf_page.get_text("dict")["blocks"]:
+        if b["type"] != 0:
+            continue
+        for ln in b["lines"]:
+            pdf_norm.extend(normalize(t) for t in ln["spans"][0]["text"].split())
+    pdf_norm = [w for w in pdf_norm if w]
+    if not pdf_norm or not header:
+        return len(blocks)
+
+    where = {}
+    for i in range(len(pdf_norm) - SHINGLE + 1):
+        where.setdefault(tuple(pdf_norm[i:i + SHINGLE]), []).append(i)
+
+    # the table's own first SHINGLE words, from its header row
+    words = [w for w in (normalize(t) for t in " ".join(header).split()) if w]
+    if len(words) < SHINGLE:
+        return len(blocks)
+    hits = where.get(tuple(words[:SHINGLE]), [])
+    if len(hits) != 1:
+        return len(blocks)
+    table_pos = hits[0]
+
+    # the last block whose first SHINGLE words sit before the table
+    best = -1
+    for bi, b in enumerate(blocks):
+        bw = block_words(b)
+        if len(bw) < SHINGLE:
+            continue
+        b_hits = where.get(tuple(bw[:SHINGLE]), [])
+        if len(b_hits) == 1 and b_hits[0] < table_pos:
+            best = bi
+    return best + 1
+
+
+def _already_on_page(blocks, grid, threshold=0.8):
+    """True if the table's words are already in the page's text blocks (the model wrote the table as prose).
+
+    Restoring it then would print every cell twice. Compared as word counts, so a repeated value ("9", "9") has
+    to be there as often as the table has it.
+    """
+    from collections import Counter
+    want = Counter(w for w in (normalize(t) for row in grid for c in row for t in c.split()) if w)
+    if not want:
+        return True
+    have = Counter()
+    for b in blocks:
+        if isinstance(b, TableBlock):
+            text = " ".join(list(b.header) + [c for r in b.rows for c in r])
+        else:
+            text = b.text
+        have.update(w for w in (normalize(t) for t in text.split()) if w)
+    found = sum(min(n, have[w]) for w, n in want.items())
+    return found / sum(want.values()) >= threshold
+
+
+def _cells_in_grid(model_table, grid) -> float:
+    """Share of the model table's non-empty cells (header included) that also appear in the PDF's grid."""
+    theirs = {normalize(c) for row in grid for c in row if normalize(c)}
+    mine = [normalize(c) for row in ([model_table.header] + list(model_table.rows)) for c in row if normalize(c)]
+    return sum(1 for c in mine if c in theirs) / len(mine) if mine else 0.0
+
+
+def _row_present(src_row, model_rows) -> bool:
+    """True if some model row is this PDF row: its cells are (nearly) all among the PDF row's cells.
+
+    The model may write fewer cells than the PDF row holds, so identical text is too strict a test. A model row
+    matches when it shares the PDF row's first cell and at least 60% of the PDF row's cells.
+    """
+    cells = [normalize(c) for c in src_row if normalize(c)]
+    if not cells:
+        return True
+    for have in model_rows:
+        if cells[0] in have and sum(1 for c in cells if c in have) >= 0.6 * len(cells):
+            return True
+    return False
+
+
 def repair_table_rows(page, pdf_page):
     """Put back table rows the model dropped, read from the PDF's own cells.
 
@@ -356,11 +456,6 @@ def repair_table_rows(page, pdf_page):
     if not detected:
         return page, []
 
-    model_tables = [(i, b) for i, b in enumerate(page.blocks)
-                    if isinstance(b, TableBlock)]
-    if not model_tables:
-        return page, []
-
     def cell_text(rect):
         if rect is None:
             return ""
@@ -368,25 +463,84 @@ def repair_table_rows(page, pdf_page):
             pdf_page.get_text("text", clip=pymupdf.Rect(rect)).split()
         )
 
-    repairs = []
     blocks = list(page.blocks)
+    repairs = []
 
-    for (bidx, mt), dt in zip(model_tables, detected):
-        grid = [[cell_text(c) for c in row.cells] for row in dt.rows]
-        while grid and not any(c for c in grid[-1]):
-            grid.pop()                      # detector's phantom trailing row
-        if not grid:
+    model_tables = [(i, b) for i, b in enumerate(blocks)
+                    if isinstance(b, TableBlock)]
+    if not model_tables:
+        # The model missed a table the detector found. Line-level repair cannot
+        # put it back (it only restores stray lines, and table cells are skipped
+        # on purpose -- loose cell text dumped into the prose is worse than the
+        # gap). So build the whole table from the PDF's own cells and insert it
+        # where it belongs in the page's reading order. Confirmed necessary: a
+        # 4x3 sales table the model never saw came out with the "Sales by region"
+        # heading and nothing under it, coverage stuck at 76%.
+        for dt in detected:
+            grid = [[cell_text(c) for c in row.cells] for row in dt.rows]
+            while grid and not any(c for c in grid[-1]):
+                grid.pop()                      # detector's phantom trailing row
+            if not grid:
+                continue
+            header, data = grid[0], grid[1:]
+            if _already_on_page(blocks, grid):
+                continue                        # the model wrote the table as prose: don't duplicate it
+            anchor = _table_anchor(blocks, header, pdf_page)
+            blocks.insert(anchor, TableBlock(
+                kind="table", has_header=True, n_data_rows=len(data),
+                n_cols=len(header), header=header, rows=data))
+            repairs.append(
+                f"whole table {len(data)}x{len(header)} restored from the PDF at block {anchor}")
+        return Page(analysis=page.analysis, blocks=blocks), repairs
+
+    # Each model table is paired with the detected table it shares the most cells with. Pairing them by order goes wrong
+    # when the detector also reports a table nested inside another one: the inner table's rows were restored into a
+    # different table.
+    grids = []
+    for dt in detected:
+        g = [[cell_text(c) for c in row.cells] for row in dt.rows]
+        while g and not any(c for c in g[-1]):
+            g.pop()                         # detector's phantom trailing row
+        grids.append(g)
+    taken = set()
+    pairs = []
+    for bidx, mt in model_tables:
+        best, best_share = None, 0.0
+        for gi, g in enumerate(grids):
+            if gi in taken or not g:
+                continue
+            share = _cells_in_grid(mt, g)
+            if share > best_share:
+                best, best_share = gi, share
+        if best is None or best_share < 0.3:
             continue
+        taken.add(best)
+        pairs.append((bidx, mt, grids[best]))
+
+    for bidx, mt, grid in pairs:
 
         data_rows = grid[1:] if mt.has_header else grid
-        have = {normalize(" ".join(r)) for r in mt.rows}
+
+        # The model read fewer columns than the PDF's table has (a last column dropped). Every cell it did write is in
+        # the PDF's grid, so the grid replaces it: restoring "missing" rows one by one would append each row a second
+        # time, because none of them can match a row that lacks a cell.
+        width = max(len(r) for r in grid)
+        if width > mt.n_cols and _cells_in_grid(mt, grid) >= 0.8:
+            padded = [(list(r) + [""] * width)[:width] for r in grid]
+            header, body = (padded[0], padded[1:]) if mt.has_header else ([], padded)
+            blocks[bidx] = TableBlock(kind="table", has_header=mt.has_header, n_data_rows=len(body),
+                                      n_cols=width, header=header, rows=body)
+            repairs.append(f"table rebuilt from the PDF: the model read {mt.n_cols} of {width} columns")
+            continue
+
+        have = [{normalize(c) for c in r if normalize(c)} for r in mt.rows]
 
         rebuilt, added = [], 0
         for src_row in data_rows:
             key = normalize(" ".join(src_row))
             if not key:
                 continue
-            if key in have:
+            if _row_present(src_row, have):
                 continue
             # Missing. Rebuild it to the model's column count so the grid
             # stays rectangular -- a ragged row breaks the Word table.
@@ -733,7 +887,7 @@ parser.add_argument("--base-url", default=DEFAULT_BASE_URL,
                          "machine's local 2B model instead, or an empty "
                          "string to use Ollama's own bundled model (e.g. "
                          "for --model qwen3-vl:4b-instruct).")
-parser.add_argument("--out", default="extracted.md", help="clean Markdown output file")
+parser.add_argument("--out", default=paths.out("extracted.md"), help="clean Markdown output file")
 parser.add_argument("--docx", metavar="FILE.docx",
                     help="also write a Word document (Tier 3, no model involved)")
 parser.add_argument("--xlsx", metavar="FILE.xlsx",
@@ -745,6 +899,12 @@ parser.add_argument("--pptx", metavar="FILE.pptx",
                          "involved). One slide per page, always -- a page's "
                          "content is never split across slides. The first "
                          "heading on each page becomes that slide's title.")
+parser.add_argument("--xml", metavar="FILE.xml",
+                    help="also write an XML document (no model involved in the writing). Every page is a "
+                         "<page>; headings, paragraphs, lists and tables are elements.")
+parser.add_argument("--csv", metavar="FILE.csv",
+                    help="also write a CSV file (no model involved in the writing): every text block as one line, "
+                         "every table as rows and columns, in reading order.")
 parser.add_argument("--no-ocr", action="store_true",
                     help="skip OCR verification on scanned pages, leaving "
                          "checks 2 and 4 reporting N/A as before")
@@ -767,6 +927,11 @@ parser.add_argument("--scan-mode", choices=("text", "image", "both"),
 parser.add_argument("--show-reasoning", action="store_true",
                     help="print the model's layout analysis and self-review")
 args = parser.parse_args()
+
+# Every output path may point into a folder that does not exist yet: create it instead of crashing at the very end.
+for _out in (args.out, args.docx, args.xlsx, args.pptx, args.csv, getattr(args, "xml", None)):
+    if _out and os.path.dirname(_out):
+        os.makedirs(os.path.dirname(_out), exist_ok=True)
 
 doc = pymupdf.open(args.pdf)
 targets = parse_pages(args.pages, doc.page_count)
@@ -929,6 +1094,13 @@ for pno in targets:
     elapsed = time.time() - started
     total_extraction_time += elapsed
 
+    # Debug aid: IDOX_DUMP_RAW=<folder> saves the model's raw answer for every page, so the repair and
+    # checking steps can be replayed and measured offline without running the model again.
+    if os.environ.get("IDOX_DUMP_RAW"):
+        os.makedirs(os.environ["IDOX_DUMP_RAW"], exist_ok=True)
+        with open(os.path.join(os.environ["IDOX_DUMP_RAW"], f"page_{pno + 1:03d}.json"), "w", encoding="utf-8") as fh:
+            fh.write(page.model_dump_json())
+
     # A real, confirmed model failure mode: under greedy decoding, the model
     # has re-emitted already-written blocks verbatim instead of stopping the
     # array. repeat_penalty (in extract_page()) fixes this at the source; this
@@ -990,6 +1162,19 @@ for pno in targets:
     # PHASE 2: validation -- the 4 checks only. Repairs (which run further
     # below, if a check fails) are deliberately NOT included in this timing.
     validation_started = time.time()
+    # On a digital page, first correct the model's misread words from the PDF's own text. Without this a misread
+    # paragraph is left in place AND its exact line is judged "missing" and inserted again, so the text came out
+    # twice (1.4x the PDF's length). pdf_to_txt.py has always done this; the other outputs did not.
+    if verify_trust == "pdf":
+        page, snaps = snap_to_text_layer(page, verify_text)
+        if snaps:
+            print(f"       ~ corrected {len(snaps)} misread passage(s)/cell(s) to the PDF's exact text")
+        page, moves = reorder_blocks(page, pdf_page)
+        for m in moves:
+            print(f"       ~ put back in the PDF's order: {m}")
+        page, dropped = drop_spurious_blocks(page, pdf_page)
+        for d in dropped:
+            print(f"       ~ {d}")
     structural, notes = check_structure(page)
     grounding, found, total = check_grounding(page, verify_text)
     geometry = check_geometry(page, pdf_page)
@@ -1075,7 +1260,7 @@ for pno in targets:
             print(f"           {m[:60]!r}")
 
     if missing_lines and verify_trust == "pdf":
-        page, repairs, skipped = repair_missing_lines(
+        page, repairs, skipped = restore_missing_lines(
             page, pdf_page, missing_lines
         )
 
@@ -1197,7 +1382,7 @@ for pno in targets:
     for block in page.blocks:
         markdown_out.append(render_block(block) + "\n")
 
-with open(args.out, "w") as fh:
+with open(args.out, "w", encoding="utf-8") as fh:
     fh.write("\n".join(markdown_out))
 
 print("=" * 72)
@@ -1304,11 +1489,20 @@ if args.docx and extracted_pages:
         more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
         print(f"    missing: {shown}{more}")
 
+# Tables written to Excel and PowerPoint carry the PDF's own look (column widths, alignment, header fill).
+look_pages = extracted_pages
+if (args.xlsx or args.pptx) and extracted_pages:
+    try:
+        look_pages = pdf_look.measure_tables(extracted_pages, [doc[n] for n in page_numbers],
+                                             [bool(t.strip()) for t in source_texts])
+    except Exception as exc:
+        print(f"  ! could not measure the tables' look ({type(exc).__name__}: {exc}); default table style")
+
 # --- Tier 3: the Excel file ---------------------------------------------
 # Same Page objects, same checks, a different writer. Deterministic: nothing
 # here asks the model anything.
 if args.xlsx and extracted_pages:
-    xl_problems = build_xlsx(extracted_pages, args.xlsx,
+    xl_problems = build_xlsx(look_pages, args.xlsx,
                              image_sets=page_image_sets)
     print(f"Excel file written to {args.xlsx}  "
           f"(one sheet, all pages, values kept as text)")
@@ -1326,15 +1520,46 @@ if args.xlsx and extracted_pages:
 # Same Page objects, same checks, a different writer. Deterministic: nothing
 # here asks the model anything. One slide per page, always.
 if args.pptx and extracted_pages:
-    ppt_problems = build_pptx(extracted_pages, args.pptx,
+    ppt_problems = build_pptx(look_pages, args.pptx,
                               image_sets=page_image_sets)
+    from pptx import Presentation as _Presentation
     print(f"PowerPoint deck written to {args.pptx}  "
-          f"({len(extracted_pages)} slide(s), one per page)")
+          f"({len(extracted_pages)} page(s) -> {len(_Presentation(args.pptx).slides)} slide(s); "
+          f"a page that does not fit continues on extra slides)")
     for p in ppt_problems:
         print(f"    - {p}")
 
     coverage, missing = verify_pptx(args.pptx, "\n".join(source_texts))
     print(content_check_line(coverage, "pptx", source_texts))
+    if missing:
+        shown = ", ".join(missing[:8])
+        more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        print(f"    missing: {shown}{more}")
+
+# --- Tier 3: the XML document --------------------------------------------
+# Same Page objects, same checks, a different writer. Deterministic.
+if args.xml and extracted_pages:
+    xml_problems = build_xml(extracted_pages, args.xml, source_name=os.path.basename(args.pdf))
+    print(f"XML document written to {args.xml}  ({len(extracted_pages)} page element(s))")
+    for p in xml_problems:
+        print(f"    - {p}")
+
+    coverage, missing = verify_xml(args.xml, "\n".join(source_texts))
+    print(content_check_line(coverage, "xml", source_texts))
+    if missing:
+        shown = ", ".join(missing[:8])
+        more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        print(f"    missing: {shown}{more}")
+
+# --- Tier 3: the CSV file -------------------------------------------------
+# Text as one line per row, tables as rows and columns, in reading order.
+if args.csv and extracted_pages:
+    csv_problems = build_csv(extracted_pages, args.csv)
+    for p in csv_problems:
+        print(f"    - {p}")
+    print(f"CSV file written to {args.csv}  (text lines and table rows)")
+    coverage, missing = verify_csv(args.csv, "\n".join(source_texts))
+    print(content_check_line(coverage, "csv", source_texts))
     if missing:
         shown = ", ".join(missing[:8])
         more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""

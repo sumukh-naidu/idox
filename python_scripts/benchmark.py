@@ -3,15 +3,15 @@
 benchmark.py -- latency and accuracy of every idox conversion on four fixed inputs,
 so two machines can be compared like for like.
 
-    .venv/bin/python benchmark.py run            run everything on THIS machine
-    .venv/bin/python benchmark.py score DIR      score a folder of outputs (from any machine)
-    .venv/bin/python benchmark.py report DIR     rebuild report.md from DIR
+    .venv/bin/python python_scripts/benchmark.py run            run everything on THIS machine
+    .venv/bin/python python_scripts/benchmark.py score DIR      score a folder of outputs (from any machine)
+    .venv/bin/python python_scripts/benchmark.py report DIR     rebuild report.md from DIR
 
 THE FOUR INPUTS (the same on both machines)
-    pdf_to_word_input/text_only_1page.pdf     a dense one-page digital PDF, text only
-    pdf_to_word_input/sample.pdf              one page: headings, a bullet list, a small table
-    image_to_word_input/hi.png                two short lines on a dark background
-    benchmark_input/sample_125dpi.png         sample.pdf rendered at 125 dpi
+    input/pdf_to_word_input/text_only_1page.pdf     a dense one-page digital PDF, text only
+    input/pdf_to_word_input/sample.pdf              one page: headings, a bullet list, a small table
+    input/image_to_word_input/hi.png                two short lines on a dark background
+    input/benchmark_input/sample_125dpi.png         sample.pdf rendered at 125 dpi
 
 WHAT "run" DOES
     - restarts the llama.cpp server before EVERY model conversion, so its first run is cold;
@@ -58,11 +58,15 @@ import time
 import urllib.request
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent
-sys.path.insert(0, str(REPO))
+SCRIPTS = Path(__file__).resolve().parent
+REPO = SCRIPTS.parent                     # the project root
+sys.path.insert(0, str(SCRIPTS))
 
 HOME = Path.home()
+WINDOWS = os.name == "nt"
 LLAMA = HOME / ".local/opt/llama.cpp/llama-b11247/llama-server"
+if WINDOWS:
+    LLAMA = LLAMA.with_suffix(".exe")
 MODEL = REPO / "models_manual/Qwen3VL-2B-Instruct-Q4_K_M.gguf"
 MMPROJ = REPO / "models_manual/mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf"
 PORT = 8090
@@ -71,10 +75,10 @@ SERVER_ARGS = ["--port", str(PORT), "--host", "127.0.0.1", "--no-webui", "--ctx-
                "--image-min-tokens", "512", "--image-max-tokens", "512", "--parallel", "1"]
 
 INPUTS = {
-    "text_only_1page.pdf": "pdf_to_word_input/text_only_1page.pdf",
-    "sample.pdf": "pdf_to_word_input/sample.pdf",
-    "hi.png": "image_to_word_input/hi.png",
-    "sample_125dpi.png": "benchmark_input/sample_125dpi.png",
+    "text_only_1page.pdf": "input/pdf_to_word_input/text_only_1page.pdf",
+    "sample.pdf": "input/pdf_to_word_input/sample.pdf",
+    "hi.png": "input/image_to_word_input/hi.png",
+    "sample_125dpi.png": "input/benchmark_input/sample_125dpi.png",
 }
 HI_PNG_TRUTH = "Hello, this is a demo!\nGenerated as a PNG image with text"
 
@@ -370,6 +374,11 @@ def sh_all(cmd):
     return (r.stdout + r.stderr).strip()
 
 
+def load_avg():
+    """1/5/15-minute load average; Windows has none, so zeros."""
+    return os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
+
+
 def pkg_temp():
     for z in Path("/sys/class/thermal").glob("thermal_zone*"):
         try:
@@ -398,19 +407,42 @@ def sha256(path, n=None):
     return h.hexdigest()
 
 
+def host_hardware():
+    """cpu model, RAM total/available (MB), lscpu-style details and the frequency governor."""
+    if not WINDOWS:
+        cpuinfo = Path("/proc/cpuinfo").read_text()
+        mem = dict(l.split(":", 1) for l in Path("/proc/meminfo").read_text().splitlines() if ":" in l)
+        return (re.search(r"model name\s*:\s*(.+)", cpuinfo).group(1),
+                int(mem["MemTotal"].split()[0]) // 1024, int(mem["MemAvailable"].split()[0]) // 1024,
+                {k: v.strip() for k, v in (l.split(":", 1) for l in sh(["lscpu"]).splitlines() if ":" in l)
+                 if k in ("Thread(s) per core", "Core(s) per socket", "CPU max MHz", "CPU min MHz", "L3 cache")},
+                Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip())
+    import ctypes
+
+    class MemStatus(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                    ("avail", ctypes.c_ulonglong), ("pt", ctypes.c_ulonglong), ("pa", ctypes.c_ulonglong),
+                    ("vt", ctypes.c_ulonglong), ("va", ctypes.c_ulonglong), ("ve", ctypes.c_ulonglong)]
+    ms = MemStatus(); ms.length = ctypes.sizeof(ms)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
+    ps = lambda q: sh(["powershell", "-NoProfile", "-Command", q])
+    cpu = ps("(Get-CimInstance Win32_Processor).Name") or platform.processor()
+    det = ps("$p=Get-CimInstance Win32_Processor; \"$($p.NumberOfCores) cores; max $($p.MaxClockSpeed) MHz; L3 $($p.L3CacheSize) KB\"")
+    plan = ps(r"(powercfg /getactivescheme) -replace '.*\((.*)\)','$1'")
+    return cpu, ms.total // 2**20, ms.avail // 2**20, {"windows": det}, f"power plan: {plan}"
+
+
 def machine_info(bench):
-    cpuinfo = Path("/proc/cpuinfo").read_text()
-    mem = dict(l.split(":", 1) for l in Path("/proc/meminfo").read_text().splitlines() if ":" in l)
+    cpu, ram_total, ram_avail, lscpu, governor = host_hardware()
     import importlib.metadata as md
     return {
         "when": time.strftime("%Y-%m-%d %H:%M:%S %z"),
-        "cpu_model": re.search(r"model name\s*:\s*(.+)", cpuinfo).group(1),
+        "cpu_model": cpu,
         "logical_cpus": os.cpu_count(),
-        "lscpu": {k: v.strip() for k, v in (l.split(":", 1) for l in sh(["lscpu"]).splitlines() if ":" in l)
-                  if k in ("Thread(s) per core", "Core(s) per socket", "CPU max MHz", "CPU min MHz", "L3 cache")},
-        "ram_total_mb": int(mem["MemTotal"].split()[0]) // 1024,
-        "ram_available_mb_at_start": int(mem["MemAvailable"].split()[0]) // 1024,
-        "governor": Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip(),
+        "lscpu": lscpu,
+        "ram_total_mb": ram_total,
+        "ram_available_mb_at_start": ram_avail,
+        "governor": governor,
         "os": f"{platform.system()} {platform.release()}",
         "llama_server": sh_all([str(LLAMA), "--version"]).replace("\n", " | ")[:200],
         "server_flags": [str(LLAMA), "--model", MODEL.name, "--mmproj", MMPROJ.name] + SERVER_ARGS,
@@ -421,13 +453,19 @@ def machine_info(bench):
         "libs": {n: md.version(n) for n in ("pymupdf", "python-docx", "openpyxl", "python-pptx", "pillow", "pytesseract", "pydantic", "requests")},
         "tesseract": sh(["tesseract", "--version"]).splitlines()[0] if shutil.which("tesseract") else None,
         "libreoffice": sh(["soffice", "--version"]) if shutil.which("soffice") else None,
-        "load_average_at_start": os.getloadavg(),
+        "load_average_at_start": load_avg(),
         "pkg_temp_c_at_start": pkg_temp(),
         "throttle_count_at_start": throttle_total(),
     }
 
 
 def stop_server():
+    if WINDOWS:
+        subprocess.run(["taskkill", "/F", "/IM", "llama-server.exe"], capture_output=True)
+        t = time.time()
+        while time.time() - t < 20 and "llama-server.exe" in sh(["tasklist", "/FI", "IMAGENAME eq llama-server.exe"]):
+            time.sleep(0.3)
+        return
     pids = [int(x) for x in sh(["pgrep", "-x", "llama-server"]).split()]
     for pid in pids:
         try:
@@ -446,7 +484,8 @@ def start_server(logpath):
     with open(logpath, "ab") as lg:
         lg.write(f"\n===== server (re)start {time.strftime('%H:%M:%S')} =====\n".encode())
         subprocess.Popen([str(LLAMA), "--model", str(MODEL), "--mmproj", str(MMPROJ)] + SERVER_ARGS,
-                         stdout=lg, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+                         stdout=lg, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         **({"creationflags": 0x00000008 | 0x00000200} if WINDOWS else {"start_new_session": True}))
     t = time.time()
     while time.time() - t < 180:
         try:
@@ -490,7 +529,7 @@ def run_one(bench, input_name, route, run_no, cold, source_file, model, logpath)
     shutil.copy2(src, run_dir / "in" / f"{stem}.{ext}")
     job = {"route": route, "stem": stem, "ext": ext, "options": {}, "base_url": BASE_URL}
     cmd = idox_app.build_command(job)
-    load1 = os.getloadavg()[0]
+    load1 = load_avg()[0]
     off = os.path.getsize(logpath) if model else 0
     t0 = time.perf_counter()
     with open(run_dir / "log.txt", "wb") as lg:
@@ -508,7 +547,7 @@ def run_one(bench, input_name, route, run_no, cold, source_file, model, logpath)
            "state": "failed" if not outs else ("check" if problems or rc != 0 else "ok"),
            "outputs": len(outs), "problems": problems, "hit_token_cap": "generation limit" in log,
            "load1_before": round(load1, 2), "pkg_temp_c": pkg_temp(), "throttle_total": throttle_total(),
-           "cmd": [Path(c).name if c.startswith("/") else c for c in cmd][1:]}
+           "cmd": [Path(c).name if os.path.isabs(c) else c for c in cmd][1:]}
     if model:
         rec["server"] = server_timing(logpath, off)
     return rec
@@ -523,7 +562,7 @@ def cmd_run(a):
     bench = Path(a.out).resolve(); bench.mkdir(parents=True, exist_ok=True)
     logpath = bench / "server.log"
     runs_path = bench / "runs.jsonl"
-    (bench / "machine.json").write_text(json.dumps(machine_info(bench), indent=1))
+    (bench / "machine.json").write_text(json.dumps(machine_info(bench), indent=1), encoding="utf-8")
     done = set()
     if a.resume and runs_path.exists():
         for l in runs_path.read_text().splitlines():
@@ -575,7 +614,7 @@ def cmd_score(a):
         for cp in sorted(p for p in ip.iterdir() if p.is_dir()):
             for rp in sorted(p for p in cp.iterdir() if p.is_dir() and p.name.startswith("run")):
                 rows.append(score_run(bench, ip.name, cp.name, rp))
-    with open(bench / "scores.jsonl", "w") as fh:
+    with open(bench / "scores.jsonl", "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, default=str) + "\n")
     print(f"scored {len(rows)} runs -> {bench / 'scores.jsonl'}", flush=True)
@@ -614,7 +653,7 @@ def cmd_report(a):
         thr = [r["throttle_total"] for r in runs]
         loads = [r["load1_before"] for r in runs if r["model"]]
         L += ["## During the run", "",
-              f"- {len(runs)} runs ({sum(1 for r in runs if r['model'])} with the model). Package temperature after each run: {min(temps)}-{max(temps)} C. Thermal throttle events: {thr[0]} after the first run, {thr[-1]} after the last.",
+              f"- {len(runs)} runs ({sum(1 for r in runs if r['model'])} with the model). " + (f"Package temperature after each run: {min(temps)}-{max(temps)} C. Thermal throttle events: {thr[0]} after the first run, {thr[-1]} after the last." if temps else "Temperature and throttle counters are not available on this OS."),
               f"- Load average (1 min) just before model runs: {min(loads):.2f}-{max(loads):.2f}. This includes the run that just finished and the server starting up, so it does not show what other programs were doing.",
               f"- Runs that hit the 4,000-token output cap: {sum(1 for r in runs if r['hit_token_cap'])}. Runs that produced no file: {sum(1 for r in runs if r['state'] == 'failed')} (the three `hi.png` to Excel runs are expected: that image has no table).", ""]
     by = {}
@@ -671,7 +710,7 @@ def cmd_report(a):
     # one flat row per run, for putting two machines side by side in a spreadsheet
     import csv
     sidx = {(x["input"], x["conv"], x["run"]): x for x in scores}
-    with open(bench / "results.csv", "w", newline="") as fh:
+    with open(bench / "results.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["input", "conversion", "model", "run", "cold_server", "state", "wall_s", "prefill_s", "prefill_tokens_evaluated",
                     "image_from_cache", "gen_s", "gen_tokens", "tok_per_s", "hit_token_cap", "sequence_pct", "recall_pct", "precision_pct",
@@ -694,7 +733,7 @@ def main():
     global LLAMA, MODEL, MMPROJ, PORT, BASE_URL, SERVER_ARGS
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run"); r.add_argument("--out", default=str(REPO / "benchmark_output")); r.add_argument("--runs", type=int, default=3)
+    r = sub.add_parser("run"); r.add_argument("--out", default=str(REPO / "output" / "benchmark_output")); r.add_argument("--runs", type=int, default=3)
     r.add_argument("--llama-server", help=f"path to llama-server (default {LLAMA})")
     r.add_argument("--model", help=f"path to the language model .gguf (default {MODEL})")
     r.add_argument("--mmproj", help=f"path to the vision projector .gguf (default {MMPROJ})")

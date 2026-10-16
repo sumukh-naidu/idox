@@ -38,7 +38,7 @@ read from and, when the match is close, replaces the block with the PDF's exact
 words. This removes misreads, and it stops the repair step from inserting a second,
 correct copy beside a misread paragraph (which made pages 1.4x too long).
 
-Output:   pdf_to_txt_input/report.pdf  ->  pdf_to_txt_output/report.txt
+Output:   input/pdf_to_txt_input/report.pdf  ->  output/pdf_to_txt_output/report.txt
 Pages are separated by a line reading  ----- Page N -----
 
 HOW IT PROVES EVERYTHING WAS EXTRACTED. The saved .txt is read back, split into
@@ -54,10 +54,11 @@ pages at the markers, and every page is compared with the PDF's text layer
   (1-6 apply to digital pages. Scanned pages get 1 plus an advisory OCR figure.)
 
 Usage:
-    .venv/bin/python pdf_to_txt.py pdf_to_txt_input/report.pdf --base-url http://127.0.0.1:8090
-    .venv/bin/python pdf_to_txt.py pdf_to_txt_input/*.pdf --pages 1-3
+    .venv/bin/python python_scripts/pdf_to_txt.py input/pdf_to_txt_input/report.pdf --base-url http://127.0.0.1:8090
+    .venv/bin/python python_scripts/pdf_to_txt.py input/pdf_to_txt_input/*.pdf --pages 1-3
 """
 
+import paths
 import argparse
 import glob
 import os
@@ -88,9 +89,10 @@ from blocks import (
     ungrounded_table_blocks,
     ungrounded_text_blocks,
 )
+from repair import drop_spurious_blocks, reorder_blocks, restore_missing_lines
 
-PDF_DIR = "pdf_to_txt_input"
-TXT_OUT_DIR = "pdf_to_txt_output"
+PDF_DIR = paths.inp("pdf_to_txt_input")
+TXT_OUT_DIR = paths.out("pdf_to_txt_output")
 
 MARKER = "----- Page {n} -----"
 MARKER_RE = re.compile(r"^----- Page (\d+) -----$", re.M)
@@ -404,6 +406,12 @@ def extract_digital_page(pdf_page, img_path: str, base_url: str, model: str):
         b, a = snaps[0]
         notes.append(f"corrected {len(snaps)} misread passage(s)/cell(s) to the "
                      f"PDF's exact text (e.g. {b[:35]!r} -> {a[:35]!r})")
+    page, moves = reorder_blocks(page, pdf_page)
+    if moves:
+        notes.append(f"put {len(moves)} block(s) back in the PDF's order (e.g. {moves[0]})")
+    page, dropped = drop_spurious_blocks(page, pdf_page)
+    if dropped:
+        notes.append(f"dropped {len(dropped)} block(s) that repeated PDF text written elsewhere (e.g. {dropped[0]})")
 
     problems, _ = check_structure(page)
     for p in problems:
@@ -411,7 +419,7 @@ def extract_digital_page(pdf_page, img_path: str, base_url: str, model: str):
 
     _, _, _, missing_lines = check_coverage(page, source_text)
     if missing_lines:
-        page, repairs, skipped = repair_missing_lines(page, pdf_page, missing_lines)
+        page, repairs, skipped = restore_missing_lines(page, pdf_page, missing_lines)
         if repairs:
             notes.append(f"restored {len(repairs)} dropped line(s) from the PDF's text")
     page, row_repairs = repair_table_rows(page, pdf_page)

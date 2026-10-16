@@ -40,6 +40,7 @@ are different claims.
 """
 
 import hashlib
+import re
 from collections import Counter
 from typing import List
 
@@ -174,6 +175,27 @@ def _indent_table(table, points: float):
     ind.set(qn("w:type"), "dxa")
 
 
+def _has_header_row(block) -> bool:
+    return bool(getattr(block, "has_header", False))
+
+
+def _is_divider(row) -> bool:
+    """A merged full-width divider row: one cell spanning the grid."""
+    return len({id(c._tc) for c in row.cells}) == 1 and len(row.cells) > 1
+
+
+def _shade(cell, hex_fill: str):
+    """Background colour of one Word cell."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    for old in tc_pr.findall(qn("w:shd")):
+        tc_pr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_fill)
+    tc_pr.append(shd)
+
+
 def _style_table(table, block: StyledTable):
     """Column widths, row heights, font and size from the PDF's own table."""
     table.autofit = False
@@ -189,11 +211,16 @@ def _style_table(table, block: StyledTable):
         if h:
             row.height = Pt(round(max(h - BORDER_PT, 1), 1))
             row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
-        for cell in row.cells:
+        aligns = (block.header_align if i == 0 and block.header_align and _has_header_row(block) else block.col_align)
+        for c, cell in enumerate(row.cells):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            if i == 0 and block.header_fill and _has_header_row(block):
+                _shade(cell, block.header_fill)
             for para in cell.paragraphs:
                 para.paragraph_format.space_before = Pt(0)
                 para.paragraph_format.space_after = Pt(0)
+                if aligns and c < len(aligns) and not _is_divider(row):
+                    para.alignment = ALIGNMENTS.get(aligns[c], WD_ALIGN_PARAGRAPH.LEFT)
                 for run in para.runs:
                     if block.font:
                         run.font.name = block.font
@@ -203,6 +230,30 @@ def _style_table(table, block: StyledTable):
 # Which Word style each block kind becomes. Keeping this as a table rather
 # than a chain of ifs makes it obvious what is supported and easy to change.
 HEADING_LEVELS = {"heading": 1}
+
+
+def _apply_table_look(table, block, width: int):
+    """Alignment, header fill and header text colour for a table whose look was measured from a picture."""
+    head_align = getattr(block, "header_align", None) or []
+    col_align = getattr(block, "col_align", None) or []
+    fill = getattr(block, "header_fill", None)
+    text = getattr(block, "header_text", None)
+    if not (head_align or col_align or fill):
+        return
+    for r, row in enumerate(table.rows):
+        is_head = bool(block.has_header) and r == 0
+        aligns = head_align if (is_head and head_align) else col_align
+        if _is_divider(row):
+            continue
+        for c, cell in enumerate(row.cells[:width]):
+            if is_head and fill:
+                _shade(cell, fill)
+            for para in cell.paragraphs:
+                if c < len(aligns):
+                    para.alignment = ALIGNMENTS.get(aligns[c], WD_ALIGN_PARAGRAPH.LEFT)
+                if is_head and text:
+                    for run in para.runs:
+                        run.font.color.rgb = RGBColor.from_string(text)
 
 
 def _add_table(doc, block: TableBlock, problems: List[str], where: str):
@@ -253,6 +304,8 @@ def _add_table(doc, block: TableBlock, problems: List[str], where: str):
             for para in merged.paragraphs:
                 for run in para.runs:
                     run.bold = True
+    if not isinstance(block, StyledTable):
+        _apply_table_look(table, block, width)
     return table
 
 
@@ -437,6 +490,32 @@ def _add_images(doc, images, layout, problems, where, cur=None, page_break=False
     return cur, page_break
 
 
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def _xml_safe(text):
+    """Word's XML cannot hold control characters (a form feed or NUL in a PDF's text layer stops the whole build)."""
+    return _XML_ILLEGAL.sub("", text) if isinstance(text, str) else text
+
+
+def _xml_safe_pages(pages):
+    """Copies of the pages with every text, run and cell cleaned of characters Word cannot store."""
+    out = []
+    for page in pages:
+        blocks = []
+        for b in page.blocks:
+            update = {}
+            if isinstance(b, TableBlock):
+                update = {"header": [_xml_safe(c) for c in b.header], "rows": [[_xml_safe(c) for c in r] for r in b.rows]}
+            else:
+                update = {"text": _xml_safe(b.text)}
+                if getattr(b, "runs", None):
+                    update["runs"] = [{**r, "text": _xml_safe(r.get("text", ""))} for r in b.runs]
+            blocks.append(b.model_copy(update=update))
+        out.append(page.model_copy(update={"blocks": blocks}))
+    return out
+
+
 def build_docx(pages: List[Page], path: str, title: str = None,
                layout: dict = None, image_sets: List[list] = None):
     """Write extracted pages to a .docx. Returns a list of problems found.
@@ -457,6 +536,7 @@ def build_docx(pages: List[Page], path: str, title: str = None,
     """
     problems: List[str] = []
     doc = Document()
+    pages = _xml_safe_pages(pages)
 
     # What "normal" means is decided by the document, not by the label.
     scale = _size_scale(pages)

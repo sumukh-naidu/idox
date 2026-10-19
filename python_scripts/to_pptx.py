@@ -212,6 +212,23 @@ def _add_table(slide, block: TableBlock, top_in: float,
 _PPT_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 
 
+def _thin_borders(cell, color: str = "000000", width_emu: int = 9525):
+    """A thin line on all four sides of a table cell (python-pptx has no API for cell borders)."""
+    from pptx.oxml.ns import qn
+    from lxml import etree
+    tc_pr = cell._tc.get_or_add_tcPr()
+    for tag in ("a:lnL", "a:lnR", "a:lnT", "a:lnB"):
+        for old in tc_pr.findall(qn(tag)):
+            tc_pr.remove(old)
+    for i, tag in enumerate(("a:lnL", "a:lnR", "a:lnT", "a:lnB")):
+        ln = etree.SubElement(tc_pr, qn(tag), w=str(width_emu), cap="flat", cmpd="sng", algn="ctr")
+        fill = etree.SubElement(ln, qn("a:solidFill"))
+        etree.SubElement(fill, qn("a:srgbClr"), val=color)
+        etree.SubElement(ln, qn("a:prstDash"), val="solid")
+        tc_pr.remove(ln)
+        tc_pr.insert(i, ln)                        # borders come before any fill in the schema
+
+
 def _apply_table_look(table, block, width: int):
     """Copy the source table's look when it was measured (PDF/Word sources): column widths, per-column
     alignment, and the header's fill colour. A table without measurements keeps PowerPoint's default style."""
@@ -223,10 +240,19 @@ def _apply_table_look(table, block, width: int):
     head_align = getattr(block, "header_align", None) or []
     col_align = getattr(block, "col_align", None) or []
     fill = getattr(block, "header_fill", None)
+    measured = bool(head_align or col_align or fill or widths)
+    if measured:
+        table.horz_banding = False                 # the source has plain rows, not PowerPoint's blue banding
     for r, row in enumerate(table.rows):
         is_head = block.has_header and r == 0
         aligns = head_align if (is_head and head_align) else col_align
         for c, cell in enumerate(row.cells):
+            if measured:
+                _thin_borders(cell)
+                if not (is_head and fill):
+                    cell.fill.background()           # plain, like the PDF
+                    for run in cell.text_frame.paragraphs[0].runs:
+                        run.font.color.rgb = RGBColor(0, 0, 0)
             if c < len(aligns):
                 cell.text_frame.paragraphs[0].alignment = _PPT_ALIGN.get(aligns[c], PP_ALIGN.LEFT)
             if is_head and fill:

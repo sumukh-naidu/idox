@@ -222,6 +222,25 @@ def extract_images(pdf_page, out_dir: str, page_no: int):
     return found
 
 
+def _repeats_short(page, source_text) -> bool:
+    """True if some long line the PDF repeats occurs fewer times in the page's output than in the PDF."""
+    from collections import Counter
+    lines = [normalize(l) for l in source_text.splitlines()]
+    counts = Counter(l for l in lines if len(l) >= 40)
+    repeated = {l: n for l, n in counts.items() if n >= 2}
+    if not repeated:
+        return False
+    parts = []
+    for b in page.blocks:
+        if isinstance(b, TableBlock):
+            parts.extend(b.header)
+            parts.extend(c for row in b.rows for c in row)
+        else:
+            parts.append(b.text)
+    produced = normalize(" ".join(parts))
+    return any(produced.count(l) < n for l, n in repeated.items())
+
+
 def content_check_line(coverage, kind, source_texts):
     """The 'content check' line. It compares the written file with the PDF's own text, so a scan has nothing
     to compare with. Without this the line read "100%" on every scan: it compared the file with an empty
@@ -1105,7 +1124,7 @@ for pno in targets:
     # has re-emitted already-written blocks verbatim instead of stopping the
     # array. repeat_penalty (in extract_page()) fixes this at the source; this
     # is the deterministic backstop in case that ever isn't enough.
-    page, dupes = drop_duplicate_blocks(page)
+    page, dupes = drop_duplicate_blocks(page, source_text=source_text)
     for d in dupes:
         print(f"       ! dropped duplicate block (model repeated itself): "
               f"{d!r}")
@@ -1259,9 +1278,13 @@ for pno in targets:
         for m in missing_lines[:4]:
             print(f"           {m[:60]!r}")
 
-    if missing_lines and verify_trust == "pdf":
+    # A passage the PDF repeats (boilerplate, a placeholder page) can be written fewer times than it occurs: the line
+    # check above only asks "is it anywhere?", so the missing copies are not reported. Count the copies; when there are
+    # fewer than the PDF has, let the repair look for every missing line, not only the reported ones.
+    repeats_short = verify_trust == "pdf" and _repeats_short(page, source_text)
+    if (missing_lines or repeats_short) and verify_trust == "pdf":
         page, repairs, skipped = restore_missing_lines(
-            page, pdf_page, missing_lines
+            page, pdf_page, missing_lines, scan_all=repeats_short
         )
 
         for r in repairs:

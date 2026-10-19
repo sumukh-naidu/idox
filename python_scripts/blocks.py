@@ -374,7 +374,7 @@ _PROMPT_OVERRIDDEN = bool(os.environ.get("IDOX_SYSTEM_PROMPT_FILE") or os.enviro
 # screenshot, a single small page) the same wording makes it skip a centred title or the heading above a table
 # (measured on two such pictures: 17 of 22 phrases against 19 with the plain prompt below). So pictures shorter than
 # SHORT_PICTURE_PX are read with the plain prompt.
-SHORT_PICTURE_PX = 1400
+SHORT_PICTURE_PX = 1200
 SYSTEM_PROMPT_SHORT = """You extract the contents of document page images exactly as printed.
 
 You work in two stages, and the response format enforces their order. The

@@ -178,6 +178,8 @@ class ScriptsImport(unittest.TestCase):
                 importlib.import_module(name)
 
     def test_every_new_script_has_its_folders(self):
+        if not (os.path.isdir(os.path.join(_load.REPO, "input")) and os.path.isdir(os.path.join(_load.REPO, "output"))):
+            self.skipTest("input/ and output/ are not in the repository (generated and sample data stay local)")
         for name in ("image_to_ppt", "image_to_xml", "image_to_csv", "pdf_to_xml", "pdf_to_csv", "word_to_image",
                      "word_to_xlsx", "word_to_xml", "word_to_ppt", "word_to_csv"):
             for suffix in ("input", "output"):

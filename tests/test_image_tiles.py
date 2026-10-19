@@ -228,3 +228,21 @@ class PromptChoice(unittest.TestCase):
     def test_an_unreadable_picture_falls_back_to_the_page_prompt(self):
         import blocks
         self.assertEqual(blocks.prompts_for("no_such_file.png"), (blocks.SYSTEM_PROMPT, blocks.USER_PROMPT))
+
+
+class SplitMergedTitle(unittest.TestCase):
+    """A title the model wrote inside the first paragraph becomes a heading; anything else is left alone."""
+
+    def test_title_is_split_only_when_it_is_clearly_a_title(self):
+        from image_tiles import split_merged_title
+        nl = chr(10)
+        merged = page_of([text("paragraph", "Sample PDF Document" + nl + "This is a sample one-page PDF generated for demonstration purposes.")])
+        out = split_merged_title(merged)
+        self.assertEqual([b.kind for b in out.blocks], ["heading", "paragraph"])
+        self.assertEqual(out.blocks[0].text, "Sample PDF Document")
+        self.assertEqual(out.blocks[1].text, "This is a sample one-page PDF generated for demonstration purposes.")
+        for keep in ("Dear John," + nl + "Thank you for your letter of the third of March, which we have read with care.",
+                     "A short line with no break that is just a paragraph of text.",
+                     "Acme Corp" + nl + "123 Main Street"):
+            page = page_of([text("paragraph", keep)])
+            self.assertIs(split_merged_title(page), page, keep)

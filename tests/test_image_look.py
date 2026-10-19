@@ -132,6 +132,8 @@ class SamplePictures(unittest.TestCase):
 
     def grid(self, name):
         path = os.path.join(_load.REPO, "input", "image_to_csv_input", name)
+        if not os.path.exists(path):
+            self.skipTest("sample picture not present (input/ is not in the repository)")
         with Image.open(path) as im:
             return image_look.find_grids(im)
 

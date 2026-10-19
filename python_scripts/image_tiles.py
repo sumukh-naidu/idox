@@ -142,6 +142,61 @@ def auto_parts(image_path: str, big_model: bool = False) -> int:
         return 2 if img.height >= AUTO_MIN_HEIGHT and not big_model else 1
 
 
+def _top_line_centred(image_path: str) -> bool:
+    """True if the first line of ink in the picture sits in the middle of the page width (a centred title).
+
+    Pixels only: the topmost band of rows that differ from the page colour, and where its ink starts and ends.
+    """
+    try:
+        with Image.open(image_path) as img:
+            full = img.convert("L")
+            edge = int(full.width * 0.05)                   # scanner shadows and screenshot borders sit at the edges
+            grey = full.crop((edge, 0, full.width - edge, full.height))
+            w, h = grey.size
+            background = max(grey.resize((1, h), Image.Resampling.BOX).tobytes())
+            rows = [background - v for v in grey.resize((1, h), Image.Resampling.BOX).tobytes()]
+            top = next((y for y, v in enumerate(rows) if v > 6), None)
+            if top is None or top > h * 0.4:
+                return False
+            bottom = top
+            while bottom + 1 < h and rows[bottom + 1] > 3:
+                bottom += 1
+            band = grey.crop((0, top, w, bottom + 1)).resize((w, 1), Image.Resampling.BOX).tobytes()
+            xs = [x for x, v in enumerate(band) if background - v > 12]
+            if not xs:
+                return False
+            left, right = xs[0], w - 1 - xs[-1]
+            return left > 0.12 * w and right > 0.12 * w and abs(left - right) <= 0.04 * w
+    except Exception:
+        return False
+
+
+def split_merged_title(page: Page, image_path: str = None) -> Page:
+    """Split a title the model wrote INSIDE the first paragraph into a heading and a paragraph.
+
+    On a small picture the model often returns "Title, a line break, then the first sentence" as ONE block, so the
+    title is neither centred nor styled as a heading. The rule is narrow on purpose and reads nothing new from the picture:
+    only the first block, only a paragraph, whose first line is short and ends without punctuation and whose remaining
+    text is a full sentence (at least 40 characters, ending like a sentence). Anything else is left as it is.
+    """
+    if not page.blocks:
+        return page
+    first = page.blocks[0]
+    newline = chr(10)
+    if isinstance(first, TableBlock) or first.kind != "paragraph" or newline not in first.text:
+        return page
+    title, rest = first.text.split(newline, 1)
+    title, rest = title.strip(), rest.strip()
+    if not (2 <= len(title) <= 60 and title[-1] not in ".,;:!?" and rest and len(rest) >= 40
+            and rest[0].isupper() and rest[-1] in ".!?"):
+        return page
+    centred = getattr(first, "align", "left") == "center" or (image_path is not None and _top_line_centred(image_path))
+    heading = first.model_copy(update={"kind": "heading", "text": title,
+                                       "align": "center" if centred else first.align})
+    body = first.model_copy(update={"text": rest, "size": "normal", "bold": False, "align": "left"})
+    return page.model_copy(update={"blocks": [heading, body] + list(page.blocks[1:])})
+
+
 def extract_page_auto(image_path: str, parts: int = None, extractor=extract_page, **kwargs):
     """extract_page(return_timing=True) that reads a full-page picture in 2 strips unless told otherwise.
 
@@ -161,5 +216,5 @@ def extract_page_auto(image_path: str, parts: int = None, extractor=extract_page
     # Measure the tables' look (column widths, alignment, header fill) from the picture itself: no OCR, pixels only.
     from image_look import apply_image_look
     if isinstance(result, tuple):
-        return (apply_image_look(result[0], image_path),) + tuple(result[1:])
-    return apply_image_look(result, image_path)
+        return (apply_image_look(split_merged_title(result[0], image_path), image_path),) + tuple(result[1:])
+    return apply_image_look(split_merged_title(result, image_path), image_path)

@@ -109,7 +109,7 @@ Writer-only tests (no model, run in seconds):
 - **PowerPoint**: one slide per page, the first heading becomes the slide title (same writer as PDF to PowerPoint).
 - **Excel (from Word)**: same writer as PDF to Excel: tables as grids, prose in column A.
 
-## 6. Not wired in yet
+## 6. Web app
 
-These are command-line only. They are **not** registered as routes in `api/idox_api.py` or `idox_app.py`, so the
-web app and HTTP API do not offer them. Add them there once the results are accepted.
+The ten conversions are routes in the local web app (`web/idox_app.py`, see `web/README.md`). They are **not** in
+`api/idox_api.py` yet.

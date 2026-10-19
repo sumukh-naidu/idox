@@ -99,6 +99,7 @@ def main(source: str, fmt: str, doc: str, in_dir: str, out_dir: str):
         print(f"no {ext} files found (put some in {in_dir}/)")
         sys.exit(1)
 
+    args.outdir = os.path.abspath(args.outdir)      # the model script runs from another folder, so a relative path would land there
     os.makedirs(args.outdir, exist_ok=True)
     ok = fail = 0
     for path in paths:

@@ -1,6 +1,7 @@
 # idox: what has been implemented (as of 2026-10-14)
 
-Branch `testing2`. **Nothing described here is committed yet.** The how-to for running the new conversions is in
+Branch `testing2`; everything described here is committed and on the remote (`origin/testing2`). Later work is in
+[work_log_2026-10-16.md](work_log_2026-10-16.md) and [tweaks_and_work_summary_2026-10-19.md](tweaks_and_work_summary_2026-10-19.md). The how-to for running the new conversions is in
 [new_conversions.md](new_conversions.md); this document is the record of what was built, why, how it was tested and what is
 still open.
 
@@ -44,7 +45,7 @@ The docs described a Linux machine; this is Windows 11, so the following was set
 | OCR | **Not used and not installed**, by decision: the new code reads with the AI model only. The older searchable TIFF to PDF routes need OCR and are out of scope until asked for. |
 | `benchmark.py` | Ported to Windows (it used `/proc`, `pgrep`, `SIGKILL`). Hardware info, server stop/start and load average now have Windows equivalents; a missing temperature sensor no longer crashes the report. One subset run was tested; the full benchmark has not been run. |
 
-Start the model server (one copy only; two copies caused a memory surge):
+Start the model server (one copy only):
 
 ```powershell
 & "$env:USERPROFILE\.local\opt\llama.cpp\llama-b11247\llama-server.exe" `

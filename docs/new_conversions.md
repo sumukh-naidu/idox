@@ -27,6 +27,9 @@ output\           what the conversions write, one folder per conversion: output\
 tests\  api\  docs\  models_manual\
 ```
 
+`input\` and `output\` are **not in git**: they stay on each machine. On a fresh clone, create `input\<name>_input\` and
+put your files there.
+
 `input\dense_test_input\` holds the 3-page dense test document (the PDF, its three page pictures and a Word version).
 The older test and experiment folders (`sample_local_*_test`, `benchmark_win`, `models35`) are kept outside the project, in
 `D:\idox_test_records\`. They are a record of test runs, not part of the product.

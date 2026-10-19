@@ -53,8 +53,9 @@ Each was first tried in a separate copy of the project, measured against the unc
 | Smoke test, every conversion once with the 4B model on the GPU (41 checks, run before these tweaks) | 41 of 41 pass: content of every output, table colours in Word, PowerPoint and Excel, page counts, no repeated rows, all columns kept, a 10-page document. |
 | The tweaks, in a separate copy, with the model | The results in section 3. |
 
-What the test of the final code did **not** include: after the tweaks were applied to the real project, only the unit tests
-were run again. The model-based checks of the tweaks were done in the separate copy, with the same code.
+After the tweaks were applied to the real project, the unit tests ran again (155 pass) and a short final check ran with the
+model on the committed code: the 10-page PDF (all words, order 100, size 1.00), the 3-page dense PDF (all pages, order 100),
+the PowerPoint table (grey header, borders, no banding) and a picture to Word (title as its own heading). All 4 passed.
 
 ## 5. What is still open
 

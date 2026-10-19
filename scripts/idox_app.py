@@ -27,7 +27,7 @@ in job.json or the log, and never back to the browser. Restarting the app clears
 
 SAFETY. Binds to 127.0.0.1 only, unless started with --host ADDRESS (for example the
 laptop's VPN address, so colleagues on the VPN can open it): then it answers on that
-one address, never on every interface. Requests whose Host is not localhost or the
+address and on 127.0.0.1, never on every interface. Requests whose Host is not localhost or the
 --host address, and writes whose Origin is another site, are refused, so a web page you
 happen to have open cannot drive the app or spend the key. There is no login: with
 --host, anyone who can reach that address can use the app. File names are reduced to a safe stem; only
@@ -944,6 +944,11 @@ def main() -> None:
     server = Server((args.host, args.port), Handler)
     print(f"idox is running:  http://{args.host}:{args.port}", flush=True)
     if args.host not in ("127.0.0.1", "localhost"):
+        # this laptop keeps its own localhost link too, as a second listener on the same app
+        # (listening on every interface instead would also open the Wi-Fi network)
+        local = Server(("127.0.0.1", args.port), Handler)
+        threading.Thread(target=local.serve_forever, daemon=True).start()
+        print(f"and on this laptop: http://127.0.0.1:{args.port}", flush=True)
         print(f"NOTE: reachable by anyone who can reach {args.host}; there is no login.", flush=True)
     print(f"engine: {'local model' if CONFIG['backend'] == 'local' else CONFIG['endpoint']}"
           f"   key: {'set from TUHIN_AI_KEY' if CONFIG['key'] else 'not set (add it in Settings)'}")

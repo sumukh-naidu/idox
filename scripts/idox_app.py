@@ -25,9 +25,12 @@ the scripts through their environment (IDOX_API_KEY), never on a command line, n
 in job.json or the log, and never back to the browser. Restarting the app clears it
 (or set TUHIN_AI_KEY before starting).
 
-SAFETY. Binds to 127.0.0.1 only. Requests whose Host is not localhost, and writes
-whose Origin is another site, are refused, so a web page you happen to have open
-cannot drive the app or spend the key. File names are reduced to a safe stem; only
+SAFETY. Binds to 127.0.0.1 only, unless started with --host ADDRESS (for example the
+laptop's VPN address, so colleagues on the VPN can open it): then it answers on that
+one address, never on every interface. Requests whose Host is not localhost or the
+--host address, and writes whose Origin is another site, are refused, so a web page you
+happen to have open cannot drive the app or spend the key. There is no login: with
+--host, anyone who can reach that address can use the app. File names are reduced to a safe stem; only
 the routes listed in ROUTES can run; downloads are confined to the job's own folder.
 """
 
@@ -56,6 +59,7 @@ PY = sys.executable
 PAGE = REPO / "idox_app.html"
 
 LOCAL_BASE = "http://127.0.0.1:8090"
+ALLOWED_HOSTS = {"127.0.0.1", "localhost"}       # the Host names the app answers to; --host adds one
 MAX_UPLOAD = 300 * 1024 * 1024
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 PAGES_RE = re.compile(r"^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$")
@@ -671,8 +675,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def allowed(self, write: bool) -> bool:
         host = self.headers.get("Host", "")
-        if host.rsplit(":", 1)[0] not in ("127.0.0.1", "localhost"):
-            self.fail(403, "Refused: this app only answers on localhost.")
+        if host.rsplit(":", 1)[0] not in ALLOWED_HOSTS:
+            self.fail(403, "Refused: this app does not answer to that address.")
             return False
         origin = self.headers.get("Origin")
         if write and origin and urlparse(origin).netloc != host:
@@ -917,6 +921,9 @@ class Server(ThreadingHTTPServer):
 def main() -> None:
     global JOBS_DIR
     ap = argparse.ArgumentParser(description="Local web app for the idox converters.")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="the address to listen on (default 127.0.0.1, this laptop only); give the VPN address "
+                         "to let others on the VPN use it")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--jobs-dir", default=str(Path.home() / ".local/share/idox/jobs"),
                     help="where uploads and results are kept (default ~/.local/share/idox/jobs)")
@@ -933,8 +940,11 @@ def main() -> None:
     removed = load_old_jobs(args.keep_hours)
     threading.Thread(target=dispatcher, daemon=True).start()
 
-    server = Server(("127.0.0.1", args.port), Handler)
-    print(f"idox is running:  http://127.0.0.1:{args.port}", flush=True)
+    ALLOWED_HOSTS.add(args.host)
+    server = Server((args.host, args.port), Handler)
+    print(f"idox is running:  http://{args.host}:{args.port}", flush=True)
+    if args.host not in ("127.0.0.1", "localhost"):
+        print(f"NOTE: reachable by anyone who can reach {args.host}; there is no login.", flush=True)
     print(f"engine: {'local model' if CONFIG['backend'] == 'local' else CONFIG['endpoint']}"
           f"   key: {'set from TUHIN_AI_KEY' if CONFIG['key'] else 'not set (add it in Settings)'}")
     print(f"jobs kept in {JOBS_DIR}" + (f"  ({removed} old ones removed)" if removed else ""))

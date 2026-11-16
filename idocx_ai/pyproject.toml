@@ -1,0 +1,67 @@
+# iDocx AI backend: a chat service where a local model works on uploaded PDFs through tools.
+# Set up with `uv sync` (creates .venv/ from uv.lock); run with `bash run.sh`.
+# This is an app, not a library: uv installs its dependencies but does not build it.
+
+[project]
+name = "idocx-ai"
+version = "0.1.0"
+description = "Chat with a local AI model that works on uploaded PDFs (and converts Excel to Word)."
+requires-python = ">=3.13,<3.14"
+# Pinned to the versions the features were tested with. Change with `uv add <lib>==<version>`.
+dependencies = [
+    "pymupdf==1.28.2",          # same version as the conversion scripts, so both parse PDFs identically
+    "fastapi==0.128.8",
+    "uvicorn==0.39.0",
+    "python-multipart==0.0.32",  # FastAPI form uploads
+    "pillow==12.3.0",
+    "openpyxl==3.1.5",           # Excel to Word: read .xlsx
+    "python-docx==1.2.0",        # Excel to Word: write .docx
+]
+
+[dependency-groups]
+dev = ["mypy", "pytest", "ruff"]
+
+# ---------------------------------------------------------------- ruff (lint + format)
+[tool.ruff]
+target-version = "py313"
+line-length = 120   # the existing code is written to 120; the standards' 100 applies to new services
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle: basic style errors
+    "F",       # pyflakes: unused imports and variables, undefined names
+    "I",       # import order
+    "N",       # PEP 8 naming
+    "UP",      # modern Python syntax
+    "B",       # likely bugs (bugbear)
+    "S",       # security checks (bandit)
+    "BLE",     # no blind `except Exception` (allowed only at the outer edge, with a reason)
+    "C4",      # simpler comprehensions
+    "DTZ",     # timezone-aware datetimes only
+    "T20",     # no print()
+    "PTH",     # pathlib instead of os.path
+    "SIM",     # simpler code
+    "RET",     # clean return statements
+    "ASYNC",   # blocking calls inside async code
+    "RUF",     # ruff's own checks
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts run by hand or by the test: they print a report and set sys.path before importing.
+"tests/**" = ["S101", "T201", "E402"]
+"evals/**" = ["T201", "E402"]
+"samples/**" = ["T201", "S311"]   # random is fine for made-up sample data
+
+# ---------------------------------------------------------------- mypy (strict typing)
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["^data/", "^samples/"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

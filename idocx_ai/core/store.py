@@ -14,7 +14,7 @@ FILES.mkdir(parents=True, exist_ok=True)
 
 
 def set_root(path: Path) -> None:
-    """Point the store somewhere else, e.g. a feature's output/ folder during its checks."""
+    """Point the store somewhere else, e.g. tests/output/<feature>/ during its checks."""
     global FILES
     FILES = Path(path)
     FILES.mkdir(parents=True, exist_ok=True)

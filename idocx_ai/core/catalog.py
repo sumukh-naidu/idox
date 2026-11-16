@@ -34,9 +34,10 @@ def features() -> list[dict]:
 
 
 def sample_path(feature_id: str, name: str) -> Path | None:
-    """Only files a built feature lists as samples, from its own input/ folder."""
+    """Only files a built feature lists as samples, from samples/<feature folder>/."""
     module = _built().get(feature_id)
     if not module or name not in module.INFO.get("samples", []):
         return None
-    path = Path(module.__file__).resolve().parent / "input" / name
+    feature_dir = Path(module.__file__).resolve().parent
+    path = feature_dir.parents[1] / "samples" / feature_dir.name / name
     return path if path.is_file() else None

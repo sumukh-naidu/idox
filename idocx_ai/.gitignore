@@ -2,7 +2,11 @@
 data/
 __pycache__/
 *.log
-# Check results: share only each check's readable report.txt. The generated files are
-# rewritten with new random names on every run; anyone can regenerate them.
-features/*/output/*/*
-!features/*/output/*/report.txt
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# What the checks and evals write (files and report.txt); every run regenerates them.
+tests/output/
+evals/output/
+# Local exports of API.md
+API.pdf

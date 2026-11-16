@@ -8,40 +8,35 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Model weights - far too large for git, never commit
 models_manual/
 
-# Generated output
+# Conversions: everything the scripts generate goes to conversions/output/ (kept on disk, not in git)
+conversions/output/
 pdf_out/
 pdf_out_img/
 pdf_to_word_output/
 scanned_pdf_output/
-xlsx_output/
 render/
 *.docx
 *.log
 bench_results.json
-
-# Extracted / intermediate markdown
-extracted.md
-eod.md
-inv.md
-freetest.md
-mixed.md
-sample.md
-sample_scanned.md
-scansmpl.md
-simple.md
-text2.md
 
 # Real documents - contain actual data, keep local only
 real_form_1040.pdf
 real_business_doc.pdf
 End-of-Day_Report___Day_7.pdf
 
+# Local working copies, not for the repo
+docs/IDP Platform Architecture Final.html
+docs/python-standards/archive/
+
 # Local tooling state
 .claude/scheduled_tasks.lock
+.kilo/
 
 # OS
 .DS_Store

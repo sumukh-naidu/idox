@@ -26,11 +26,15 @@ visual paragraph:
     ungrounded_text_blocks() already applies to whole blocks
 
 Tables keep the model's cells; column widths, row heights, font and size come from the
-PDF's own table (PyMuPDF find_tables).
+PDF's own table (PyMuPDF find_tables). A table the PDF has but the model did not return is
+built from the PDF's own cells.
 
-The model's blocks still decide ORDER and STRUCTURE; only appearance comes from here.
-A block whose lines cannot be found is kept untouched. Scanned pages never come here:
-no text layer, nothing to measure. Works on copies; the model's pages are not changed.
+The model's blocks decide what KIND each piece is (heading, paragraph, list); the PDF
+decides what is there and in what ORDER. Every piece is placed by the PDF lines it covers,
+each line is used once (text the model wrote twice is dropped), and lines no block covered
+are put back where they sit. A block whose lines cannot be found is kept untouched, in its
+place. Scanned pages never come here: no text layer, nothing to measure. Works on copies;
+the model's pages are not changed.
 """
 
 import re
@@ -130,29 +134,44 @@ def page_lines(pdf_page) -> List[_Line]:
     return out
 
 
+def _starts(rest: str, line_key: str) -> bool:
+    return bool(line_key) and (rest.startswith(line_key) or (len(rest) >= 6 and line_key.startswith(rest)))
+
+
 def _cover(key: str, lines: List[_Line], used: List[bool], hint: int):
-    """The lines that spell out `key`, in order, and the pieces of it no line accounts for."""
-    pos, got, missing, nxt = 0, [], [], hint
+    """The unused lines that spell out `key`, in order; how much of `key` repeats lines an
+    earlier block or a table already holds; and the pieces of it no line accounts for.
+
+    The model sometimes writes the same text twice, e.g. a title block that swallows the
+    heading, caption and paragraph below it, then those three again as their own blocks.
+    Text found in an already-used line is a repeat, not a gap, so it is skipped rather than
+    counted as missing."""
+    pos, got, missing, nxt, repeated = 0, [], [], hint, 0
     while pos < len(key):
         rest = key[pos:]
         order = ([nxt] if nxt < len(lines) else []) + list(range(len(lines)))
-        j = next((i for i in order if not used[i] and lines[i].key
-                  and (rest.startswith(lines[i].key) or (len(rest) >= 6 and lines[i].key.startswith(rest)))), None)
+        j = next((i for i in order if not used[i] and _starts(rest, lines[i].key)), None)
         if j is not None:
             got.append(j)
             used[j] = True
             pos += min(len(lines[j].key), len(rest))
             nxt = j + 1
             continue
-        # Nothing starts here: skip to the nearest later point where an unused line does.
-        later = [key.find(l.key, pos + 1) for i, l in enumerate(lines) if not used[i] and len(l.key) >= 4]
+        taken = [i for i in range(len(lines)) if used[i] and _starts(rest, lines[i].key)]
+        if taken:
+            step = min(max(len(lines[i].key) for i in taken), len(rest))
+            repeated += step
+            pos += step
+            continue
+        # Nothing starts here: skip to the nearest later point where a line does.
+        later = [key.find(l.key, pos + 1) for l in lines if len(l.key) >= 4]
         later = [p for p in later if p > pos]
         if not later:
             missing.append(rest)
             break
         missing.append(key[pos:min(later)])
         pos = min(later)
-    return got, missing
+    return got, missing, repeated
 
 
 def _runs(group: List[_Line], col_right: float) -> List[dict]:
@@ -255,21 +274,27 @@ def _styled_paragraphs(group_lines, block, body, page_w, col_left, col_right, co
 
 
 def _style_table(block: TableBlock, detected, lines: List[_Line]):
-    """Match a model table to the PDF's table by shared cell text; copy its geometry."""
+    """Match a model table to the PDF's table by shared cell text; copy its geometry.
+
+    Returns (block, index of the PDF table it matched, or None)."""
     cells = {_key(c) for row in [block.header] + list(block.rows) for c in row if _key(c)}
-    best, best_hits = None, 0
-    for t in detected:
+    best, best_hits, best_i = None, 0, None
+    for i, t in enumerate(detected):
         try:
             found = {_key(c or "") for row in t.extract() for c in row}
         except Exception:
             continue
         hits = len(cells & found)
         if hits > best_hits:
-            best, best_hits = t, hits
+            best, best_hits, best_i = t, hits, i
     if best is None or best_hits < max(1, len(cells) // 3):
-        return block
+        return block, None
+    return _with_geometry(block, best, lines), best_i
+
+
+def _with_geometry(block: TableBlock, best, lines: List[_Line]):
     x0, y0, x1, y1 = best.bbox
-    inside = [l for l in lines if l.y0 >= y0 - 1 and l.y1 <= y1 + 1 and l.x0 >= x0 - 1 and l.x1 <= x1 + 1]
+    inside = [l for l in lines if _inside(l, best.bbox)]
     style = Counter()
     for l in inside:
         style[(l.size, l.font)] += max(1, len(l.key))
@@ -288,13 +313,42 @@ def _style_table(block: TableBlock, detected, lines: List[_Line]):
                        font=font, size_pt=size)
 
 
+def _inside(line: _Line, bbox) -> bool:
+    x0, y0, x1, y1 = bbox
+    return line.y0 >= y0 - 1 and line.y1 <= y1 + 1 and line.x0 >= x0 - 1 and line.x1 <= x1 + 1
+
+
+def _table_from_pdf(t, lines: List[_Line]) -> Optional[TableBlock]:
+    """A table the PDF has but the model did not return, built from the PDF's own cells.
+
+    The cells are the text layer's exact characters, so nothing is read or guessed. Empty
+    rows are left out: find_tables() often reports a phantom empty last row. The first row
+    is the header when its text is bold. None when there is no real table (under 2x2)."""
+    try:
+        rows = [["" if c is None else " ".join(str(c).split()) for c in r] for r in t.extract()]
+    except Exception:
+        return None
+    rows = [r for r in rows if any(r)]
+    if len(rows) < 2 or max(len(r) for r in rows) < 2:
+        return None
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    first = [l for l in lines if _inside(l, t.rows[0].bbox)] if t.rows else []
+    has_header = bool(first) and all(l.bold for l in first)
+    header, body = (rows[0], rows[1:]) if has_header else ([], rows)
+    block = TableBlock(kind="table", has_header=has_header, n_data_rows=len(body), n_cols=width,
+                       header=header, rows=body)
+    return _with_geometry(block, t, lines)
+
+
 def restyle_page(page, pdf_page, has_images: bool) -> dict:
     """Rebuild a digital page's blocks with the PDF's own appearance, in place.
 
     Anything that cannot be matched is left as the model returned it. Returns counts and
     what was dropped, for the log.
     """
-    info = {"text": 0, "tables": 0, "kept": 0, "dropped": [], "fonts": Counter(), "lowest": 0.0}
+    info = {"text": 0, "tables": 0, "kept": 0, "built": 0, "dropped": [], "repeats": [], "restored": [],
+            "fonts": Counter(), "lowest": 0.0}
     lines = page_lines(pdf_page)
     if not lines:
         return info
@@ -313,41 +367,105 @@ def restyle_page(page, pdf_page, has_images: bool) -> dict:
     except Exception:
         detected = []
 
-    used = [False] * len(lines)
-    new_blocks, hint = [], 0
+    # The model decides what KIND each piece is; on a digital page the PDF decides what is
+    # there and in what order. The model's blocks are unreliable for both: it has merged a
+    # title with the heading, caption and paragraph below it and then written those again
+    # as blocks of their own, and returned a whole page, table included, as one heading.
+    # So every block is placed by the PDF lines it covers, each line is used once, tables
+    # come from the PDF's own table finder, and lines no block covered are put back.
+    built = {k: _table_from_pdf(t, lines) for k, t in enumerate(detected)}
+    table_of = [next((k for k, t in enumerate(detected) if built[k] and _inside(ln, t.bbox)), None)
+                for ln in lines]
+    used = [k is not None for k in table_of]   # a real table's lines belong to the table
+    placed, hint, last, tables_done = [], 0, -1.0, set()
+
+    def table_at(k):
+        idx = [i for i, tk in enumerate(table_of) if tk == k]
+        return min(idx) if idx else sum(1 for ln in lines if ln.y0 < detected[k].bbox[1]) - 0.5
+
+    def lowest(block):
+        bottom = block.y1 if isinstance(block, StyledTable) else block.top + block.n_lines * block.line_h
+        info["lowest"] = max(info["lowest"], bottom)
+
     for block in page.blocks:
         if isinstance(block, TableBlock):
-            styled = _style_table(block, detected, lines) if detected else block
-            if styled is not block:
-                info["tables"] += 1
-                info["lowest"] = max(info["lowest"], styled.y1)
-            else:
+            styled, k = _style_table(block, detected, lines) if detected else (block, None)
+            if k is None:
+                last += 0.001                       # not one of the PDF's tables: keep its place
+                placed.append((last, block))
                 info["kept"] += 1
-            new_blocks.append(styled)
+            elif k in tables_done:
+                info["repeats"].append(f"table: {' | '.join(block.header or (block.rows or [[]])[0])}")
+            else:
+                tables_done.add(k)
+                for i, ln in enumerate(lines):
+                    if _inside(ln, detected[k].bbox):
+                        used[i] = True
+                last = table_at(k)
+                placed.append((last, styled))
+                lowest(styled)
+                info["tables"] += 1
             continue
         key = _key(block.text)
         trial = list(used)
-        got, missing = _cover(key, lines, trial, hint) if key else ([], [])
+        got, missing, repeated = _cover(key, lines, trial, hint) if key else ([], [], 0)
         leftover = "".join(missing)
         # Lettering read off a picture is not in the text layer: drop it when the page
         # has pictures. Anything else that does not match means this block is kept as is.
         droppable = has_images and len(leftover) <= 0.5 * len(key)
+        if not got and repeated and (len(leftover) <= 3 or droppable):
+            info["repeats"].append(block.text)      # everything it says is already placed
+            continue
         if not got or (len(leftover) > 3 and not droppable):
-            new_blocks.append(block)
+            used = trial                            # its lines are in it: never add them again
+            last = (min(got) if got else last) + 0.001
+            placed.append((last, block))
             info["kept"] += 1
             continue
         used = trial
         hint = got[-1] + 1
         if len(leftover) > 3:
             info["dropped"].append(leftover)
-        paras = _styled_paragraphs([lines[i] for i in got], block, body, page_w,
-                                   col_left, col_right, col_width)
-        for p in paras:
-            info["lowest"] = max(info["lowest"], p.top + p.n_lines * p.line_h)
-        new_blocks.extend(paras)
+        for run in _runs_of(sorted(got)):
+            for p in _styled_paragraphs([lines[i] for i in run], block, body, page_w,
+                                        col_left, col_right, col_width):
+                placed.append((run[0], p))
+                lowest(p)
+        last = max(got)
         info["text"] += 1
-    page.blocks[:] = new_blocks
+
+    # The PDF's tables the model did not return, from the PDF's own cells.
+    for k in range(len(detected)):
+        if built[k] and k not in tables_done:
+            placed.append((table_at(k), built[k]))
+            lowest(built[k])
+            info["built"] += 1
+    # Lines no block accounted for (left out by the model, or misread so they could not be
+    # matched) go back where they sit, so no line of the page is lost. Bare page numbers and
+    # fragments of 1-3 characters are left out, as the content check does.
+    for run in _runs_of([i for i, ln in enumerate(lines)
+                         if not used[i] and len(ln.key) > 3 and not ln.key.isdigit()]):
+        filler = TextBlock(kind="paragraph", text=" ".join(lines[i].text for i in run),
+                           align="left", size="normal", bold=False)
+        for p in _styled_paragraphs([lines[i] for i in run], filler, body, page_w,
+                                    col_left, col_right, col_width):
+            placed.append((run[0], p))
+            lowest(p)
+        info["restored"].append(filler.text)
+    placed.sort(key=lambda item: item[0])
+    page.blocks[:] = [b for _, b in placed]
     return info
+
+
+def _runs_of(indices: List[int]) -> List[List[int]]:
+    """[0, 4, 5, 6, 9] -> [[0], [4, 5, 6], [9]]: a paragraph never spans lines of other content."""
+    runs: List[List[int]] = []
+    for i in indices:
+        if runs and i == runs[-1][-1] + 1:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+    return runs
 
 
 def restyle_document(pages, pdf_pages, is_digital, image_sets, layout):
@@ -371,6 +489,12 @@ def restyle_document(pages, pdf_pages, is_digital, image_sets, layout):
                      f"and {info['tables']} table(s)" + (f"; {info['kept']} kept as read" if info["kept"] else ""))
         for d in info["dropped"]:
             notes.append(f"page {i + 1}: dropped lettering read from a picture ({d[:40]!r})")
+        for r in info["repeats"]:
+            notes.append(f"page {i + 1}: dropped text the model wrote twice ({r[:50]!r})")
+        if info["built"]:
+            notes.append(f"page {i + 1}: {info['built']} table(s) the model missed, built from the PDF's own cells")
+        for r in info["restored"]:
+            notes.append(f"page {i + 1}: put back a line no block covered ({r[:50]!r})")
     new_layout = dict(layout)
     # Word sets the same text a little wider than the PDF did (kerning, rounding), so a
     # line that just fits in the PDF can spill one word onto a new line and push every

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 import _load
-from _load import AGREEMENT, AGREEMENT_SCANNED, REPO
+from _load import AGREEMENT, AGREEMENT_SCANNED, INPUT, REPO
 
 import pymupdf
 
@@ -801,6 +801,119 @@ class ModelDown(unittest.TestCase):
         self.assertIn("VERDICT: FAIL", r.stdout, "the log must say the run failed")
         self.assertNotIn("Traceback", r.stderr, "a crash is not the same as a deliberate failure")
         self.assertEqual(r.returncode, 1, "a run that read no page must exit 1, not 0")
+
+
+# --------------------------------------------------------------------------- PDF to Word follows the PDF
+SAMPLE_DIGITAL = os.path.join(INPUT, "pdf_to_word_input", "sample_digital_document.pdf")
+
+
+class WordFollowsThePdf(unittest.TestCase):
+    """PDF to Word, digital pages. The model's answer from a real run (mini 3, 2026-10-06, replayed here)
+    merged the title with the heading, caption and paragraph below it, wrote those three again as blocks of
+    their own, and returned page 2, table included, as one heading. The Word file had text twice, out of
+    order, and the table as tab-separated lines. Now the PDF decides what is there and in what order."""
+
+    TITLE = "Product Analytics Overview"
+    INTRO = ("This report covers user growth and engagement for the product over the last five months. Monthly "
+             "active users have grown steadily, with the largest jump occurring between March and April following "
+             "the release of the mobile app redesign.")
+    HEADING = "Monthly Active Users"
+    CAPTION = "Figure 1: Active users by month, in thousands"
+    RETENTION = ("Retention also improved during this period, with week-4 retention rising from 38% in January to "
+                 "47% in May.")
+    PAGE2_TITLE = "Regional Breakdown"
+    PAGE2_INTRO = ("The table below breaks down active users by region for the most recent month. North America and "
+                   "Europe together account for the majority of the user base.")
+    PAGE2_CELLS = ("Region Active Users % of Total MoM Change North America 84,200 40% +6% Europe 63,500 30% +4% "
+                   "Asia Pacific 42,000 20% +9% Rest of World 21,000 10% +2%")
+    PAGE2_END = ("Asia Pacific showed the fastest month-over-month growth at 9%, suggesting continued investment in "
+                 "that region is likely to pay off over the next two quarters.")
+    HEADER = ["Region", "Active Users", "% of Total", "MoM Change"]
+    ROWS = [["North America", "84,200", "40%", "+6%"], ["Europe", "63,500", "30%", "+4%"],
+            ["Asia Pacific", "42,000", "20%", "+9%"], ["Rest of World", "21,000", "10%", "+2%"]]
+
+    @classmethod
+    def setUpClass(cls):
+        import pdf_look
+        cls.look = pdf_look
+        cls.H = _load.load_script_defs("test_pdf.py")
+        cls.doc = pymupdf.open(SAMPLE_DIGITAL)
+        cls.tmp = tempfile.mkdtemp()
+        cls.images = [cls.H.extract_images(cls.doc[i], cls.tmp, i + 1) for i in range(2)]
+        cls.layout = cls.H.measure_layout(cls.doc[0])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def logged_page1(self):
+        # Block [3], a table read off the chart, is dropped by test_pdf.py before restyling.
+        return page_of([text("heading", f"{self.TITLE} {self.HEADING} {self.HEADING} 120 Jan 150 Feb 135 Mar 180 Apr "
+                                        f"210 May {self.CAPTION} {self.RETENTION}"),
+                        text("paragraph", self.INTRO), text("heading", self.HEADING),
+                        text("paragraph", f"{self.CAPTION} {self.RETENTION}")])
+
+    def logged_page2(self):
+        return page_of([text("heading", f"{self.PAGE2_TITLE} {self.PAGE2_INTRO} {self.PAGE2_CELLS} {self.PAGE2_END}")])
+
+    def restyle(self, page1, page2):
+        pages, layout, notes = self.look.restyle_document([page1, page2], [self.doc[0], self.doc[1]], [True, True],
+                                                          self.images, self.layout)
+        return pages, layout, notes
+
+    @staticmethod
+    def texts(page):
+        return [normalize(b.text) for b in page.blocks if not isinstance(b, TableBlock)]
+
+    def test_text_the_model_wrote_twice_appears_once(self):
+        pages, _, notes = self.restyle(self.logged_page1(), self.logged_page2())
+        texts = self.texts(pages[0])
+        for piece in (self.TITLE, self.INTRO, self.HEADING, self.CAPTION, self.RETENTION):
+            self.assertEqual(texts.count(normalize(piece)), 1, piece)
+        self.assertEqual(sum("wrote twice" in n for n in notes), 2)
+
+    def test_pieces_follow_the_pdf_order(self):
+        pages, _, _ = self.restyle(self.logged_page1(), self.logged_page2())
+        self.assertEqual(self.texts(pages[0]), [normalize(t) for t in
+                                                (self.TITLE, self.INTRO, self.HEADING, self.CAPTION, self.RETENTION)])
+
+    def test_a_table_the_model_missed_is_built_from_the_pdf(self):
+        pages, _, notes = self.restyle(self.logged_page1(), self.logged_page2())
+        tables = [b for b in pages[1].blocks if isinstance(b, TableBlock)]
+        self.assertEqual(len(tables), 1)
+        self.assertEqual((tables[0].has_header, tables[0].header, tables[0].rows), (True, self.HEADER, self.ROWS))
+        kinds = ["table" if isinstance(b, TableBlock) else normalize(b.text) for b in pages[1].blocks]
+        self.assertEqual(kinds, [normalize(self.PAGE2_TITLE), normalize(self.PAGE2_INTRO), "table",
+                                 normalize(self.PAGE2_END)])
+        self.assertTrue(any("built from the PDF" in n for n in notes))
+
+    def test_a_line_no_block_covered_is_put_back(self):
+        pages, _, notes = self.restyle(self.logged_page1(), page_of([text("heading", self.PAGE2_TITLE)]))
+        texts = self.texts(pages[1])
+        self.assertIn(normalize(self.PAGE2_INTRO), texts)
+        self.assertIn(normalize(self.PAGE2_END), texts)
+        self.assertTrue(any("put back" in n for n in notes))
+
+    def test_a_table_returned_twice_is_kept_once(self):
+        page2 = page_of([text("heading", self.PAGE2_TITLE), text("paragraph", self.PAGE2_INTRO),
+                         table(self.HEADER, self.ROWS), table(self.HEADER, self.ROWS), text("paragraph", self.PAGE2_END)])
+        pages, _, _ = self.restyle(self.logged_page1(), page2)
+        self.assertEqual(sum(isinstance(b, TableBlock) for b in pages[1].blocks), 1)
+
+    def test_the_word_file_has_each_piece_once_and_the_picture_in_place(self):
+        import docx
+        from to_docx import build_docx
+        pages, layout, _ = self.restyle(self.logged_page1(), self.logged_page2())
+        path = os.path.join(self.tmp, "follows.docx")
+        build_docx(pages, path, layout=layout, image_sets=self.images)
+        paras = docx.Document(path).paragraphs
+        written = [("[IMAGE]" if p._p.xpath(".//pic:pic") else normalize(p.text)) for p in paras
+                   if p.text.strip() or p._p.xpath(".//pic:pic")]
+        self.assertEqual(written.count(normalize(self.HEADING)), 1)
+        i = written.index("[IMAGE]")
+        self.assertEqual((written[i - 1], written[i + 1]), (normalize(self.HEADING), normalize(self.CAPTION)))
+        source = "\n".join(page.get_text() for page in self.doc)
+        self.assertEqual(self.H.verify_docx(path, source)[0], 1.0)
 
 
 if __name__ == "__main__":

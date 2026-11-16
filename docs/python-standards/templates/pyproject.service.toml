@@ -1,0 +1,23 @@
+# One service (copy to services/<name>/pyproject.toml and replace "extraction").
+# Tool settings are NOT repeated here: they come from the workspace root pyproject.toml.
+
+[project]
+name = "extraction"
+version = "0.1.0"
+description = "Reads identity documents: quality gate, clean-up, OCR, field checks."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "idp-common",          # the shared package (workspace member)
+    "fastapi",
+    "uvicorn",
+    "pydantic-settings",
+    "httpx",
+    # Add libraries with `uv add --package extraction <lib>`; exact versions live in uv.lock.
+]
+
+[tool.uv.sources]
+idp-common = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

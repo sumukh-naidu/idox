@@ -1,0 +1,14 @@
+# Keep secrets, history, tests and local junk out of every image (copy to the repo root).
+.git
+.env
+.env.*
+!.env.example
+.venv
+**/__pycache__
+**/*.pyc
+**/tests
+**/fixtures
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+*.log

@@ -1,0 +1,57 @@
+# Workspace root of the python-services repo (copy to /pyproject.toml).
+# Holds the settings every service shares: Python version, lint, format, type check, tests.
+# Services and the shared package are workspace members with their own pyproject.toml.
+
+[project]
+name = "python-services"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[dependency-groups]
+# Development tools. Exact versions come from uv.lock.
+dev = ["mypy", "pre-commit", "pytest", "ruff"]
+
+[tool.uv.workspace]
+members = ["packages/*", "services/*"]
+
+# ---------------------------------------------------------------- ruff (lint + format)
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle: basic style errors
+    "F",       # pyflakes: unused imports and variables, undefined names
+    "I",       # import order
+    "N",       # PEP 8 naming
+    "UP",      # modern Python syntax
+    "B",       # likely bugs (bugbear)
+    "S",       # security checks (bandit)
+    "BLE",     # no blind `except Exception` (allowed only at the outer edge, with a reason)
+    "C4",      # simpler comprehensions
+    "DTZ",     # timezone-aware datetimes only
+    "T20",     # no print()
+    "PTH",     # pathlib instead of os.path
+    "SIM",     # simpler code
+    "RET",     # clean return statements
+    "ASYNC",   # blocking calls inside async code
+    "RUF",     # ruff's own checks
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]  # pytest uses assert
+
+# ---------------------------------------------------------------- mypy (strict typing)
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["packages", "services"]
+addopts = "-ra --strict-markers"
+markers = ["integration: needs PostgreSQL, RabbitMQ or MinIO running"]

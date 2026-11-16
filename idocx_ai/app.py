@@ -1,6 +1,7 @@
-"""iDocx AI backend: chat with a local model that works on uploaded PDFs.
+"""iDocx AI backend: chat with a local model that works on uploaded PDFs (and Excel workbooks,
+which it can convert to Word).
 
-    POST /files                      upload a PDF (optionally into a session) -> file metadata
+    POST /files                      upload a PDF or .xlsx (optionally into a session) -> file metadata
     GET  /files/{id}                 download
     POST /sessions                   -> session_id
     POST /sessions/{id}/messages     -> NDJSON stream of events, one JSON object per line:
@@ -20,6 +21,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from core import agent, catalog, llm, proposals, schemas, store
+from features.excel_to_word.convert import inspect_xlsx
 
 MAX_UPLOAD_MB = 100
 STATIC = Path(__file__).resolve().parent / "static"
@@ -65,14 +67,21 @@ def feature_sample(feature_id: str, name: str):
 
 
 @app.post("/files", tags=["files"],
-          responses={200: {"model": schemas.FileRecord}, 400: _err("not a readable PDF, or password-protected"),
+          responses={200: {"model": schemas.FileRecord},
+                     400: _err("not a readable PDF or .xlsx, password-protected, or macro-enabled"),
                      404: _err("unknown session_id"), 413: _err("larger than 100 MB")})
-async def upload(file: UploadFile = File(..., description="a PDF, up to 100 MB"),
+async def upload(file: UploadFile = File(..., description="a PDF or an Excel workbook (.xlsx), up to 100 MB"),
                  session_id: str | None = Form(None, description="attach the file to this chat session")):
-    """Upload one PDF. Returns its file record; `id` is the file ID used everywhere else."""
+    """Upload one PDF or .xlsx. Returns its file record; `id` is the file ID used everywhere else."""
     data = await file.read()
     if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(413, f"file larger than {MAX_UPLOAD_MB} MB")
+    if data[:4] == b"PK\x03\x04":                  # a zip: the only one we accept is an .xlsx workbook
+        try:
+            inspect_xlsx(data)
+        except ValueError as e:
+            raise HTTPException(400, f"'{file.filename}': {e}")
+        return _keep(store.save_file(data, file.filename, 0, source="upload", ext="xlsx"), session_id)
     try:
         with pymupdf.open(stream=data, filetype="pdf") as doc:
             if not doc.is_pdf:
@@ -85,7 +94,11 @@ async def upload(file: UploadFile = File(..., description="a PDF, up to 100 MB")
     except Exception:
         raise HTTPException(400, f"'{file.filename}' is not a readable PDF")
 
-    meta = store.save_file(data, file.filename, pages, source="upload")
+    return _keep(store.save_file(data, file.filename, pages, source="upload"), session_id)
+
+
+def _keep(meta: dict, session_id: str | None) -> dict:
+    """Attach a just-uploaded file to the chat session, if one was given."""
     if session_id:
         try:
             store.attach(store.get_session(session_id), meta["id"])

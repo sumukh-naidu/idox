@@ -34,7 +34,9 @@ def _safe_name(name: str) -> str:
     return name[:120]
 
 
-EXTENSIONS = {"pdf": "application/pdf", "txt": "text/plain; charset=utf-8"}
+EXTENSIONS = {"pdf": "application/pdf", "txt": "text/plain; charset=utf-8",
+              "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
 
 
 def save_file(data: bytes, name: str, pages: int, source: str, parents=None, page_origin=None,

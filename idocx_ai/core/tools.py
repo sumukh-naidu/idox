@@ -14,8 +14,9 @@ from features.fr_ai_04_translation import tools as fr_ai_04
 from features.fr_ai_05_redaction import tools as fr_ai_05
 from features.fr_prd_104_cleanup import tools as fr_prd_104
 from features.fr_prd_105_accessibility import tools as fr_prd_105
+from features.excel_to_word import tools as excel_to_word
 
-FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02, fr_ai_04]
+FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02, fr_ai_04, excel_to_word]
 
 FILE_ID = {"type": "string", "description": "ID of the PDF, e.g. f_1a2b3c4d5e6f"}
 

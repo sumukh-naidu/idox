@@ -46,7 +46,8 @@ class FileRecord(BaseModel):
     name: str = Field(examples=["contract_v1.pdf"])
     pages: int = Field(examples=[3])
     size: int = Field(description="bytes", examples=[48213])
-    ext: Literal["pdf", "txt"] = Field(description="txt: a translation's plain-text copy")
+    ext: Literal["pdf", "txt", "xlsx", "docx"] = Field(
+        description="txt: a translation's plain-text copy; xlsx: an uploaded workbook; docx: Excel to Word output")
     source: str = Field(description='"upload", or the operation that made it, e.g. "merge_pdfs", "redaction"',
                         examples=["upload"])
     parents: list[str] = Field(description="IDs of the file(s) it was made from", examples=[[]])

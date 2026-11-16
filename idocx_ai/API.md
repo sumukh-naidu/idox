@@ -17,7 +17,7 @@ File conversions (PDF → Word, and so on) are a **separate service** with its o
 | Authentication | **None yet.** No API key or token header is needed. |
 | CORS | **Not enabled yet.** A browser app served from another address that calls this API directly will be blocked by the browser. Calls from a backend server are fine. Send us the frontend's origin (e.g. `http://10.0.3.40:3000`) and we will allow it. |
 | Request bodies | JSON (`Content-Type: application/json`), except uploads, which are `multipart/form-data` |
-| File types | PDF only, up to **100 MB**. Password-protected PDFs are refused. |
+| File types | PDF, plus Excel workbooks (`.xlsx`, for conversion to Word), up to **100 MB**. Password-protected PDFs and macro-enabled workbooks are refused. |
 | Test page | `http://10.0.3.66:8100/`: a reference client built on this same API |
 
 ### IDs
@@ -159,7 +159,7 @@ curl -F "file=@contract_v1.pdf" -F "session_id=s_3f9a1c2b7d4e" http://10.0.3.66:
 | `name` | file name (cleaned of unsafe characters) |
 | `pages` | page count |
 | `size` | bytes |
-| `ext` | `"pdf"`, or `"txt"` (a translation's plain-text copy) |
+| `ext` | `"pdf"`, `"txt"` (a translation's plain-text copy), `"xlsx"` (an uploaded workbook) or `"docx"` (Excel → Word output) |
 | `source` | `"upload"`, or the operation that made it (e.g. `"merge_pdfs"`, `"redaction"`, `"form_fill"`) |
 | `parents` | IDs of the file(s) it was made from |
 | `created` | Unix time in seconds |
@@ -441,6 +441,6 @@ The sample PDF is available from `GET /features/FR-AI-05/samples/redaction_form.
 | Sessions and proposals | kept in memory | **lost when the service restarts**; files on disk remain downloadable by ID |
 | File retention | files are kept on disk with no automatic cleanup | test with made-up documents only |
 | Concurrency | one AI request at a time | other users queue |
-| File types | PDF only | conversions are the separate service on port 8200 |
+| File types | PDF, plus `.xlsx` for Excel → Word | other conversions are the separate service on port 8200 |
 | Response schemas in Swagger | shown for every endpoint, including the 7 stream event types (documentation only: `core/schemas.py`) | the field tables and examples here go further |
 | Versioning | none (`/` paths, version 0.1) | breaking changes are possible while this is a POC |

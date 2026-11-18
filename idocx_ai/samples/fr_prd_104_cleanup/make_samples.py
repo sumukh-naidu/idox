@@ -61,7 +61,8 @@ def digital():
         gt.append({"page": doc.page_count, "remove": False, "reason": reason})
 
     text_page(doc, "ACME TEST LTD - Annual Operations Review 2026",
-              ["Sample document for cleanup testing. All figures are invented.", LOREM[0]])
+              ["Sample document for cleanup testing. All figures are invented.",
+               "Prepared for the fictional board meeting on 30 September 2026 by the test author."])
     keep("cover page")
     text_page(doc, "1. Regional operations", LOREM[:2])
     keep("content")
@@ -180,12 +181,24 @@ def stamp(d):
     d.text((905, 1545), "12-09-2026", font=f, fill=60)
 
 
-def jpeg(im):
-    b = io.BytesIO(); im.save(b, "JPEG", quality=80); return b.getvalue()
+def jpeg(im, exif=None):
+    b = io.BytesIO()
+    im.save(b, "JPEG", quality=80, **({"exif": exif} if exif else {}))
+    return b.getvalue()
+
+
+def scan_app_exif():
+    """A fake scanning app's own EXIF: device make/model and a GPS fix, the way a phone's
+    scanner app would tag a photo -- hidden metadata the cleanup feature should find and strip."""
+    exif = Image.Exif()
+    exif[0x010F], exif[0x0110] = "FakeScan", "TS-4000"   # Make, Model
+    gps = exif.get_ifd(0x8825)
+    gps[1], gps[2], gps[3], gps[4] = "N", (12.0, 58.0, 0.0), "E", (77.0, 36.0, 0.0)
+    return exif.tobytes()
 
 
 def scanned():
-    page_a = jpeg(scan(body("Delivery Note DN-0000-TEST", LOREM[:2]), seed=1, angle=0.4))
+    page_a = jpeg(scan(body("Delivery Note DN-0000-TEST", LOREM[:2]), seed=1, angle=0.4), exif=scan_app_exif())
     page_b = jpeg(scan(body("Inspection Summary (sample)", LOREM[2:]), seed=2, angle=-0.3))
     pages = [
         (page_a, {"remove": False, "reason": "content"}),
@@ -216,7 +229,8 @@ def scanned():
     })
     save(doc, "cleanup_scanned.pdf")
     return {"pages": doc.page_count, "pages_detail": gt, "text_layer": False,
-            "metadata_to_remove": ["author", "creator", "producer", "creationDate", "modDate"]}
+            "metadata_to_remove": ["author", "creator", "producer", "creationDate", "modDate",
+                                   "image EXIF: GPS location on page 1", "image EXIF: device make/model on page 1"]}
 
 
 # ------------------------------------------------------------ 3. control: nothing to clean

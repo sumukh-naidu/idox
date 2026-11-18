@@ -12,7 +12,7 @@ from core.pdfutil import ToolError, derived_name, open_pdf, origin_of, save_new
 from .scan import scan_document
 
 COLORS = {"secret": (1.0, 0.35, 0.35), "government_id": (1.0, 0.62, 0.2), "financial": (0.72, 0.5, 1.0),
-          "contact": (0.35, 0.65, 1.0), "personal": (0.4, 0.82, 0.45)}
+          "contact": (0.35, 0.65, 1.0), "personal": (0.4, 0.82, 0.45), "signature": (1.0, 0.85, 0.3)}
 
 
 def build_preview(file_id: str, items: list[dict]) -> dict:
@@ -31,23 +31,27 @@ def build_preview(file_id: str, items: list[dict]) -> dict:
                     page_origin=origin_of(meta))
 
 
-def find_sensitive_info(file_id: str, use_model: bool = True) -> dict:
+def find_sensitive_info(file_id: str, use_model: bool = True, categories: list[str] | None = None) -> dict:
     try:
-        meta, _ = store.get_file(file_id)
+        store.get_file(file_id)
     except store.NotFound as e:
-        raise ToolError(str(e))
+        raise ToolError(str(e)) from e
+    if categories:
+        unknown = [c for c in categories if c not in COLORS]
+        if unknown:
+            raise ToolError(f"unknown categories {unknown}; choose from {sorted(COLORS)}")
     try:
-        items, ocr, dropped = scan_document(file_id, use_model=use_model)
+        items, ocr, dropped = scan_document(file_id, use_model=use_model, categories=categories)
     except Exception as e:
         if use_model and "urlopen" in repr(e).lower():
-            raise ToolError(f"the model could not be reached to look for names and addresses: {e}")
+            raise ToolError(f"the model could not be reached to look for names and addresses: {e}") from e
         raise
     if not items:
         return {"file_id": file_id, "found": 0, "note": "no sensitive information found; nothing to redact"}
 
     preview = build_preview(file_id, [i for i in items if i["located"]])
     public_items = [{k: i[k] for k in ("id", "kind", "category", "masked", "page", "basis", "confidence",
-                                       "read_by", "located")} for i in items]
+                                       "read_by", "located", "rects")} for i in items]
     by_category = {}
     for i in items:
         by_category[i["category"]] = by_category.get(i["category"], 0) + 1
@@ -71,6 +75,9 @@ def find_sensitive_info(file_id: str, use_model: bool = True) -> dict:
     unlocated = [i["id"] for i in items if not i["located"]]
     if unlocated:
         warnings.append(f"{', '.join(unlocated)} could not be located on the page and cannot be redacted automatically")
+    low = [i["id"] for i in items if i["confidence"] < 85]
+    if low:
+        warnings.append(f"{', '.join(low)} below 85% confidence: check these before approving")
     if warnings:
         result["warnings"] = warnings
     return result

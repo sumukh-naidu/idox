@@ -86,9 +86,11 @@ def report():
         "pages": 2,
         "before": {"tagged": "fail", "language": "fail", "title": "fail", "fonts_embedded": "fail",
                    "image_descriptions": "fail", "real_text": "pass", "reading_order": "fail",
+                   "heading_structure": "warn", "table_headers": "n/a", "colour_contrast": "pass",
                    "bookmarks": "n/a", "assistive_access": "pass"},
         "after_fix": {"language": "pass", "title": "pass",
                       "tagged": "fail", "fonts_embedded": "fail", "reading_order": "fail"},
+        "expected_heading_anomaly": "H2 is followed by H4, skipping H3",
         "expected_title": "ACME Test Ltd - Quarterly Operations Summary",
         "expected_language": "en",
         "image_keywords": [{"page": 1, "all_of": ["Q1", "Q4"], "any_of": ["bar", "chart"]},
@@ -134,6 +136,7 @@ def scanned():
         "pages": 2,
         "before": {"tagged": "fail", "language": "fail", "title": "fail", "fonts_embedded": "n/a",
                    "image_descriptions": "n/a", "real_text": "fail", "reading_order": "fail",
+                   "heading_structure": "n/a", "table_headers": "n/a", "colour_contrast": "n/a",
                    "bookmarks": "n/a", "assistive_access": "pass"},
         "after_fix": {"real_text": "pass", "language": "pass", "title": "pass", "fonts_embedded": "pass",
                       "tagged": "fail", "reading_order": "fail"},
@@ -173,15 +176,55 @@ def tagged_control():
         "pages": 1,
         "before": {"tagged": "pass", "language": "pass", "title": "pass", "fonts_embedded": "pass",
                    "image_descriptions": "pass", "real_text": "pass", "reading_order": "pass",
+                   "heading_structure": "pass", "table_headers": "n/a", "colour_contrast": "pass",
                    "bookmarks": "n/a", "assistive_access": "pass"},
         "note": "tags are a minimal hand-made structure, enough for the structural checks only",
+    }
+
+
+# ------------------------------------------------------------ 4. heading skip, a table, low contrast
+
+def structure_issues():
+    doc = pymupdf.open()
+    p = doc.new_page(width=A4[0], height=A4[1])
+    p.insert_text((72, 90), "Warehouse Safety Review", fontsize=24, fontname="hebo")   # H1 (ratio 2.18)
+    p.insert_textbox(pymupdf.Rect(72, 115, 523, 210), BODY, fontsize=11, fontname="helv")
+    # H3 (ratio 1.36): skips H2
+    p.insert_text((72, 250), "Shelving unit inspection notes", fontsize=15, fontname="hebo")
+    p.insert_textbox(pymupdf.Rect(72, 270, 523, 330),
+                     "Two shelving units need new safety labels before the next audit. "
+                     "Replace them and re-check at the next scheduled inspection.",
+                     fontsize=11, fontname="helv")
+    # A pale grey notice: well under the WCAG AA ratio for normal text against a white page.
+    p.insert_text((72, 360), "Internal note: figures are provisional pending sign-off.",
+                  fontsize=11, fontname="helv", color=(0.83, 0.83, 0.83))
+    # A simple 3x3 table (header row + two data rows) with ruling lines, so find_tables() sees it.
+    rows, cols, x0, y0, cw, ch = 3, 3, 72, 400, 130, 28
+    for r in range(rows + 1):
+        p.draw_line((x0, y0 + r * ch), (x0 + cols * cw, y0 + r * ch))
+    for c in range(cols + 1):
+        p.draw_line((x0 + c * cw, y0), (x0 + c * cw, y0 + rows * ch))
+    table_rows = [["Item", "Qty", "Price"], ["Pallet rack", "4", "120.00"], ["Shelf bracket", "12", "8.50"]]
+    for r, row in enumerate(table_rows):
+        for c, cell in enumerate(row):
+            rect = pymupdf.Rect(x0 + c * cw + 4, y0 + r * ch + 6, x0 + (c + 1) * cw - 4, y0 + (r + 1) * ch - 4)
+            p.insert_textbox(rect, cell, fontsize=10, fontname="helv")
+    save(doc, "access_structure.pdf")
+    return {
+        "pages": 1,
+        "before": {"tagged": "fail", "language": "fail", "title": "fail", "real_text": "pass",
+                   "heading_structure": "warn", "table_headers": "fail", "colour_contrast": "fail",
+                   "bookmarks": "n/a", "assistive_access": "pass"},
+        "expected_heading_anomaly": "H1 is followed by H3, skipping H2",
+        "note": "deliberately: one heading-level skip, one ruled table (untagged, so no header cells "
+               "can be marked), and one pale-grey line that fails WCAG AA contrast",
     }
 
 
 if __name__ == "__main__":
     truth = {"_comment": "FR-PRD-105 accessibility test set. All content invented. Pages are 1-based.",
              "access_report.pdf": report(), "access_scanned.pdf": scanned(),
-             "access_tagged.pdf": tagged_control()}
+             "access_tagged.pdf": tagged_control(), "access_structure.pdf": structure_issues()}
     (OUT / "ground_truth.json").write_text(json.dumps(truth, indent=2))
-    for name in ("access_report.pdf", "access_scanned.pdf", "access_tagged.pdf"):
+    for name in ("access_report.pdf", "access_scanned.pdf", "access_tagged.pdf", "access_structure.pdf"):
         print(f"{name:<20} {(OUT / name).stat().st_size // 1024:>5} KB")

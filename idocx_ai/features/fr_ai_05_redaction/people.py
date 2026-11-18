@@ -11,6 +11,8 @@ import re
 
 from core import llm
 
+from .detectors import CONFIDENCE
+
 MAX_PAGE_CHARS = 6000
 
 SCHEMA = {"type": "object", "properties": {
@@ -66,5 +68,5 @@ def find_people(page, tp, taken_text: str) -> tuple[list[dict], int]:
                 dropped += 1
                 continue
             items.append({"kind": kind, "category": "personal", "value": v, "rects": rects,
-                          "basis": "found by the model, checked as exact text", "confidence": "medium"})
+                          "basis": "found by the model, checked as exact text", "confidence": CONFIDENCE["medium"]})
     return items, dropped

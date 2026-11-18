@@ -10,6 +10,9 @@
       "image_descriptions": "fail",
       "real_text": "pass",
       "reading_order": "fail",
+      "heading_structure": "warn",
+      "table_headers": "n/a",
+      "colour_contrast": "pass",
       "bookmarks": "n/a",
       "assistive_access": "pass"
     },
@@ -20,6 +23,7 @@
       "fonts_embedded": "fail",
       "reading_order": "fail"
     },
+    "expected_heading_anomaly": "H2 is followed by H4, skipping H3",
     "expected_title": "ACME Test Ltd - Quarterly Operations Summary",
     "expected_language": "en",
     "image_keywords": [
@@ -55,6 +59,9 @@
       "image_descriptions": "n/a",
       "real_text": "fail",
       "reading_order": "fail",
+      "heading_structure": "n/a",
+      "table_headers": "n/a",
+      "colour_contrast": "n/a",
       "bookmarks": "n/a",
       "assistive_access": "pass"
     },
@@ -83,9 +90,28 @@
       "image_descriptions": "pass",
       "real_text": "pass",
       "reading_order": "pass",
+      "heading_structure": "pass",
+      "table_headers": "n/a",
+      "colour_contrast": "pass",
       "bookmarks": "n/a",
       "assistive_access": "pass"
     },
     "note": "tags are a minimal hand-made structure, enough for the structural checks only"
+  },
+  "access_structure.pdf": {
+    "pages": 1,
+    "before": {
+      "tagged": "fail",
+      "language": "fail",
+      "title": "fail",
+      "real_text": "pass",
+      "heading_structure": "warn",
+      "table_headers": "fail",
+      "colour_contrast": "fail",
+      "bookmarks": "n/a",
+      "assistive_access": "pass"
+    },
+    "expected_heading_anomaly": "H1 is followed by H3, skipping H2",
+    "note": "deliberately: one heading-level skip, one ruled table (untagged, so no header cells can be marked), and one pale-grey line that fails WCAG AA contrast"
   }
 }

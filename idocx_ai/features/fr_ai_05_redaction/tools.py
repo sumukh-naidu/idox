@@ -7,6 +7,7 @@ review card does, through the API. The model can find and propose, never finalis
 from core import proposals
 
 from . import apply, find
+from .scan import CATEGORIES
 
 proposals.register_applier("redaction", apply.apply_redaction)
 
@@ -17,19 +18,21 @@ INFO = {
     "title": "Smart Redaction",
     "status": "ready",
     "description": "Finds sensitive information: government IDs (checksum-validated), bank and card details, "
-                   "phone numbers and emails, dates of birth, API keys, tokens and passwords (rules), plus names "
-                   "and addresses (model, checked as exact text). Proposes them with a highlighted preview; YOU "
-                   "review and apply them in the review card. The redaction removes the text (blacks out the image "
-                   "on scans) and is verified.",
+                   "phone numbers and emails, dates of birth, API keys, tokens and passwords (rules), signatures "
+                   "(a PDF signature field, or ink under a 'Signature' label), plus names and addresses (model, "
+                   "checked as exact text). Every find carries a 0-100 confidence and its box on the page; an ID "
+                   "that matches a pattern but fails its check digit is kept at low confidence rather than dropped. "
+                   "Proposes them with a highlighted preview; YOU review and apply them in the review card. The "
+                   "redaction removes the text (blacks out the image on scans) and is verified.",
     "samples": ["redaction_form.pdf", "redaction_scanned.pdf"],
     "examples": [
         {"file": "redaction_form.pdf",
          "prompt": "Find sensitive information in this document and highlight what should be redacted.",
-         "expect": "About 25 items over 2 pages: Aadhaar, VID, PAN, passport, GSTIN, bank account, IFSC, UPI, "
-                   "card, phone numbers, email, date of birth, the name and address, and 10 secrets (keys, tokens, "
-                   "passwords, private key). Values shown masked. Plus a highlighted preview PDF. The decoys in "
-                   "'Office use only' and 'Not secrets' are NOT flagged. A review card appears: click Apply -> a "
-                   "verified redacted file."},
+         "expect": "About 26 items over 2 pages: Aadhaar, VID, PAN, passport, GSTIN, bank account, IFSC, UPI, "
+                   "card, phone numbers, email, date of birth, a signature mark, the name and address, and 10 "
+                   "secrets (keys, tokens, passwords, private key). Values shown masked. Plus a highlighted preview "
+                   "PDF. The decoys in 'Office use only' and 'Not secrets' are NOT flagged, except the near-miss "
+                   "Aadhaar and card numbers, which come back at low confidence instead of being dropped."},
         {"file": "redaction_form.pdf",
          "prompt": "Identify phone numbers, email addresses, and government identification numbers that may need "
                    "redaction.",
@@ -43,16 +46,21 @@ INFO = {
     ],
 }
 
-PROMPT = ("Redaction: call find_sensitive_info and follow its next_step. Never repeat a full ID, number or secret; "
-          "use the masked values. You cannot apply a redaction: only the user can, from the review card.")
+PROMPT = ("Redaction: call find_sensitive_info and follow its next_step. If the user asks for only certain kinds of "
+          "information, pass categories. Never repeat a full ID, number or secret; use the masked values. You "
+          "cannot apply a redaction: only the user can, from the review card.")
 
 TOOLS = {
     "find_sensitive_info": {
         "fn": find.find_sensitive_info,
         "description": "Find sensitive information in a PDF (IDs, bank and card details, contact details, dates of "
-                       "birth, keys, tokens, passwords, names, addresses) and prepare a redaction proposal for the "
-                       "user to review, with a highlighted preview file. Does not redact anything. Values come back "
-                       "masked.",
-        "parameters": {"type": "object", "properties": {"file_id": FILE_ID}, "required": ["file_id"]},
+                       "birth, keys, tokens, passwords, signatures, names, addresses) and prepare a redaction "
+                       "proposal for the user to review, with a highlighted preview file. Does not redact anything. "
+                       "Values come back masked; each find has a category, page, box and 0-100 confidence.",
+        "parameters": {"type": "object", "properties": {
+            "file_id": FILE_ID,
+            "categories": {"type": "array", "items": {"type": "string", "enum": list(CATEGORIES)},
+                          "description": "optional; look only for these categories (default: all of them)"},
+        }, "required": ["file_id"]},
     },
 }

@@ -11,9 +11,15 @@ and the chat never repeat a full ID or secret.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 CONTEXT_CHARS = 40     # how far before a match to look for context words
+# Confidence is 0-100 (rule C2: iDocx shows "Low confidence" below 85). A checksum-backed
+# match is "high"; one that needs only a nearby context word is "medium"; a value that
+# matches an ID's shape but fails its check digit is kept, not dropped (a person still
+# reviews every mark), at "low" -- false negatives cost more here than false positives.
+CONFIDENCE = {"high": 95, "medium": 70, "low": 35}
 # A digit run must not be part of a longer grouped number: a 12-digit Aadhaar pattern would
 # otherwise match the first 12 digits of a 16-digit card number "4111 1111 1111 1111".
 NB, NA = r"(?<!\d)(?<!\d )(?<!\d-)", r"(?![ -]?\d)"
@@ -67,7 +73,8 @@ class Detector:
     category: str                   # government_id / financial / contact / personal / secret
     pattern: re.Pattern
     group: int = 0                  # which regex group is the sensitive value
-    check: object = None            # value -> bool; None means no checksum exists
+    check: Callable[[str], bool] | None = None   # value -> bool; None means no checksum exists
+    keep_on_fail: bool = False      # a real check digit: a failure is still flagged, at low confidence
     context: tuple = ()             # words that must appear just before the match
     confidence: str = "high"
     exclude_context: tuple = field(default_factory=tuple)
@@ -80,7 +87,8 @@ def _p(rx, flags=0):
 # Order matters: earlier (more specific) detectors win overlapping text.
 DETECTORS = [
     # --- secrets
-    Detector("private key", "secret", _p(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)),
+    Detector("private key", "secret",
+             _p(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)),
     Detector("AWS access key", "secret", _p(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     Detector("GitHub token", "secret", _p(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")),
     Detector("Slack token", "secret", _p(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
@@ -95,18 +103,19 @@ DETECTORS = [
                 r"secret[_ -]?key|auth[_ -]?token|token)\b\s*[:=]\s*[\"']?([^\s\"',;]{4,})", re.I), group=1,
              check=lambda v: bool(re.search(r"[\d\W_]", v)) or len(v) >= 16),
     # --- government IDs
-    Detector("GSTIN", "government_id", _p(r"\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b"), check=gstin_ok),
+    Detector("GSTIN", "government_id", _p(r"\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b"),
+             check=gstin_ok, keep_on_fail=True),
     Detector("PAN", "government_id", _p(r"\b[A-Z]{3}[ABCFGHLJPTK][A-Z]\d{4}[A-Z]\b")),
     Detector("Aadhaar VID", "government_id", _p(NB + r"\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}" + NA),
-             check=lambda v: verhoeff_ok(_digits(v)), context=("vid", "virtual id")),
+             check=lambda v: verhoeff_ok(_digits(v)), keep_on_fail=True, context=("vid", "virtual id")),
     Detector("Aadhaar number", "government_id", _p(NB + r"[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}" + NA),
-             check=lambda v: verhoeff_ok(_digits(v))),
+             check=lambda v: verhoeff_ok(_digits(v)), keep_on_fail=True),
     Detector("passport number", "government_id", _p(r"\b[A-PR-WYZ][1-9]\d{6}\b"), context=("passport",)),
     Detector("voter ID", "government_id", _p(r"\b[A-Z]{3}\d{7}\b"), context=("voter", "epic")),
     # --- financial
     Detector("card number", "financial", _p(NB + r"(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|3[47]\d{2}|6\d{3})"
                                              r"(?:[ -]?\d{4}){2}[ -]?\d{1,7}" + NA),
-             check=lambda v: 13 <= len(_digits(v)) <= 19 and luhn_ok(_digits(v))),
+             check=lambda v: 13 <= len(_digits(v)) <= 19 and luhn_ok(_digits(v)), keep_on_fail=True),
     Detector("IFSC code", "financial", _p(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")),
     Detector("bank account number", "financial", _p(NB + r"\d{9,18}" + NA),
              context=("account", "a/c", "acct", "acc no", "account no"), confidence="medium"),
@@ -126,6 +135,8 @@ DETECTORS = [
 def mask(kind: str, value: str) -> str:
     """Enough to recognise the item in a review list, never enough to reuse it."""
     v = value.strip()
+    if kind in ("digital signature field", "handwritten signature"):
+        return "[signature]"
     if kind == "private key":
         return "-----BEGIN … PRIVATE KEY----- (whole block)"
     if kind == "person name":
@@ -145,6 +156,16 @@ def mask(kind: str, value: str) -> str:
     return f"{v[:3]}…{v[-4:]}"
 
 
+def _basis(det: Detector, checksum_failed: bool) -> str:
+    if checksum_failed:
+        return f"check digit does not match: looks like the shape of a {det.kind} but may not be a real one"
+    if det.check:
+        return "checksum valid"
+    if det.context:
+        return "pattern and context"
+    return "pattern"
+
+
 def find_in_text(text: str) -> list[dict]:
     """Every detection in one page's text, as (start, end) spans of the sensitive value."""
     found, taken = [], []
@@ -157,12 +178,11 @@ def find_in_text(text: str) -> list[dict]:
             before = text[max(0, start - CONTEXT_CHARS):start].lower()
             if det.context and not any(w in before for w in det.context):
                 continue
-            if det.check and not det.check(value):
+            checksum_failed = bool(det.check) and not det.check(value)
+            if checksum_failed and not det.keep_on_fail:
                 continue
             taken.append((start, end))
             found.append({"kind": det.kind, "category": det.category, "value": value,
-                          "start": start, "end": end,
-                          "basis": ("checksum valid" if det.check else
-                                    "pattern and context" if det.context else "pattern"),
-                          "confidence": det.confidence})
+                          "start": start, "end": end, "basis": _basis(det, checksum_failed),
+                          "confidence": CONFIDENCE["low"] if checksum_failed else CONFIDENCE[det.confidence]})
     return sorted(found, key=lambda f: f["start"])

@@ -11,6 +11,9 @@ from core.text import textpage
 
 from .detectors import find_in_text, mask
 from .people import find_people
+from .signature import find_signatures
+
+CATEGORIES = ("government_id", "financial", "contact", "personal", "secret", "signature")
 
 
 def _rects(page, value: str, tp) -> list[tuple]:
@@ -20,9 +23,36 @@ def _rects(page, value: str, tp) -> list[tuple]:
     return rects
 
 
-def scan_document(file_id: str, use_model: bool = True) -> tuple[list[dict], list[int], int]:
-    """(items with raw values and rects, pages read by OCR, model candidates discarded as not in the text)."""
-    meta, doc = open_pdf(file_id)
+def _rule_matches(page, text: str, tp, wanted: set) -> list[dict]:
+    found, seen = [], set()
+    for f in find_in_text(text):
+        if f["category"] not in wanted:
+            continue
+        key = (f["kind"], " ".join(f["value"].split()))
+        if key not in seen:
+            seen.add(key)
+            found.append({**f, "rects": _rects(page, f["value"], tp)})
+    return found
+
+
+def _scan_page(page, tp, source: str, wanted: set, use_model: bool) -> tuple[list[dict], int]:
+    """(found items on this page, model candidates discarded as not in the text)."""
+    found = _rule_matches(page, page.get_text("text", textpage=tp), tp, wanted)
+    dropped = 0
+    if use_model and "personal" in wanted:
+        people, dropped = find_people(page, tp, " ".join(f["value"] for f in found))
+        found += people
+    if "signature" in wanted and source != "OCR":   # no localisable text/ink layer on a flattened scan
+        found += find_signatures(page, tp)
+    return found, dropped
+
+
+def scan_document(file_id: str, use_model: bool = True, categories: list[str] | None = None
+                  ) -> tuple[list[dict], list[int], int]:
+    """(items with raw values and rects, pages read by OCR, model candidates discarded as not in the text).
+    categories: only look for these (default: all of CATEGORIES)."""
+    wanted = set(categories) if categories else set(CATEGORIES)
+    _, doc = open_pdf(file_id)
     items, ocr, dropped = [], [], 0
     with doc:
         for page in doc:
@@ -31,17 +61,8 @@ def scan_document(file_id: str, use_model: bool = True) -> tuple[list[dict], lis
                 continue
             if source == "OCR":
                 ocr.append(page.number + 1)
-            text = page.get_text("text", textpage=tp)
-            found, seen = [], set()
-            for f in find_in_text(text):
-                key = (f["kind"], " ".join(f["value"].split()))
-                if key not in seen:
-                    seen.add(key)
-                    found.append({**f, "rects": _rects(page, f["value"], tp)})
-            if use_model:
-                people, n = find_people(page, tp, " ".join(f["value"] for f in found))
-                found += people
-                dropped += n
+            found, n = _scan_page(page, tp, source, wanted, use_model)
+            dropped += n
             for f in found:
                 items.append({**f, "page": page.number + 1, "read_by": source,
                               "masked": mask(f["kind"], f["value"]), "located": bool(f["rects"])})

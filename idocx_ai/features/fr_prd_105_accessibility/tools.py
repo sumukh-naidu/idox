@@ -1,6 +1,6 @@
 """FR-PRD-105 Smart PDF Accessibility: tools, prompt, sidebar entry."""
 
-from . import checks, fixes, images
+from . import checks, fixes, images, structure
 
 FILE_ID = {"type": "string", "description": "ID of the PDF, e.g. f_1a2b3c4d5e6f"}
 
@@ -9,10 +9,12 @@ INFO = {
     "title": "Smart PDF Accessibility",
     "status": "ready",
     "description": "Checks what a screen reader needs: tags, declared language, title, embedded fonts, "
-                   "image descriptions, real text instead of scans, reading order, bookmarks, permissions. "
-                   "Fixes what is safe (OCR text layer for scans, language, title) and drafts alt text for "
-                   "images with the vision model. Tags, reading order and fonts are reported, not faked.",
-    "samples": ["access_report.pdf", "access_scanned.pdf", "access_tagged.pdf"],
+                   "image descriptions, real text instead of scans, reading order, heading levels, table "
+                   "headers, colour contrast, bookmarks, permissions. Fixes what is safe (OCR text layer "
+                   "for scans, language, title) and drafts alt text for images with the vision model. Tags, "
+                   "fonts and the real reading order are reported, not faked; heading levels and a reading "
+                   "order are suggested from the visible layout, confidence not a decision.",
+    "samples": ["access_report.pdf", "access_scanned.pdf", "access_tagged.pdf", "access_structure.pdf"],
     "examples": [
         {"file": "access_report.pdf",
          "prompt": "Check this PDF for accessibility issues.",
@@ -72,5 +74,13 @@ TOOLS = {
             "file_id": FILE_ID,
             "max_images": {"type": "integer", "description": "default 6"},
         }, "required": ["file_id"]},
+    },
+    "suggest_structure": {
+        "fn": structure.suggest_structure,
+        "description": "Suggest heading levels (from text size, flagging a skipped level such as H1 straight "
+                       "to H3) and a reading order (top-to-bottom, left-to-right) for an untagged PDF. These "
+                       "are suggestions with a stated basis, not a decision: nothing is written into the file; "
+                       "the real structure can only come from re-authoring with tags. Read-only.",
+        "parameters": {"type": "object", "properties": {"file_id": FILE_ID}, "required": ["file_id"]},
     },
 }

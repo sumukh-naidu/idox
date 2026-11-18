@@ -12,6 +12,9 @@ import pymupdf
 
 from core.pdfutil import open_pdf, page_ranges
 
+from .contrast import check_contrast
+from .structure import heading_anomalies, heading_candidates, table_pages, tagged_table_headers
+
 LONG_DOC_PAGES = 20
 SCAN_COVER = 0.5   # an image covering half the page, on a page with no text, is a scan
 IMAGE_FIX = ("draft alt text with describe_images (or check_accessibility with describe_images=true); the drafts are suggestions for the author")
@@ -19,11 +22,11 @@ IMAGE_FIX = ("draft alt text with describe_images (or check_accessibility with d
 LANG_TAG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 
 LATIN_WORDS = {
-    "en": "the and of to in is that for with on are this be as by will must was from".split(),
-    "es": "el la de que y en los del las por un para con una es se".split(),
-    "fr": "le la les de des et en du un une est que pour dans par".split(),
-    "de": "der die und den das ist nicht mit von zu ein eine für auf dem".split(),
-    "pt": "o a os as de do da que e em um uma para com não".split(),
+    "en": ["the", "and", "of", "to", "in", "is", "that", "for", "with", "on", "are", "this", "be", "as", "by", "will", "must", "was", "from"],
+    "es": ["el", "la", "de", "que", "y", "en", "los", "del", "las", "por", "un", "para", "con", "una", "es", "se"],
+    "fr": ["le", "la", "les", "de", "des", "et", "en", "du", "un", "une", "est", "que", "pour", "dans", "par"],
+    "de": ["der", "die", "und", "den", "das", "ist", "nicht", "mit", "von", "zu", "ein", "eine", "für", "auf", "dem"],
+    "pt": ["o", "a", "os", "as", "de", "do", "da", "que", "e", "em", "um", "uma", "para", "com", "não"],
 }
 SCRIPTS = {"hi": (0x0900, 0x097F), "bn": (0x0980, 0x09FF), "pa": (0x0A00, 0x0A7F),
            "gu": (0x0A80, 0x0AFF), "ta": (0x0B80, 0x0BFF), "te": (0x0C00, 0x0C7F),
@@ -107,81 +110,151 @@ def _check(cid, name, status, detail, fix=None):
     return {"id": cid, "check": name, "status": status, "detail": detail, **({"fix": fix} if fix else {})}
 
 
-def run_checks(doc) -> list[dict]:
-    tagged = is_tagged(doc)
-    scans = scanned_pages(doc)
-    out = []
+def _tagged_check(tagged: bool) -> dict:
+    return _check("tagged", "Tagged PDF (structure for screen readers)", "pass" if tagged else "fail",
+                  "has a structure tree" if tagged else "no tags: a screen reader sees one undifferentiated stream",
+                  None if tagged else "out of scope: needs re-authoring with tags (e.g. export from Word with tags on)")
 
-    out.append(_check("tagged", "Tagged PDF (structure for screen readers)",
-                      "pass" if tagged else "fail",
-                      "has a structure tree" if tagged else "no tags: a screen reader sees one undifferentiated stream",
-                      None if tagged else "out of scope: needs re-authoring with tags (e.g. export from Word with tags on)"))
 
+def _language_check(doc) -> dict:
     kind, lang = catalog_key(doc, "Lang")
     ok = kind == "string" and bool(LANG_TAG.match(lang))
-    out.append(_check("language", "Document language declared", "pass" if ok else "fail",
-                      f"declared as '{lang}'" if ok else "no language declared: a screen reader may pronounce it wrongly",
-                      None if ok else "fix_accessibility detects and declares it"))
+    return _check("language", "Document language declared", "pass" if ok else "fail",
+                  f"declared as '{lang}'" if ok else "no language declared: a screen reader may pronounce it wrongly",
+                  None if ok else "fix_accessibility detects and declares it")
 
+
+def _title_check(doc) -> dict:
     title = (doc.metadata or {}).get("title", "").strip()
     shown = catalog_key(doc, "ViewerPreferences/DisplayDocTitle") == ("bool", "true")
-    out.append(_check("title", "Title set and shown by the viewer",
-                      "pass" if title and shown else "warn" if title else "fail",
-                      f"'{title}'" + ("" if shown else ", but viewers show the file name instead") if title
-                      else "no title",
-                      None if title and shown else "fix_accessibility sets it"))
+    if not title:
+        status, detail = "fail", "no title"
+    elif shown:
+        status, detail = "pass", f"'{title}'"
+    else:
+        status, detail = "warn", f"'{title}', but viewers show the file name instead"
+    return _check("title", "Title set and shown by the viewer", status, detail,
+                  None if status == "pass" else "fix_accessibility sets it")
 
+
+def _fonts_check(doc) -> dict:
     fonts, missing = set(), set()
     for page in doc:
-        for xref, ext, ftype, base, *_ in page.get_fonts(full=True):
+        for _xref, ext, ftype, base, *_rest in page.get_fonts(full=True):
             fonts.add(base)
             if ext == "n/a" and ftype != "Type3":
                 missing.add(base)
-    out.append(_check("fonts_embedded", "All fonts embedded",
-                      "n/a" if not fonts else "fail" if missing else "pass",
-                      "no fonts" if not fonts else f"not embedded: {', '.join(sorted(missing))}" if missing
-                      else f"{len(fonts)} font(s), all embedded",
-                      "out of scope: re-export the document with fonts embedded" if missing else None))
+    if not fonts:
+        status, detail = "n/a", "no fonts"
+    elif missing:
+        status, detail = "fail", f"not embedded: {', '.join(sorted(missing))}"
+    else:
+        status, detail = "pass", f"{len(fonts)} font(s), all embedded"
+    return _check("fonts_embedded", "All fonts embedded", status, detail,
+                  "out of scope: re-export the document with fonts embedded" if missing else None)
 
+
+def _image_descriptions_check(doc, scans: list[int], tagged: bool) -> dict:
+    name = "Images have descriptions (alt text)"
     images = content_images(doc, scans)
     figs, alts = figure_alt_counts(doc)
     if not images and not figs:
-        out.append(_check("image_descriptions", "Images have descriptions (alt text)", "n/a", "no content images"))
-    elif not tagged:
-        out.append(_check("image_descriptions", "Images have descriptions (alt text)", "fail",
-                          f"{len(images)} image(s), none described: an untagged PDF has nowhere to hold alt text",
-                          IMAGE_FIX))
-    else:
-        out.append(_check("image_descriptions", "Images have descriptions (alt text)",
-                          "pass" if figs and alts == figs else "fail",
-                          f"all {figs} tagged figure(s) have alt text" if alts == figs
-                          else f"only {alts} of {figs} tagged figure(s) have alt text",
-                          None if figs and alts == figs else IMAGE_FIX))
+        return _check("image_descriptions", name, "n/a", "no content images")
+    if not tagged:
+        return _check("image_descriptions", name, "fail",
+                      f"{len(images)} image(s), none described: an untagged PDF has nowhere to hold alt text",
+                      IMAGE_FIX)
+    ok = bool(figs) and alts == figs
+    detail = (f"all {figs} tagged figure(s) have alt text" if ok
+             else f"only {alts} of {figs} tagged figure(s) have alt text")
+    return _check("image_descriptions", name, "pass" if ok else "fail", detail, None if ok else IMAGE_FIX)
 
-    out.append(_check("real_text", "Real text, not scanned images", "fail" if scans else "pass",
-                      f"pages {page_ranges(scans)} are scanned images with no text layer" if scans
-                      else "every page with content has a text layer",
-                      "fix_accessibility adds an OCR text layer" if scans else None))
 
-    out.append(_check("reading_order", "Reading order defined",
-                      "pass" if tagged else "fail",
-                      "follows the tag structure (not checked visually)" if tagged
-                      else "no tags, so a screen reader has to guess the order",
-                      None if tagged else "out of scope: comes with tagging"))
+def _real_text_check(scans: list[int]) -> dict:
+    return _check("real_text", "Real text, not scanned images", "fail" if scans else "pass",
+                  f"pages {page_ranges(scans)} are scanned images with no text layer" if scans
+                  else "every page with content has a text layer",
+                  "fix_accessibility adds an OCR text layer" if scans else None)
 
+
+def _reading_order_check(tagged: bool) -> dict:
+    return _check("reading_order", "Reading order defined", "pass" if tagged else "fail",
+                  "follows the tag structure (not checked visually)" if tagged
+                  else "no tags, so a screen reader has to guess the order",
+                  None if tagged else "out of scope: comes with tagging")
+
+
+def _heading_structure_check(doc) -> dict:
+    name = "Heading levels in order"
+    headings = heading_candidates(doc)
+    anomalies = heading_anomalies(headings)
+    if not headings:
+        return _check("heading_structure", name, "n/a", "no headings detected")
+    if anomalies:
+        return _check("heading_structure", name, "warn",
+                      f"{anomalies[0]['reason']} (p.{anomalies[0]['jumps_to']['page']}); a suggestion from text "
+                      f"size, not read from real tags -- confirm it",
+                      "suggest_structure proposes levels for every heading; re-author with the real tags")
+    return _check("heading_structure", name, "pass",
+                  f"{len(headings)} heading(s) found, no level skipped (a suggestion from text size, not read "
+                  f"from real tags)")
+
+
+def _table_headers_check(doc, tagged: bool) -> dict:
+    name = "Table header cells marked"
+    if tagged:
+        n_tables, n_th = tagged_table_headers(doc)
+        if not n_tables:
+            return _check("table_headers", name, "n/a", "no tables")
+        return _check("table_headers", name, "pass" if n_th else "fail",
+                      f"{n_th} header tag(s) found" if n_th else f"{n_tables} table(s), no header cells (TH) tagged",
+                      None if n_th else "out of scope: mark the header row/column as TH")
+    tables = table_pages(doc)
+    if not tables:
+        return _check("table_headers", name, "n/a", "no tables detected")
+    return _check("table_headers", name, "fail",
+                  f"{len(tables)} table(s) on page(s) {page_ranges(tables)}, but the document is not tagged, "
+                  f"so header cells cannot be marked",
+                  "out of scope: needs tagging, with the header row/column as TH")
+
+
+def _contrast_check(doc) -> dict:
+    name = "Text has enough contrast with its background"
+    checked, issues = check_contrast(doc)
+    if not checked:
+        return _check("colour_contrast", name, "n/a", "no extractable text to check (scanned or image-only)")
+    if issues:
+        worst = issues[0]
+        return _check("colour_contrast", name, "fail",
+                      f"p.{worst['page']} '{worst['text']}': {worst['ratio']}:1, needs {worst['required']}:1 "
+                      f"({len(issues)} low-contrast span(s) found)",
+                      "out of scope: darken the text or lighten the background and re-export")
+    return _check("colour_contrast", name, "pass",
+                  f"{checked} text span(s) checked against the page background, all meet WCAG AA")
+
+
+def _bookmarks_check(doc) -> dict:
+    name = f"Bookmarks (documents over {LONG_DOC_PAGES} pages)"
     if doc.page_count <= LONG_DOC_PAGES:
-        out.append(_check("bookmarks", f"Bookmarks (documents over {LONG_DOC_PAGES} pages)", "n/a",
-                          f"{doc.page_count} pages: not required"))
-    else:
-        has = bool(doc.get_toc())
-        out.append(_check("bookmarks", f"Bookmarks (documents over {LONG_DOC_PAGES} pages)",
-                          "pass" if has else "fail", "present" if has else f"{doc.page_count} pages, no bookmarks"))
+        return _check("bookmarks", name, "n/a", f"{doc.page_count} pages: not required")
+    has = bool(doc.get_toc())
+    return _check("bookmarks", name, "pass" if has else "fail",
+                  "present" if has else f"{doc.page_count} pages, no bookmarks")
 
+
+def _assistive_access_check(doc) -> dict:
     allowed = not doc.is_encrypted or bool(doc.permissions & pymupdf.PDF_PERM_ACCESSIBILITY)
-    out.append(_check("assistive_access", "Assistive technology allowed to read it",
-                      "pass" if allowed else "fail",
-                      "not blocked" if allowed else "security settings block screen readers"))
-    return out
+    return _check("assistive_access", "Assistive technology allowed to read it", "pass" if allowed else "fail",
+                  "not blocked" if allowed else "security settings block screen readers")
+
+
+def run_checks(doc) -> list[dict]:
+    tagged = is_tagged(doc)
+    scans = scanned_pages(doc)
+    return [_tagged_check(tagged), _language_check(doc), _title_check(doc), _fonts_check(doc),
+            _image_descriptions_check(doc, scans, tagged), _real_text_check(scans), _reading_order_check(tagged),
+            _heading_structure_check(doc), _table_headers_check(doc, tagged), _contrast_check(doc),
+            _bookmarks_check(doc), _assistive_access_check(doc)]
 
 
 def check_accessibility(file_id: str, describe_images: bool = False) -> dict:
@@ -197,7 +270,7 @@ def check_accessibility(file_id: str, describe_images: bool = False) -> dict:
     # separate follow-up tool, the model sometimes reported the problem and never drafted.
     images_check = next(c for c in checks if c["id"] == "image_descriptions")
     if describe_images and images_check["status"] == "fail":
-        from .images import describe_images as draft      # imported here: images.py imports this module
+        from .images import describe_images as draft  # imported here: images.py imports this module
         result["suggested_alt_text"] = draft(file_id)
     if any(c["status"] in ("fail", "warn") and "fix_accessibility" in c.get("fix", "") for c in checks):
         # Said here rather than only in the system prompt: the model follows a tool result more reliably.

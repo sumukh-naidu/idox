@@ -31,8 +31,10 @@ def apply_redaction(proposal: dict, item_ids: list[str], edits: dict | None = No
             for r in d["rects"]:
                 page.add_redact_annot(pymupdf.Rect(r), fill=(0, 0, 0))
         for page in touched.values():
+            # Line art is removed only where a redaction box actually touches it (an ink signature,
+            # say), so a table border elsewhere on the page is left alone.
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
-                                  graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,   # keep table lines
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
                                   text=pymupdf.PDF_REDACT_TEXT_REMOVE)
         new = save_new(doc, derived_name(meta["name"], "redacted"), [proposal["file_id"]], "redaction",
                        page_origin=origin_of(meta))
@@ -42,7 +44,8 @@ def apply_redaction(proposal: dict, item_ids: list[str], edits: dict | None = No
     with check:
         for iid, d in chosen.items():
             page = check[d["page"] - 1]
-            if items[iid]["read_by"] == "OCR":
+            if items[iid]["read_by"] == "OCR" or items[iid]["category"] == "signature":
+                # No text value to search for (a scan, or a signature mark): the box itself must be black.
                 for r in d["rects"]:
                     pix = page.get_pixmap(clip=pymupdf.Rect(r), dpi=72, colorspace=pymupdf.csGRAY)
                     if pix.samples and sum(pix.samples) / len(pix.samples) > DARK:

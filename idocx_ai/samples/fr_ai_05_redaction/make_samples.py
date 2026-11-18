@@ -103,6 +103,8 @@ FORM = [
     ("Invoice no 123456789012, form version 2.3, printed on 01/10/2026", False),
     ("Reference code K7654321. Branch PIN code 560001.", False),
     ("Please choose a strong password for your account.", False),
+    ("", False),
+    ("Signature: ___________________", False),
 ]
 
 IT_SHEET = [
@@ -134,6 +136,12 @@ def page(doc, lines, size=10.5):
     for text, bold in lines:
         if text:
             p.insert_text((60, y), text, fontsize=13 if bold else size, fontname="hebo" if bold else "helv")
+            if text.startswith("Signature:"):
+                shape = p.new_shape()               # a few ink-like strokes under the label: not a flat line
+                shape.draw_bezier((170, y + 10), (185, y - 6), (200, y + 10), (215, y - 4))
+                shape.draw_bezier((215, y - 4), (225, y + 8), (235, y - 2), (250, y + 6))
+                shape.finish(color=(0, 0, 0.6), width=1.2)
+                shape.commit()
         y += 24 if bold else 21
     return p
 
@@ -163,21 +171,29 @@ if __name__ == "__main__":
         ("email address", "ravi.testcase@example.com"), ("bank account number", "001234567890"),
         ("IFSC code", "TEST0001234"), ("UPI ID", "ravi.test@okaxis"), ("card number", CARD), ("GSTIN", GSTIN),
     ]
+    # A value shaped like an ID but failing its check digit is still flagged, at low confidence,
+    # rather than silently dropped -- a person reviews every mark, so a miss costs more than a false alarm.
+    expected_p1_low_confidence = [("Aadhaar number", AADHAAR_DECOY), ("card number", CARD_DECOY)]
     # Fake secrets go into the ground truth as fingerprints, not text: GitHub push protection cannot tell
     # a fake token from a real one, and a flagged string in a commit means rewriting history.
-    fingerprint = lambda v: {"sha256": hashlib.sha256(re.sub(r"[\s\-]", "", v).lower().encode()).hexdigest()}
+    def fingerprint(v: str) -> dict:
+        return {"sha256": hashlib.sha256(re.sub(r"[\s\-]", "", v).lower().encode()).hexdigest()}
+
     expected_p2 = [(k, fingerprint(v)) for k, v in SECRETS.items()] + [("private key", "PRIVATE KEY")]
     truth = {
         "_comment": "FR-AI-05 test set. Every value is FAKE: IDs pass their checksums, decoys fail them.",
         "redaction_form.pdf": {"pages": 2,
                                "expected": {"1": expected_p1, "2": expected_p2},
-                               "must_not_flag": [AADHAAR_DECOY, CARD_DECOY, "123456789012", "01/10/2026",
+                               "expected_low_confidence": {"1": expected_p1_low_confidence},
+                               "expected_other": {"1": [["handwritten signature", "signature"]]},
+                               "must_not_flag": ["123456789012", "01/10/2026",
                                                  "K7654321", "560001", "required",
                                                  "9fceb02d0ae598e95dc970b74767f19372d61af8",
                                                  "550e8400-e29b-41d4-a716-446655440000"],
                                "for_the_model": {"names": ["Ravi Kumar Testcase"],
                                                  "addresses": ["Flat 12, Test Residency, MG Road, Bengaluru 560001"]}},
-        "redaction_scanned.pdf": {"pages": 1, "text_layer": False, "expected": {"1": expected_p1}},
+        "redaction_scanned.pdf": {"pages": 1, "text_layer": False, "expected": {"1": expected_p1},
+                                  "expected_low_confidence": {"1": expected_p1_low_confidence}},
     }
     (OUT / "ground_truth.json").write_text(json.dumps(truth, indent=2))
     for n in ("redaction_form.pdf", "redaction_scanned.pdf"):

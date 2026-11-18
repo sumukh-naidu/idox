@@ -118,9 +118,27 @@
         ]
       ]
     },
+    "expected_low_confidence": {
+      "1": [
+        [
+          "Aadhaar number",
+          "8158 8139 9867"
+        ],
+        [
+          "card number",
+          "4111 1111 1111 1112"
+        ]
+      ]
+    },
+    "expected_other": {
+      "1": [
+        [
+          "handwritten signature",
+          "signature"
+        ]
+      ]
+    },
     "must_not_flag": [
-      "8158 8139 9867",
-      "4111 1111 1111 1112",
       "123456789012",
       "01/10/2026",
       "K7654321",
@@ -194,6 +212,18 @@
         [
           "GSTIN",
           "27ABCPE1234F1ZB"
+        ]
+      ]
+    },
+    "expected_low_confidence": {
+      "1": [
+        [
+          "Aadhaar number",
+          "8158 8139 9867"
+        ],
+        [
+          "card number",
+          "4111 1111 1111 1112"
         ]
       ]
     }

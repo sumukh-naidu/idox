@@ -135,7 +135,9 @@
       "creator",
       "producer",
       "creationDate",
-      "modDate"
+      "modDate",
+      "image EXIF: GPS location on page 1",
+      "image EXIF: device make/model on page 1"
     ]
   },
   "cleanup_control.pdf": {

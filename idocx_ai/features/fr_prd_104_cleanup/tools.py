@@ -9,9 +9,11 @@ INFO = {
     "id": "FR-PRD-104",
     "title": "One-click Cleanup",
     "status": "ready",
-    "description": "Finds blank pages, duplicate pages and nearly empty pages, and strips metadata. "
-                   "Writes a new file and never changes the original. Borderline pages are shown to "
-                   "you and only removed when you confirm.",
+    "description": "Finds blank pages (with a blank score), duplicate pages, pages that are merely similar "
+                   "(with a match percentage, never auto-removed), and strips metadata -- including GPS "
+                   "location and device/software info hidden in a scanned photo's EXIF, categorised by kind. "
+                   "Reports the size saved. Writes a new file and never changes the original. Borderline "
+                   "pages are shown to you and only removed when you confirm.",
     "samples": ["cleanup_digital.pdf", "cleanup_scanned.pdf", "cleanup_control.pdf"],
     "examples": [
         {"file": "cleanup_digital.pdf",
@@ -46,8 +48,10 @@ TOOLS = {
     "find_duplicate_pages": {
         "fn": cleanup.find_duplicate_pages,
         "description": "Find pages that repeat an earlier page: identical pages, and re-scans of the same "
-                       "page. Blank pages are not reported here. Read-only. Pages under ask_user_first are "
-                       "likely but not certain duplicates: ask the user before removing them.",
+                       "page. Also lists similar_pages (a match percentage, same rough layout but not the "
+                       "same content) -- these are never duplicates and are never removed. Blank pages are "
+                       "not reported here. Read-only. Pages under ask_user_first are likely but not certain "
+                       "duplicates: ask the user before removing them.",
         "parameters": {"type": "object", "properties": {"file_id": FILE_ID}, "required": ["file_id"]},
     },
     "clean_pdf": {

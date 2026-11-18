@@ -14,11 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import pymupdf  # noqa: E402
+import pymupdf
 
-from core import store  # noqa: E402
-from core.pdfutil import ToolError  # noqa: E402
-from features.fr_ai_04_translation import translate as tr  # noqa: E402
+from core import store
+from core.pdfutil import ToolError
+from features.fr_ai_04_translation import translate as tr
 
 INPUT = ROOT / "samples" / "fr_ai_04_translation"
 OUT = ROOT / "tests" / "output" / "fr_ai_04_translation"
@@ -52,16 +52,19 @@ with opened(src) as d:
               "blocks": [b["text"] for p in d for b in tr._blocks(p)]}
 
 log("layout with a fake Spanish translator")
-r = tr.translate_document(src, "Spanish", translator=lambda texts, lang, keep=None: [f"TR[{lang}] {t}" for t in texts])
+r = tr.translate_document(src, "Spanish",
+                          translator=lambda texts, lang, source=None, keep=None: [f"TR[{lang}] {t}" for t in texts])
 with opened(r["new_file_id"]) as d:
     text = " ".join(" ".join(p.get_text().split()) for p in d)
     after = {"images": sum(len(p.get_images()) for p in d), "lines": sum(len(p.get_drawings()) for p in d)}
     lang = tr.catalog_lang(d) if hasattr(tr, "catalog_lang") else d.xref_get_key(d.pdf_catalog(), "Lang")[1]
     cells = {a: [tuple(round(v) for v in rect) for rect in d[0].search_for(a)] for a in truth["number_only_cells"]}
 with opened(src) as d:
-    cells_before = {a: [tuple(round(v) for v in rect) for rect in d[0].search_for(a)] for a in truth["number_only_cells"]}
+    cells_before = {a: [tuple(round(v) for v in rect) for rect in d[0].search_for(a)]
+                    for a in truth["number_only_cells"]}
 check("every text block replaced in place (no original English left)",
-      r["blocks_translated"] == text.count("TR[es]") and r["blocks_translated"] + r["blocks_kept_as_is"] == len(before["blocks"]),
+      r["blocks_translated"] == text.count("TR[es]")
+      and r["blocks_translated"] + r["blocks_kept_as_is"] == len(before["blocks"]),
       f"{r['blocks_translated']} translated, {r['blocks_kept_as_is']} number-only kept")
 check("the logo image and the table lines survive", after == {"images": before["images"], "lines": before["lines"]},
       f"{after['images']} image, {after['lines']} lines")
@@ -73,7 +76,7 @@ log("a translation that loses a number is retried, then flagged")
 calls = []
 
 
-def lossy(texts, lang, keep=None):
+def lossy(texts, lang, source=None, keep=None):
     calls.append((len(texts), list(texts), keep))
     return [t.replace("45", "forty-five") for t in texts]
 
@@ -88,7 +91,7 @@ check("the retry sends the original text unchanged; the reminder goes in the ins
       f"keep={retry_keep}")
 
 log("long translations shrink to fit; Hindi renders with an embedded Devanagari font")
-r3 = tr.translate_document(src, "hi", pages="2", translator=lambda texts, lang, keep=None: [
+r3 = tr.translate_document(src, "hi", pages="2", translator=lambda texts, lang, source=None, keep=None: [
     t if not any(c.isalpha() for c in t) else
     "यह परीक्षण के लिए एक लंबा हिंदी अनुवाद है जो मूल पाठ से अधिक लंबा है। " * 3 + " ".join(tr.protected(t))
     for t in texts])
@@ -113,7 +116,8 @@ check("both files are reported as created", [f["ext"] for f in r3["files_created
 
 log("a scanned page: OCR, then the translation on a clean page")
 scan = store.save_file((INPUT / "agreement_scanned.pdf").read_bytes(), "agreement_scanned.pdf", 1, source="test")["id"]
-r4 = tr.translate_document(scan, "es", translator=lambda texts, lang, keep=None: [f"TR[{lang}] {t}" for t in texts])
+r4 = tr.translate_document(scan, "es",
+                           translator=lambda texts, lang, source=None, keep=None: [f"TR[{lang}] {t}" for t in texts])
 with opened(r4["new_file_id"]) as d:
     pg = d[0]
     text4 = " ".join(pg.get_text().split())
@@ -131,7 +135,28 @@ try:
     tr.translate_document(src, "French")
     check("an unsupported language is refused", False)
 except ToolError as e:
-    check("an unsupported language is refused", "Hindi (hi), Spanish (es)" in str(e), str(e))
+    check("an unsupported language is refused", "Hindi (hi)" in str(e) and "Tamil (ta)" in str(e), str(e))
+
+try:
+    tr.translate_document(src, "English", source_language="English")
+    check("same source and target language is refused", False)
+except ToolError as e:
+    check("same source and target language is refused", "differ" in str(e), str(e))
+
+log("any direction: Tamil and German, both ways")
+fake = lambda texts, lang, source=None, keep=None: [f"TR[{lang}] {t}" for t in texts]  # noqa: E731
+r5 = tr.translate_document(src, "German", pages="2", translator=fake)
+check("English source detected (best guess) when not given",
+      r5["source_language"] == "English" and "source_language_detected" in r5, r5.get("source_language_detected"))
+
+ta_doc = store.save_file((INPUT / "agreement.pdf").read_bytes(), "agreement.pdf", 2, source="test")["id"]
+r6 = tr.translate_document(ta_doc, "Tamil", source_language="English", pages="2", translator=fake)
+check("English to Tamil translates with the source given explicitly (no guess reported)",
+      r6["language"] == "Tamil" and "source_language_detected" not in r6)
+
+tamil_text = "தமிழ் ஒப்பந்தம்"
+check("Tamil script is recognised as source text to translate",
+      bool(tr._script_match("ta").search(tamil_text)) and not tr._script_match("ta").search("English text"))
 
 log(f"\n{'ALL PASS' if not failures else f'{failures} FAILURE(S)'}")
 (OUT / "report.txt").write_text("\n".join(report) + "\n")

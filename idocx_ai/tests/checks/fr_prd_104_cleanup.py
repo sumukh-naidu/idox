@@ -6,6 +6,7 @@ Files the tools write, and report.txt, go to tests/output/fr_prd_104_cleanup/ (c
 """
 
 import hashlib
+import io
 import json
 import shutil
 import sys
@@ -15,11 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import pymupdf  # noqa: E402
+import pymupdf
+from PIL import Image
 
-from core import pages, store  # noqa: E402
-from core.pdfutil import ToolError  # noqa: E402
-from features.fr_prd_104_cleanup import cleanup  # noqa: E402
+from core import pages, store
+from core.pdfutil import ToolError
+from features.fr_prd_104_cleanup import cleanup
 
 INPUT = ROOT / "samples" / "fr_prd_104_cleanup"
 OUT = ROOT / "tests" / "output" / "fr_prd_104_cleanup"
@@ -76,6 +78,18 @@ for name, gt in truth.items():
           f"want {sorted(want_sparse)}, got {sorted(got_sparse)}")
     hit = (got_blank | set(got_dup)) & must_keep
     check("no real page proposed for removal", not hit, f"would wrongly remove {sorted(hit)}" if hit else "")
+    check("every blank/nearly-empty page carries a numeric blank_score",
+          all("blank_score" in b for b in blank["blank_pages"] + blank["nearly_empty_pages"]))
+    check("find_blank_pages estimates the size that would be saved",
+          "estimated_size_saved_if_all_removed_kb" in blank)
+    check("find_duplicate_pages estimates the size that would be saved",
+          "estimated_size_saved_if_all_removed_kb" in dup)
+    if name == "cleanup_digital.pdf":
+        got_similar = {s["page"] for s in dup["similar_pages"]}
+        check("page 11 (same heading/first paragraph as page 2, different rest) is 'similar', not a duplicate",
+              11 in got_similar and 11 not in got_dup, f"similar_pages: {dup['similar_pages']}")
+        check("a similar page is never proposed for removal",
+              not any(s["page"] in (got_blank | set(got_dup)) for s in dup["similar_pages"]))
 
     removable = sorted(got_blank | set(got_dup))
     if removable:
@@ -92,6 +106,22 @@ for name, gt in truth.items():
             left = {k: v for k, v in doc.metadata.items() if v and k not in ("format", "title")}
             check("metadata stripped and verified", not left and not doc.get_xml_metadata(),
                   f"removed {len(md['removed'])} item(s), kept {md['kept']}")
+        check("metadata is broken down by category", bool(md.get("removed_by_category")),
+              str(md.get("removed_by_category")))
+        check("strip_metadata reports the size before/after and bytes saved",
+              {"size_before_kb", "size_after_kb", "bytes_saved"} <= md.keys())
+        if name == "cleanup_scanned.pdf":
+            check("GPS location found and categorised", "gps" in md["removed_by_category"],
+                  str(md["removed_by_category"]))
+            check("device/software metadata (incl. image EXIF make/model) categorised",
+                  any("TS-4000" in item for item in md["removed_by_category"].get("device_or_software", [])),
+                  str(md["removed_by_category"].get("device_or_software")))
+            _, path = store.get_file(md["new_file_id"])
+            with pymupdf.open(path) as doc:
+                page1_img = doc.extract_image(doc[0].get_images()[0][0])["image"]
+                exif = Image.open(io.BytesIO(page1_img)).getexif()
+                check("the GPS/device EXIF is actually gone from the image, not just reported",
+                      not exif.get_ifd(0x8825) and not exif.get(0x010F) and not exif.get(0x0110))
     log(f"  ({secs:.1f}s for blank + duplicate detection)")
 
 
@@ -131,9 +161,11 @@ a = pages.remove_pages(orig, [2, 5])
 a2 = cleanup.strip_metadata(a["new_file_id"])
 b = pages.remove_pages(a2["new_file_id"], [4, 6], numbering="original")
 src = image_hashes(orig)
-check("after removing 2,5 then 'original' 4,6: original pages 1 and 3 remain",
-      image_hashes(b["new_file_id"]) == [src[0], src[2]],
-      f"new file holds original pages {b['new_file_holds_original_pages']}")
+got = image_hashes(b["new_file_id"])
+check("after removing 2,5 then 'original' 4,6: original page 3's image is untouched",
+      got[1] == src[2], f"new file holds original pages {b['new_file_holds_original_pages']}")
+check("original page 1's image was re-encoded (it carried the EXIF that strip_metadata removed)",
+      got[0] != src[0])
 try:
     pages.remove_pages(a["new_file_id"], [5], numbering="original")
     check("asking for an already-removed page is refused", False, "it was not refused")

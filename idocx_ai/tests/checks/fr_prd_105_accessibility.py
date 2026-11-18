@@ -14,10 +14,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import pymupdf  # noqa: E402
+import pymupdf
 
-from core import store  # noqa: E402
-from features.fr_prd_105_accessibility import checks, fixes  # noqa: E402
+from core import store
+from features.fr_prd_105_accessibility import checks, fixes, structure
 
 INPUT = ROOT / "samples" / "fr_prd_105_accessibility"
 OUT = ROOT / "tests" / "output" / "fr_prd_105_accessibility"
@@ -48,9 +48,13 @@ for name, gt in truth.items():
         continue
     log(name)
     fid = store.save_file((INPUT / name).read_bytes(), name, gt["pages"], source="test")["id"]
-    got = statuses(checks.check_accessibility(fid))
+    result = checks.check_accessibility(fid)
+    got = statuses(result)
     diff = {k: f"want {v}, got {got.get(k)}" for k, v in gt["before"].items() if got.get(k) != v}
     check("every check gives the expected status", not diff, "; ".join(f"{k}: {v}" for k, v in diff.items()))
+    if "expected_heading_anomaly" in gt:
+        detail = next(c["detail"] for c in result["checks"] if c["id"] == "heading_structure")
+        check("the heading-skip reason names the right levels", gt["expected_heading_anomaly"] in detail, detail)
 
     if "after_fix" not in gt:
         continue
@@ -80,6 +84,17 @@ for text, want in [("The inspection of the warehouse took place and all of the e
     got = (checks.detect_language(text) or {}).get("code")
     check(f"detects '{want}'", got == want, f"got {got}")
 check("too little text gives no guess", checks.detect_language("Q1 Q2") is None)
+
+log("suggest_structure: a suggestion, never a decision")
+sid = store.save_file((INPUT / "access_structure.pdf").read_bytes(), "access_structure.pdf", 1, source="test")["id"]
+s = structure.suggest_structure(sid)
+check("the heading levels and the skip are both reported",
+      [h["level"] for h in s["headings"]] == [1, 3] and len(s["level_anomalies"]) == 1,
+      f"headings: {s['headings']}")
+orders = [o["order"] for o in s["suggested_reading_order"]]
+check("a reading order is suggested, top to bottom", orders == list(range(1, len(orders) + 1)),
+      str(s["suggested_reading_order"]))
+check("nothing is written to the file (read-only)", "new_file_id" not in s and "files_created" not in s)
 
 log(f"\n{'ALL PASS' if not failures else f'{failures} FAILURE(S)'}")
 (OUT / "report.txt").write_text("\n".join(report) + "\n")

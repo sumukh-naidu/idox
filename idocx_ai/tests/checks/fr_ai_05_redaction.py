@@ -15,12 +15,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from core import store  # noqa: E402
-import pymupdf  # noqa: E402
+import pymupdf
 
-from core import proposals  # noqa: E402
-from features.fr_ai_05_redaction.find import find_sensitive_info  # noqa: E402
-from features.fr_ai_05_redaction.scan import scan_document  # noqa: E402
+from core import (
+    proposals,
+    store,
+)
+from features.fr_ai_05_redaction.find import find_sensitive_info
+from features.fr_ai_05_redaction.scan import scan_document
 
 INPUT = ROOT / "samples" / "fr_ai_05_redaction"
 OUT = ROOT / "tests" / "output" / "fr_ai_05_redaction"
@@ -58,24 +60,39 @@ for name in ("redaction_form.pdf", "redaction_scanned.pdf"):
     log(name)
     fid = store.save_file((INPUT / name).read_bytes(), name, gt["pages"], source="test")["id"]
     items, ocr, _ = scan_document(fid, use_model=False)
+    low_conf = {(page, k, v) for page, pairs in gt.get("expected_low_confidence", {}).items() for k, v in pairs}
+    other = {(page, k) for page, pairs in gt.get("expected_other", {}).items() for k, _ in pairs}
     for page, expected in gt["expected"].items():
         got = [i for i in items if i["page"] == int(page)]
         missing = [(k, v) for k, v in expected if not any(i["kind"] == k and matches(v, i["value"]) for i in got)]
-        extra = [i for i in got if not any(i["kind"] == k and matches(v, i["value"]) for k, v in expected)]
+        low_here = {(k, v) for p, k, v in low_conf if p == page}
+        other_here = {k for p, k in other if p == page}
+        extra = [i for i in got if not any(i["kind"] == k and matches(v, i["value"]) for k, v in expected)
+                and (i["kind"], i["value"]) not in low_here and i["kind"] not in other_here]
         check(f"page {page}: every planted item found with the right type",
               not missing, f"{len(expected) - len(missing)}/{len(expected)} found"
               + (f"; missing {[k for k, _ in missing]}" if missing else ""))
         check(f"page {page}: nothing else flagged", not extra,
               "; ".join(f"{i['kind']} {i['masked']}" for i in extra) if extra else "")
+        for k, v in low_here:
+            hit = next((i for i in got if i["kind"] == k and matches(v, i["value"])), None)
+            check(f"page {page}: {k} with a failed check digit is kept, at low confidence (not dropped)",
+                  hit is not None and hit["confidence"] < 60, f"confidence {hit['confidence'] if hit else 'MISSING'}")
+        for k in other_here:
+            hit = next((i for i in got if i["kind"] == k), None)
+            check(f"page {page}: {k} found", hit is not None, hit["masked"] if hit else "MISSING")
     unlocated = [i["kind"] for i in items if not i["located"]]
-    check("every item located on the page (needed to redact it)", not unlocated, f"unlocated: {unlocated}" if unlocated else "")
+    check("every item located on the page (needed to redact it)", not unlocated,
+          f"unlocated: {unlocated}" if unlocated else "")
     flagged = " ".join(norm(i["value"]) for i in items)
     hit = [d for d in gt.get("must_not_flag", []) if norm(d) in flagged]
     if "must_not_flag" in gt:
-        check("no decoy flagged (failed checksums, no context, plain words)", not hit, f"wrongly flagged: {hit}" if hit else
-              f"{len(gt['must_not_flag'])} decoys ignored")
+        check("no decoy flagged (failed checksums, no context, plain words)", not hit,
+              f"wrongly flagged: {hit}" if hit else f"{len(gt['must_not_flag'])} decoys ignored")
     leaks = [i["kind"] for i in items if norm(i["value"]) in norm(i["masked"])]
     check("masked values never reveal the full value", not leaks, f"leaks: {leaks}" if leaks else "")
+    check("every confidence is 0-100", all(0 <= i["confidence"] <= 100 for i in items))
+    check("every item carries its box coordinates", all("rects" in i for i in items))
     if gt.get("text_layer") is False:
         check("read by OCR", ocr == [1], f"OCR pages {ocr}")
 
@@ -84,7 +101,7 @@ fid = store.save_file((INPUT / "redaction_form.pdf").read_bytes(), "redaction_fo
 r = find_sensitive_info(fid, use_model=False)
 p = proposals.get(r["proposal_id"])
 check("a pending proposal holds every item; raw values only in its private part",
-      p["status"] == "pending" and len(p["items"]) == r["found"] == 23
+      p["status"] == "pending" and len(p["items"]) == r["found"] == 26
       and all("value" not in i for i in r["items"]) and set(p["private"]) == {i["id"] for i in p["items"]},
       f"{r['found']} items: {r['by_category']}")
 _, path = store.get_file(r["files_created"][0]["id"])
@@ -97,8 +114,7 @@ with pymupdf.open(orig) as d:
     check("the original file is untouched", not any(True for pg in d for _ in pg.annots()))
 
 log("applying an approved proposal")
-from core.text import textpage  # noqa: E402
-import features.fr_ai_05_redaction.tools  # noqa: E402,F401  (registers the redaction applier)
+import features.fr_ai_05_redaction.tools  # noqa: F401  (registers the redaction applier)
 
 
 def squash(s):
@@ -121,7 +137,7 @@ res = proposals.approve(p["id"], [i["id"] for i in p["items"]])
 after = squash(text_of(res["file"]["id"]))
 left = [i for i in p["items"] if squash(p["private"][i["id"]]["value"]) in after]
 kept = [d for d in truth["redaction_form.pdf"]["must_not_flag"] if squash(d) in after]
-check("approve all: every value gone from the text, verified", not left and res["redacted"] == 23,
+check("approve all: every value gone from the text, verified", not left and res["redacted"] == 26,
       res["verified"])
 check("text next to the redactions is untouched (the decoys are all still there)",
       len(kept) == len(truth["redaction_form.pdf"]["must_not_flag"]), f"{len(kept)} decoys still readable")
@@ -139,8 +155,8 @@ res2 = proposals.approve(p2["id"], contact)
 after2 = squash(text_of(res2["file"]["id"]))
 gone = all(squash(p2["private"][i]["value"]) not in after2 for i in contact)
 others = all(squash(p2["private"][i["id"]]["value"]) in after2 for i in p2["items"]
-             if i["id"] not in contact and i["kind"] != "private key")
-check("approve some: only the chosen items are redacted", gone and others and res2["left_unredacted"] == 20,
+             if i["id"] not in contact and i["kind"] != "private key" and i["category"] != "signature")
+check("approve some: only the chosen items are redacted", gone and others and res2["left_unredacted"] == 23,
       f"{res2['redacted']} redacted, {res2['left_unredacted']} left")
 
 r3 = find_sensitive_info(fid, use_model=False)

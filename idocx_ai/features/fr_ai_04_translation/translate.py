@@ -1,32 +1,39 @@
-"""FR-AI-04 translation with layout preservation: English -> Hindi or Spanish, PDF in, PDF out.
+"""FR-AI-04 translation with layout preservation: any pair of English, Hindi, Tamil, Spanish
+and German, PDF in, PDF out.
 
 Each text block is translated and written back into the SAME box: the original text is
 removed (images and table lines stay), the translation is laid out in its place and
-shrunk to fit when it runs longer. Blocks with no letters (amounts, dates alone) are left
-untouched. Every number, date digit, email, URL and code in a block must survive its
-translation; a block that loses one is retried once, then flagged.
+shrunk to fit when it runs longer. Blocks with no source-language letters (amounts, dates
+alone) are left untouched. Every number, date digit, email, URL and code in a block must
+survive its translation; a block that loses one is retried once, then flagged.
 
-Hindi is shaped by MuPDF (HarfBuzz) with its built-in Noto Devanagari font, so it LOOKS
-right; but copying or searching Devanagari in the output is unreliable (joined letters
-extract as stray symbols), a common PDF limitation for Indic scripts. Latin text, digits,
-emails and IDs inside it extract correctly, which is what the checks rely on.
+Hindi and Tamil are shaped by MuPDF (HarfBuzz) with its built-in Noto fonts, so they LOOK
+right; but copying or searching them in the output is unreliable (joined letters extract
+as stray symbols), a common PDF limitation for Indic scripts. Latin text, digits, emails
+and IDs inside them extract correctly, which is what the checks rely on.
 """
 
 import html
+import itertools
 import json
 import re
 
 import pymupdf
 
 from core import llm, store
-from core.text import textpage as read_textpage
 from core.pdfutil import ToolError, derived_name, open_pdf, origin_of, page_ranges, parse_page_spec, save_new
+from core.text import textpage as read_textpage
 
-LANGUAGES = {"hi": "Hindi", "es": "Spanish"}
+LANGUAGES = {"en": "English", "hi": "Hindi", "ta": "Tamil", "es": "Spanish", "de": "German"}
+# Scripts used to tell whether a block holds source-language text to translate, and to
+# guess the source language of a page when the caller does not name one.
+SCRIPT_RANGES = {"hi": r"ऀ-ॿ", "ta": r"஀-௿"}
+LATIN_LANGS = ("en", "es", "de")
+
 PROTECTED = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+|https?://\S+|\b(?=[A-Z0-9\-/]*\d)[A-Z0-9][A-Z0-9\-/]{3,}\b"
                        r"|\b[A-Z]{2,}\b|\d[\d,]*(?:\.\d+)?%?")   # emails, URLs, codes, ACRONYMS, numbers
 
-PROMPT = ("Translate each text block below from English to {lang}. It is a business or legal document: keep the "
+PROMPT = ("Translate each text block below from {src} to {lang}. It is a business or legal document: keep the "
           "meaning exact and the tone formal. Keep every number, amount, percentage, email address, web address, "
           "ID or code, abbreviation in capitals (such as GST, INR, PAN) and the names of people and companies "
           "exactly as written, in Latin letters and Western digits; do not translate, localise or transliterate "
@@ -42,8 +49,26 @@ def language_code(language: str) -> str:
     raise ToolError(f"language must be one of {', '.join(f'{n} ({c})' for c, n in LANGUAGES.items())}")
 
 
+def _script_match(code: str) -> re.Pattern:
+    """A block is in `code`'s source language if it holds a letter from that script (hi, ta),
+    or, for the Latin-script languages (en, es, de), any run of Latin letters -- that trio
+    cannot be told apart by script alone, so detection below falls back to a best guess."""
+    rng = SCRIPT_RANGES.get(code)
+    return re.compile(f"[{rng}]") if rng else re.compile(r"[A-Za-z]{2,}")
+
+
+def detect_source(text: str) -> tuple[str, bool]:
+    """Guess the source language from a page's text. Returns (code, certain). Devanagari or
+    Tamil script is unambiguous; Latin text could be English, Spanish or German, so it is
+    only a best guess (certain=False) and the caller should ask the user to confirm."""
+    for code, rng in SCRIPT_RANGES.items():
+        if re.search(f"[{rng}]", text):
+            return code, True
+    return "en", False
+
+
 def protected(text: str) -> list[str]:
-    return sorted(set(m.group(0).rstrip(".,") for m in PROTECTED.finditer(text)))
+    return sorted({m.group(0).rstrip(".,") for m in PROTECTED.finditer(text)})
 
 
 def present(value: str, text: str) -> bool:
@@ -53,15 +78,15 @@ def present(value: str, text: str) -> bool:
     return value in text
 
 
-def model_translate(texts: list[str], lang: str, keep: list[str] | None = None) -> list[str]:
+def model_translate(texts: list[str], lang: str, source: str = "en", keep: list[str] | None = None) -> list[str]:
     n = len(texts)
     schema = {"type": "object", "properties": {"translations": {"type": "array", "items": {"type": "string"},
                                                                 "minItems": n, "maxItems": n}},
               "required": ["translations"]}
-    r = llm.chat([{"role": "user", "content": PROMPT.format(lang=LANGUAGES[lang], extra=(f" These values MUST appear unchanged in the "
-                                                                      f"translation: {', '.join(keep)}." if keep else ""),
-                                                           blocks=json.dumps(texts,
-                                                                                               ensure_ascii=False))}],
+    extra = f" These values MUST appear unchanged in the translation: {', '.join(keep)}." if keep else ""
+    prompt = PROMPT.format(src=LANGUAGES[source], lang=LANGUAGES[lang], extra=extra,
+                           blocks=json.dumps(texts, ensure_ascii=False))
+    r = llm.chat([{"role": "user", "content": prompt}],
                  temperature=0, max_tokens=300 + 6 * sum(len(t) for t in texts),
                  response_format={"type": "json_schema", "json_schema": {"name": "t", "schema": schema}})
     out = json.loads(r["choices"][0]["message"].get("content") or "{}").get("translations", [])
@@ -87,7 +112,7 @@ def _segments(line) -> list[list[dict]]:
     return segs
 
 
-def _unit(spans: list[dict], text: str) -> dict:
+def _unit(spans: list[dict], text: str, script: re.Pattern) -> dict:
     main = max(spans, key=lambda s: len(s["text"]))
     rect = pymupdf.Rect(spans[0]["bbox"])
     for s in spans[1:]:
@@ -96,13 +121,15 @@ def _unit(spans: list[dict], text: str) -> dict:
     return {"rect": rect, "text": text, "size": round(main["size"], 1),
             "bold": bool(main["flags"] & 16) or "bold" in main["font"].lower(),
             "serif": bool(main["flags"] & 4) or any(k in main["font"].lower() for k in ("times", "serif")),
-            "color": f"#{main['color']:06x}", "translate": bool(re.search(r"[A-Za-z]{2,}", text))}
+            "color": f"#{main['color']:06x}", "translate": bool(script.search(text))}
 
 
-def _blocks(page, tp=None) -> list[dict]:
+def _blocks(page, tp=None, script: re.Pattern | None = None) -> list[dict]:
     """Units to translate: a paragraph block as one unit; a block whose lines hold several
     cells (a table row extracted as one block) split into one unit per cell, so the table
-    keeps its columns and number-only cells stay untouched. tp: an OCR text page for scans."""
+    keeps its columns and number-only cells stay untouched. tp: an OCR text page for scans.
+    script: which pattern marks a unit as source-language text (default: Latin letters)."""
+    script = script or re.compile(r"[A-Za-z]{2,}")
     out = []
     for b in page.get_text("dict", textpage=tp)["blocks"]:
         if b["type"] != 0:
@@ -113,14 +140,14 @@ def _blocks(page, tp=None) -> list[dict]:
             continue
         # Lines side by side (overlapping vertically) are table cells, not a paragraph's stacked lines.
         side_by_side = any(min(a["bbox"][3], c["bbox"][3]) - max(a["bbox"][1], c["bbox"][1])
-                           > 0.5 * (a["bbox"][3] - a["bbox"][1]) for a, c in zip(raw, raw[1:]))
+                           > 0.5 * (a["bbox"][3] - a["bbox"][1]) for a, c in itertools.pairwise(raw))
         if all(len(segs) == 1 for segs in lines) and not side_by_side:
             spans = [s for segs in lines for s in segs[0]]
-            out.append(_unit(spans, " ".join(" ".join(s["text"] for s in segs[0]) for segs in lines)))
+            out.append(_unit(spans, " ".join(" ".join(s["text"] for s in segs[0]) for segs in lines), script))
         else:
             for segs in lines:
                 for seg in segs:
-                    out.append(_unit(seg, " ".join(s["text"] for s in seg)))
+                    out.append(_unit(seg, " ".join(s["text"] for s in seg), script))
     return out
 
 
@@ -160,12 +187,30 @@ def _reading_order(units: list[dict]) -> list[dict]:
     return sorted(units, key=lambda u: (round(u["rect"].y0 / 6), u["rect"].x0))
 
 
-def translate_document(file_id: str, language: str, pages: str | None = None, translator=None) -> dict:
+def _resolve_source(doc, wanted: list[int], lang: str, source_language: str | None) -> tuple[str, str | None]:
+    """The source language code and, if it had to be guessed, a note to pass on to the user."""
+    if source_language:
+        source, note = language_code(source_language), None
+    else:
+        sample = " ".join(doc[pno - 1].get_text("text") for pno in wanted[:2])
+        source, certain = detect_source(sample)
+        note = None if certain else (
+            f"source language not given: guessed {LANGUAGES[source]} (the only script-based signal available "
+            f"cannot tell English, Spanish and German apart); confirm or pass source_language if that is wrong")
+    if source == lang:
+        raise ToolError("source_language and language must differ")
+    return source, note
+
+
+def translate_document(file_id: str, language: str, source_language: str | None = None,
+                       pages: str | None = None, translator=None) -> dict:
     lang = language_code(language)
     translator = translator or model_translate
     meta, doc = open_pdf(file_id)
     with doc:
         wanted = parse_page_spec(pages, doc.page_count) if pages else list(range(1, doc.page_count + 1))
+        source, detected_note = _resolve_source(doc, wanted, lang, source_language)
+        script = _script_match(source)
         flagged, shrunk, done, kept, scans, placed, text_copy = [], [], 0, 0, [], [], []
         for pno in wanted:
             page = doc[pno - 1]
@@ -173,18 +218,18 @@ def translate_document(file_id: str, language: str, pages: str | None = None, tr
             if not page.get_text("text").strip() and page.get_images():
                 tp, _ = read_textpage(page)                # a scan: read it by OCR
                 scans.append(pno)
-            blocks = _blocks(page, tp)
+            blocks = _blocks(page, tp, script)
             if not blocks:
                 continue
             todo = [b for b in blocks if b["translate"]]
             kept += len(blocks) - len(todo)
             if todo:
-                texts = translator([b["text"] for b in todo], lang)
-                for b, t in zip(todo, texts):
+                texts = translator([b["text"] for b in todo], lang, source=source)
+                for b, t in zip(todo, texts, strict=True):
                     missing = [v for v in protected(b["text"]) if not present(v, t)]
                     if missing:                    # one retry, naming the values that must appear
                         # The reminder goes in the instructions: put inside the text, it got translated as content.
-                        t = translator([b["text"]], lang, keep=missing)[0]
+                        t = translator([b["text"]], lang, source=source, keep=missing)[0]
                         missing = [v for v in protected(b["text"]) if not present(v, t)]
                         if missing:
                             flagged.append({"page": pno, "block": b["text"][:60], "missing": missing})
@@ -208,13 +253,16 @@ def translate_document(file_id: str, language: str, pages: str | None = None, tr
                 page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
                                       graphics=pymupdf.PDF_REDACT_LINE_ART_NONE, text=pymupdf.PDF_REDACT_TEXT_REMOVE)
             rooms = [_room(b, obstacles, page) for b in place]       # measured from the original layout
-            for b, room in zip(place, rooms):
+            for b, room in zip(place, rooms, strict=True):
                 scale = _place(page, room, b, b.get("translation", b["text"]))
                 if b["translate"]:
                     done += 1
                     placed.append((pno, b))
-                if scale < 0.8:
-                    shrunk.append({"page": pno, "block": b["text"][:40], "scale": round(scale, 2)})
+                if scale < 1:
+                    # Any scale below 1 means the translation did not fit at the original size and was
+                    # shrunk; below 0.8 it is shrunk enough that it may now look visibly out of place.
+                    shrunk.append({"page": pno, "block": b["text"][:40], "scale": round(scale, 2),
+                                   "may_overflow": scale < 0.8})
         if not done:
             raise ToolError("no text found to translate")
         doc.xref_set_key(doc.pdf_catalog(), "Lang", pymupdf.get_pdf_str(lang))
@@ -247,10 +295,13 @@ def translate_document(file_id: str, language: str, pages: str | None = None, tr
                            pages=0, source="translate_document", parents=[file_id], ext="txt")
 
     result = {"new_file_id": new["id"], "text_copy_file_id": copy["id"], "language": LANGUAGES[lang],
+              "source_language": LANGUAGES[source],
               "pages_translated": page_ranges(wanted), "blocks_translated": done, "blocks_kept_as_is": kept,
               "values_checked": "every number, date digit, email, URL, code and capitalised abbreviation in each "
                                 "block was checked in its translation",
               "files_created": [new, copy]}
+    if detected_note:
+        result["source_language_detected"] = detected_note
     if flagged:
         result["check_these"] = flagged
     if shrunk:
@@ -259,7 +310,7 @@ def translate_document(file_id: str, language: str, pages: str | None = None, tr
         result["scanned_pages"] = (f"pages {page_ranges(scans)} were scans: their text was read by OCR and the "
                                    f"translation placed on clean pages (the scanned image is not included); check "
                                    f"names and numbers against the original")
-    if lang == "hi":
-        result["note"] = ("Hindi displays correctly in the PDF, but copying or searching Hindi there is unreliable "
-                          "(a common PDF limitation for Devanagari); use the text copy for that.")
+    if lang in ("hi", "ta"):
+        result["note"] = (f"{LANGUAGES[lang]} displays correctly in the PDF, but copying or searching it there is "
+                          f"unreliable (a common PDF limitation for Indic scripts); use the text copy for that.")
     return result

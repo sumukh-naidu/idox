@@ -75,10 +75,16 @@ class FormFillItem(BaseModel):
     type: Literal["text", "choice", "checkbox", "signature", "other"]
     options: list[str] | None = Field(None, description="choice fields only")
     value: str | bool | None = Field(examples=["POL/2026/004512"])
-    status: Literal["found", "check: read from the page image", "unverified", "empty", "user only"] = Field(
+    status: Literal["found", "check: read from the page image", "unverified", "conflict", "not_found", "user only"] = Field(
         description="found: confirmed in the source; check: read from a scan by the AI; unverified: see why; "
-                    "empty: the source does not state it; user only: signatures/declarations, cannot be approved")
-    why: str | None = Field(None, description="unverified only: the reason")
+                    "conflict: the source gives different values (see why); not_found: the source does not state "
+                    "it; user only: signatures/declarations, cannot be approved")
+    why: str | None = Field(None, description="unverified or conflict: the reason")
+    confidence: int | None = Field(None, description="0-100; below 85 is Low confidence", ge=0, le=100)
+    low_confidence: bool | None = Field(None, description="true when confidence is below 85: ask the user to check")
+    value_type: str | None = Field(None, description="date, amount, name, id or text", examples=["date"])
+    box: dict | None = Field(None, description="where the value is on the page: page, x0, y0, x1, y1 in PDF points")
+    reason: str | None = Field(None, description="why the confidence is what it is (blurred scan, bad format ...)")
     page: int | None = Field(None, description="where in the source document the value was found")
     read_by: str | None = Field(None, examples=["text layer"])
 

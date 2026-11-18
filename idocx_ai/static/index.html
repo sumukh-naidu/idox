@@ -92,6 +92,8 @@
   .event pre { background: var(--code); padding: 8px; border-radius: 7px; overflow-x: auto; font-size: 11.5px;
                margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
   .err { align-self: flex-start; color: var(--bad); font-size: 13px; }
+  .check { align-self: flex-start; font-size: 12.5px; max-width: 88%; }
+  .check.good { color: var(--ok); } .check.warn { color: var(--bad); } .check.retry { color: var(--muted); }
   .stats { align-self: flex-start; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .empty { color: var(--muted); font-size: 13.5px; margin: auto; text-align: center; }
   .review { align-self: stretch; border: 1.5px solid var(--accent); border-radius: 10px; padding: 12px 14px;
@@ -355,6 +357,11 @@ function showEvent(ev) {
     scrollDown();
   } else if (ev.type === "file_created") showFile(ev.file, "created");
   else if (ev.type === "proposal") showProposal(ev.proposal);
+  else if (ev.type === "validation") {
+    if (ev.status === "retry") add(el("div", "check retry", "↻ re-checking: " + (ev.problems || []).join("; ")));
+    else if (ev.status === "verified") add(el("div", "check good", "✓ Verified against the document (" + ev.note + ")"));
+    else add(el("div", "check warn", "⚠ Check this: " + (ev.problems || []).join("; ") + " (" + ev.note + ")"));
+  }
   else if (ev.type === "error") add(el("div", "err", ev.message));
   else if (ev.type === "done") {
     const s = ev.stats || {};
@@ -403,9 +410,12 @@ function showFormFill(p) {
     inputs.push(input);
     row.appendChild(input);
     const ocr = it.read_by === "OCR";        // read from a scan: say so, so the reviewer checks it
-    const st = it.status === "found" ? `found on p${it.page}${ocr ? " (OCR: check)" : ""}` : it.status === "empty" ? "not in the source"
-             : it.status.startsWith("check") ? `p${it.page} · read from image: check` : `unverified: ${it.why || "check"}`;
-    row.appendChild(el("span", "m" + ((it.status === "found" && !ocr) || it.status === "empty" ? "" : " warn"), st));
+    const pct = it.confidence != null ? ` · ${it.confidence}%` : "";
+    const st = it.status === "found" ? `found on p${it.page}${ocr ? " (OCR: check)" : ""}${pct}` : it.status === "not_found" ? "Not found in the source"
+             : it.status === "conflict" ? `Conflict: ${it.why || "different values"}${pct}`
+             : it.status.startsWith("check") ? `p${it.page} · read from image: check${pct}` : `unverified: ${it.why || "check"}${pct}`;
+    const low = it.low_confidence && it.status !== "not_found" ? " · Low confidence: please check" : "";
+    row.appendChild(el("span", "m" + ((it.status === "found" && !ocr && !it.low_confidence) || it.status === "not_found" ? "" : " warn"), st + low));
     card.appendChild(row);
   }
 

@@ -12,11 +12,12 @@ from features.fr_ai_02_forms import tools as fr_ai_02
 from features.fr_ai_03_compare import tools as fr_ai_03
 from features.fr_ai_04_translation import tools as fr_ai_04
 from features.fr_ai_05_redaction import tools as fr_ai_05
+from features.fr_ai_06_qa import tools as fr_ai_06
 from features.fr_prd_104_cleanup import tools as fr_prd_104
 from features.fr_prd_105_accessibility import tools as fr_prd_105
 from features.excel_to_word import tools as excel_to_word
 
-FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02, fr_ai_04, excel_to_word]
+FEATURES = [fr_prd_104, fr_ai_01, fr_prd_105, fr_ai_03, fr_ai_05, fr_ai_02, fr_ai_04, fr_ai_06, excel_to_word]
 
 FILE_ID = {"type": "string", "description": "ID of the PDF, e.g. f_1a2b3c4d5e6f"}
 
@@ -70,11 +71,27 @@ for feature in FEATURES:
 
 PROMPTS = [feature.PROMPT for feature in FEATURES]
 
+# Which feature each tool belongs to, for the run log and usage (C6, C7).
+FEATURE_OF = {name: getattr(feature, "INFO", {}).get("id", feature.__name__) for feature in FEATURES for name in feature.TOOLS}
+FEATURE_OF.update({name: "core" for name in CORE_TOOLS})
+
 
 def schemas() -> list[dict]:
     return [{"type": "function",
              "function": {"name": n, "description": t["description"], "parameters": t["parameters"]}}
             for n, t in TOOLS.items()]
+
+
+def check_answer(answer: str, calls: list, has_files: bool, question: str = "", earlier: list | None = None) -> dict | None:
+    """Ask each feature that can check a final answer (check_answer in its tools.py); the first verdict wins.
+
+    A verdict is {"retry": note, "problems": [...]} (ask the model again) or {"validation": {...}} (show the user)."""
+    for feature in FEATURES:
+        if hasattr(feature, "check_answer"):
+            verdict = feature.check_answer(answer, calls, has_files, question, earlier or [])
+            if verdict:
+                return verdict
+    return None
 
 
 def run(name: str, args) -> dict:

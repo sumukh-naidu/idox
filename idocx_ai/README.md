@@ -59,6 +59,7 @@ Checks and evals write their files and `report.txt` to `tests/output/` and `eval
 | FR-AI-05 | Smart redaction | `fr_ai_05_redaction` |
 | FR-AI-02 | Extraction and form filling | `fr_ai_02_forms` |
 | FR-AI-04 | Translation | `fr_ai_04_translation` |
+| FR-AI-06 | Document Q&A | `fr_ai_06_qa` |
 | none | Excel to Word | `excel_to_word` |
 
 To add a feature, create `features/<feature>/` with a `tools.py` (`PROMPT`, `TOOLS`, `INFO`), register it in `core/tools.py`, put its samples in `samples/<feature>/`, and add a check in `tests/checks/<feature>.py`.

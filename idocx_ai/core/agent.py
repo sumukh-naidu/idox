@@ -5,13 +5,17 @@ error, done.
 """
 
 import json
+import os
 import time
 
-from core import llm, store, tools
+from core import llm, rules, store, tools
 
 MAX_STEPS = 8
+MODEL_TIMEOUT = int(os.environ.get("MODEL_TIMEOUT_SECONDS", "180"))   # C5: every model call has a time limit (target TBC)
 MAX_TOKENS = 1024
-TOOL_RESULT_CHARS = 12000   # read_document returns up to 10,000 characters of text
+# A tool result is cut here before the model sees it. The model's context is 32k tokens (about 100,000
+# characters) shared by the prompt, the whole chat and 1,024 reply tokens, so keep this well under that.
+TOOL_RESULT_CHARS = 36000   # ask_document returns up to 30,000 characters of page text
 
 SYSTEM = """You are the iDocx assistant. The user uploads PDF files and asks you to work on them.
 
@@ -49,7 +53,8 @@ def _system_prompt(session: dict) -> str:
 
 def _call_model(messages: list[dict]) -> dict:
     # temperature 0 keeps plans as repeatable as the server allows; runs still vary a little.
-    return llm.chat(messages, tools=tools.schemas(), tool_choice="auto", temperature=0, max_tokens=MAX_TOKENS)
+    return llm.chat(messages, tools=tools.schemas(), tool_choice="auto", temperature=0, max_tokens=MAX_TOKENS,
+                    timeout=MODEL_TIMEOUT)
 
 
 def run_turn(session: dict, user_text: str):
@@ -59,9 +64,12 @@ def run_turn(session: dict, user_text: str):
     content = ("[" + " ".join(notes) + "]\n\n" + user_text) if notes else user_text
     session["messages"].append({"role": "user", "content": content})
     stats = {"model_calls": 0, "model_seconds": 0.0, "prompt_tokens": 0, "completion_tokens": 0,
-             "repeated_calls": 0}
+             "repeated_calls": 0, "pages_processed": 0}
     started = time.perf_counter()
     seen: dict[str, dict] = {}
+    turn_calls: list[tuple] = []   # (tool, args, result) so far this turn, for answer checks
+    earlier = list(session.setdefault("tool_log", []))   # the same, from earlier turns of this chat
+    retried = False
 
     for _ in range(MAX_STEPS):
         messages = [{"role": "system", "content": _system_prompt(session)}] + session["messages"]
@@ -69,7 +77,9 @@ def run_turn(session: dict, user_text: str):
         try:
             resp = _call_model(messages)
         except Exception as e:
-            yield {"type": "error", "message": f"model server unreachable or failed: {e}"}
+            reason = (f"the model did not answer within {MODEL_TIMEOUT} seconds"
+                      if "timed out" in str(e).lower() else f"model server unreachable or failed: {e}")
+            yield {"type": "error", "message": reason}
             break
         stats["model_calls"] += 1
         stats["model_seconds"] += time.perf_counter() - t
@@ -86,10 +96,23 @@ def run_turn(session: dict, user_text: str):
             entry["tool_calls"] = calls
         session["messages"].append(entry)
 
+        if not calls:
+            # A feature can check the final answer against what its tools returned: ask the model to try
+            # once more (e.g. it never read the document), or attach a verdict for the user to see.
+            verdict = tools.check_answer(content, turn_calls, bool(session["files"]), user_text, earlier)
+            if verdict and verdict.get("retry") and not retried:
+                retried = True
+                session["messages"].pop()   # drop the unchecked answer; the model answers again
+                session["messages"].append({"role": "user", "content": verdict["retry"]})
+                yield {"type": "validation", "status": "retry", "problems": verdict.get("problems", [])}
+                continue
+            if content:
+                yield {"type": "text", "text": content}
+            if verdict and verdict.get("validation"):
+                yield {"type": "validation", **verdict["validation"]}
+            break
         if content:
             yield {"type": "text", "text": content}
-        if not calls:
-            break
 
         for call in calls:
             name = call["function"]["name"]
@@ -108,9 +131,20 @@ def run_turn(session: dict, user_text: str):
                 out = {**seen[key], "note": "You already made this exact call in this turn. "
                                             "Use this result and do not call it again."}
             else:
-                out = tools.run(name, args) if args is not None else \
-                    {"ok": False, "error": f"arguments were not valid JSON: {raw[:200]}"}
+                nested = llm.TOOL_USAGE = {"model_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+                try:
+                    out = tools.run(name, args) if args is not None else \
+                        {"ok": False, "error": f"arguments were not valid JSON: {raw[:200]}"}
+                finally:
+                    llm.TOOL_USAGE = None
+                for k, v in nested.items():       # the tool's own model calls count too (C6)
+                    stats[k] = stats.get(k, 0) + v
                 seen[key] = out
+                pages = rules.pages_processed(args) if args is not None else 0
+                stats["pages_processed"] += pages
+                rules.log_run(session.get("user", "unknown"), tools.FEATURE_OF.get(name, "unknown"), name, args,
+                              out["ok"], time.perf_counter() - t)
+            turn_calls.append((name, args, out))
             secs = round(time.perf_counter() - t, 2)
 
             for f in (out.get("result") or {}).get("files_created", []) if out["ok"] else []:
@@ -126,6 +160,9 @@ def run_turn(session: dict, user_text: str):
     else:
         yield {"type": "error", "message": f"stopped after {MAX_STEPS} model steps without a final answer"}
 
+    session["tool_log"] = (session["tool_log"] + turn_calls)[-20:]
     stats["model_seconds"] = round(stats["model_seconds"], 1)
     stats["total_seconds"] = round(time.perf_counter() - started, 1)
-    yield {"type": "done", "stats": stats}
+    yield {"type": "done", "stats": stats,
+           "usage": rules.usage(stats["model_calls"], stats["prompt_tokens"], stats["completion_tokens"],
+                                stats["pages_processed"])}

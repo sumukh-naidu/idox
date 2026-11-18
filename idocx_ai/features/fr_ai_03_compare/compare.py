@@ -16,6 +16,7 @@ import difflib
 import re
 import uuid
 
+from core import rules
 from core.pdfutil import ToolError, open_pdf
 from core.text import textpage
 
@@ -24,8 +25,16 @@ from .redline import build_redline
 BAND = 0.06            # top/bottom 6% of a page: running headers, footers, page numbers
 MIN_CLAUSES = 3        # fewer numbered headings than this: compare paragraph by paragraph
 PAIR_RATIO = 0.5       # word similarity for two units to count as one modified unit
-MAX_TEXT = 400         # characters of clause text returned per change
+MAX_TEXT = 1200        # characters of clause text returned per change (flagged when cut)
 MAX_CHANGES = 40
+MAX_PAGES = 200        # brief section 4, Q4: 25 MB and 200 pages as a start (TBC)
+MAX_BYTES = 25 * 1024 * 1024
+TYPE_NAMES = {"added": "Added", "removed": "Removed", "modified": "Modified", "moved": "Modified",
+              "moved and modified": "Modified"}   # brief: moved text is marked Modified
+CONF_PAIRED_MIN = 60   # a modified pair's confidence runs from this (barely similar) up to 100 (nearly the same)
+CONF_WHOLE_UNIT = 92   # a clause only in one version: added or removed
+CONF_MOVED = 90
+CONF_OCR = 70          # either side read by OCR: some differences may be misreadings
 
 CLAUSE = re.compile(r"^\s*(?:(?:clause|section|article)\s+(\d+(?:\.\d+)*)[.):]?|(\d+(?:\.\d+)*)[.)])\s+(.*)",
                     re.I | re.S)
@@ -41,7 +50,7 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _blocks(doc) -> tuple[list[dict], list[int]]:
+def _blocks(doc, strict: bool = False) -> tuple[list[dict], list[int]]:
     out, ocr = [], []
     for page in doc:
         tp, source = textpage(page)
@@ -50,8 +59,9 @@ def _blocks(doc) -> tuple[list[dict], list[int]]:
         if source == "OCR":
             ocr.append(page.number + 1)
         h = page.rect.height
+        band = 0 if strict else BAND          # strict: headers, footers and page numbers count too
         for x0, y0, x1, y1, text, _, kind in page.get_text("blocks", textpage=tp, sort=True):
-            if kind != 0 or y1 < BAND * h or y0 > (1 - BAND) * h:
+            if kind != 0 or y1 < band * h or y0 > (1 - band) * h:
                 continue
             t = _clean(text)
             if t:
@@ -67,7 +77,7 @@ def _blocks(doc) -> tuple[list[dict], list[int]]:
     return merged, ocr
 
 
-def _units(blocks: list[dict]) -> list[dict]:
+def _units(blocks: list[dict], strict: bool = False) -> list[dict]:
     heads = [i for i, b in enumerate(blocks) if CLAUSE.match(b["text"])]
     units = []
     if len(heads) >= MIN_CLAUSES:
@@ -86,7 +96,8 @@ def _units(blocks: list[dict]) -> list[dict]:
         m = CLAUSE.match(u["text"]) if u["label"] else None
         u["body"] = m.group(3) if m else u["text"]
         u["key"] = u["body"].lower()
-        u["letters"] = re.sub(r"[\W_]+", "", u["key"])
+        # strict: punctuation counts too, only spacing is ignored
+        u["letters"] = " ".join(u["key"].split()) if strict else re.sub(r"[\W_]+", "", u["key"])
         u["page"] = u["blocks"][0]["page"]
     return units
 
@@ -188,7 +199,59 @@ def _name(u: dict) -> str:
     return f"paragraph starting \"{' '.join(u['text'].split()[:8])}…\""
 
 
-def compare_documents(old_file_id: str, new_file_id: str) -> dict:
+def _place(u: dict, text: str) -> dict:
+    """Where a clause sits (page and box in PDF points, top-left origin) and its text, flagged when cut."""
+    page = u["blocks"][0]["page"]
+    rects = [b["rect"] for b in u["blocks"] if b["page"] == page]
+    return {"page": page, "box": {"x0": round(min(r[0] for r in rects), 1), "y0": round(min(r[1] for r in rects), 1),
+                                  "x1": round(max(r[2] for r in rects), 1), "y1": round(max(r[3] for r in rects), 1),
+                                  "unit": "pt"},
+            "text": _clip(text), "truncated": len(text) > MAX_TEXT}
+
+
+# ------------------------------------------------------------------ language (brief: different languages -> confirm)
+
+_STOP_WORDS = {
+    "English": set("the and of to in is that for with shall be this are as by on or".split()),
+    "Spanish": set("el la de que y en los las por con para una del se es al".split()),
+    "German": set("der die und das nicht mit den von zu ist für auf ein eine sich dem".split()),
+}
+
+
+def detect_language(text: str) -> str | None:
+    """English, Hindi, Tamil, Spanish or German, or None when it cannot tell."""
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < 40:
+        return None
+    for name, lo, hi in (("Hindi", "\u0900", "\u097f"), ("Tamil", "\u0b80", "\u0bff")):
+        if sum(lo <= c <= hi for c in letters) / len(letters) > 0.3:
+            return name
+    words = re.findall(r"[a-zA-ZäöüßñáéíóúÄÖÜ]+", text.lower())
+    score = sorted(((sum(w in stop for w in words), name) for name, stop in _STOP_WORDS.items()), reverse=True)
+    best, second = score[0], score[1]
+    return best[1] if best[0] >= 8 and best[0] >= 1.5 * max(second[0], 1) else None
+
+
+# ------------------------------------------------------------------ the comparison
+
+def _sentence(counts: dict) -> str:
+    n = counts["added"] + counts["removed"] + counts["modified"]
+    if not n:
+        return "No differences found."
+    parts = [f"{counts[k]} {k}" for k in ("added", "removed", "modified") if counts[k]]
+    moved = f" ({counts['moved']} of them moved)" if counts["moved"] else ""
+    return f"{n} change{'s' if n != 1 else ''}: {', '.join(parts)}{moved}; {counts['unchanged']} unchanged."
+
+
+def _score(c: dict) -> int:
+    """Rough weight of a change, for picking the key ones: figures and obligations matter most."""
+    sig = " ".join(c.get("signals", []))
+    return (3 if "numbers changed" in sig else 0) + (2 if "obligation" in sig else 0) + \
+        (2 if c["type"] in ("added", "removed") else 0) - (1 if c["type"] == "moved" else 0)
+
+
+def compare_documents(old_file_id: str, new_file_id: str, include_ignored: bool = False,
+                      confirm_language_difference: bool = False, explainer=None) -> dict:
     if old_file_id == new_file_id:
         raise ToolError("old_file_id and new_file_id are the same file")
     old_meta, old_doc = open_pdf(old_file_id)
@@ -199,10 +262,23 @@ def compare_documents(old_file_id: str, new_file_id: str) -> dict:
             new_doc.close()
             raise ToolError(f"'{a['name']}' is the marked-up copy a previous comparison made from '{b['name']}', "
                             f"not another version. Compare the versions the user uploaded.")
+    for meta, doc in ((old_meta, old_doc), (new_meta, new_doc)):
+        if meta["size"] > MAX_BYTES or doc.page_count > MAX_PAGES:
+            old_doc.close()
+            new_doc.close()
+            raise ToolError(f"'{meta['name']}' is too large to compare: the limit is {MAX_PAGES} pages and "
+                            f"{MAX_BYTES // 1024 // 1024} MB (TBC). Compare a page range of each file instead.")
     with old_doc, new_doc:
-        ob, old_ocr = _blocks(old_doc)
-        nb, new_ocr = _blocks(new_doc)
-        old, new = _units(ob), _units(nb)
+        ob, old_ocr = _blocks(old_doc, include_ignored)
+        nb, new_ocr = _blocks(new_doc, include_ignored)
+        lang_old = detect_language(" ".join(b["text"] for b in ob)[:6000])
+        lang_new = detect_language(" ".join(b["text"] for b in nb)[:6000])
+        if lang_old and lang_new and lang_old != lang_new and not confirm_language_difference:
+            return {"status": "confirm_language", "old": old_meta["name"], "new": new_meta["name"],
+                    "languages": {"old": lang_old, "new": lang_new}, "changes": [],
+                    "warning": f"The documents are in different languages ({lang_old} and {lang_new}). Compare only "
+                               f"if the user confirms: ask them, then call again with confirm_language_difference true."}
+        old, new = _units(ob, include_ignored), _units(nb, include_ignored)
         pairs = _pair(old, new)
         keep = _in_place(pairs, old)
         paired_o, paired_n = {i for i, _ in pairs}, {j for _, j in pairs}
@@ -218,58 +294,96 @@ def compare_documents(old_file_id: str, new_file_id: str) -> dict:
                 continue
             ch = {"type": "moved" if moved and not reworded else "moved and modified" if moved else "modified",
                   "where": _name(n) + (f", was {_name(o)}" if o["label"] != n["label"] else ""),
-                  "pages": f"old p{o['page']} -> new p{n['page']}", "_new": j, "_unit": n}
+                  "pages": f"old p{o['page']} -> new p{n['page']}", "_new": j, "_unit": n,
+                  "old": _place(o, o["body"] if reworded else o["text"]),
+                  "new": _place(n, n["body"] if reworded else n["text"])}
             if reworded:
                 ch["diff"], removed, added = _word_diff(o["body"], n["body"])
                 ch["old_text"], ch["new_text"] = _clip(o["body"]), _clip(n["body"])
                 ch["signals"] = _signals(removed, added)
                 ch["_added_words"] = added
+                sm = difflib.SequenceMatcher(None, o["key"].split(), n["key"].split(), autojunk=False)
+                same_title = bool(o["title"]) and o["title"].lower() == (n["title"] or "").lower()
+                ratio = max(sm.ratio(), 0.9 if same_title else 0)
+                ch["_conf"] = round(CONF_PAIRED_MIN + (100 - CONF_PAIRED_MIN) * min(ratio, 0.95))
+            else:
+                ch["_conf"] = CONF_MOVED
             if moved:
                 before = [new[k] for k in range(j) if k in paired_n]
                 ch["moved_note"] = f"now placed after {_name(before[-1])}" if before else "now placed first"
+            ch["_pages"] = (o["page"], n["page"])
             changes.append(ch)
         for i, o in enumerate(old):
             if i not in paired_o:
                 after = [j for (k, j) in pairs if k > i]
                 changes.append({"type": "removed", "where": _name(o), "pages": f"old p{o['page']}",
                                 "old_text": _clip(o["text"]), "signals": ["a whole clause or paragraph"],
+                                "old": _place(o, o["text"]), "new": None, "_conf": CONF_WHOLE_UNIT, "_pages": (o["page"], None),
                                 "_new": min(after) - 0.5 if after else len(new), "_unit": None})
         for j, n in enumerate(new):
             if j not in paired_n:
                 changes.append({"type": "added", "where": _name(n), "pages": f"new p{n['page']}",
                                 "new_text": _clip(n["text"]), "signals": ["a whole clause or paragraph"],
+                                "old": None, "new": _place(n, n["text"]), "_conf": CONF_WHOLE_UNIT, "_pages": (None, n["page"]),
                                 "_new": j, "_unit": n})
 
         changes.sort(key=lambda c: c["_new"])
         for k, c in enumerate(changes, 1):
             c["id"] = f"C{k}"
+            conf, reason = c["_conf"], None
+            op, np_ = c["_pages"]
+            # A clause only in one version is also less certain when the OTHER version was read by OCR: it may have
+            # been missed there rather than really removed (or added).
+            ocr_involved = (op in old_ocr) or (np_ in new_ocr) or (c["type"] == "removed" and bool(new_ocr)) \
+                or (c["type"] == "added" and bool(old_ocr))
+            if ocr_involved:
+                conf, reason = min(conf, CONF_OCR), "read by OCR: this may be a misreading, not a real edit"
+            c["_public"] = {**rules.confidence(conf), **({"reason": reason} if reason else {})}
         redline = build_redline(new_doc, new_meta, changes, new) if changes else None
 
     cid = f"cmp_{uuid.uuid4().hex[:10]}"
     COMPARISONS[cid] = {c["id"]: c for c in changes}
-    public = [{k: v for k, v in c.items() if not k.startswith("_")} for c in changes]
-    counts = {t: sum(c["type"] == t for c in changes) for t in ("added", "removed", "modified", "moved")}
-    counts["moved"] += sum(c["type"] == "moved and modified" for c in changes)
+    public = []
+    for c in changes:
+        row = {k: v for k, v in c.items() if not k.startswith("_") and k != "type"}
+        public.append({"id": c["id"], "type": TYPE_NAMES[c["type"]], "kind": c["type"], "moved": c["type"].startswith("moved"),
+                       **{k: v for k, v in row.items() if k != "id"}, **c["_public"]})
+    counts = {"added": sum(c["type"] == "added" for c in changes), "removed": sum(c["type"] == "removed" for c in changes),
+              "modified": sum(c["type"] in ("modified", "moved", "moved and modified") for c in changes),
+              "moved": sum(c["type"] in ("moved", "moved and modified") for c in changes)}
     counts["unchanged"] = unchanged
+
+    ignored = ["spacing differences"] if include_ignored else \
+        ["running headers and footers", "page numbers", "spacing differences", "punctuation-only edits"]
+    if renumbered:
+        ignored.append(f"{renumbered} clause(s) only renumbered")
     result = {
-        "comparison_id": cid, "old": old_meta["name"], "new": new_meta["name"],
+        "status": "ok" if changes else "no_differences", "comparison_id": cid, "old": old_meta["name"], "new": new_meta["name"],
+        "languages": {"old": lang_old, "new": lang_new},
         "compared_by": "clause" if any(u["label"] for u in new + old) else "paragraph",
-        "summary": counts,
-        "ignored": f"running headers and footers, page numbers, spacing and punctuation-only edits"
-                   + (f", and {renumbered} clause(s) only renumbered" if renumbered else ""),
-        "changes": public[:MAX_CHANGES],
-        "next_step": ("explain only these changes, citing their ids (C1, C2...). If the user wants the meaningful "
-                      "changes summarised or explained, first call check_change_explanations with one item per "
-                      "change (material or minor) and use only the verified explanations. The marked-up copy of "
-                      "the new version is in files_created." if changes else
-                      "the two versions have the same text; say so"),
+        "ignored": ignored, "changes": public[:MAX_CHANGES],
     }
+    warnings = []
+    if old_ocr or new_ocr:
+        where = " and ".join(x for x in (f"old pages {old_ocr}" if old_ocr else "", f"new pages {new_ocr}" if new_ocr else "") if x)
+        warnings.append(f"Read by OCR ({where}): results may be less exact, and some small differences may be misreadings.")
+    if lang_old and lang_new and lang_old != lang_new:
+        warnings.append(f"The documents are in different languages ({lang_old} and {lang_new}); compared because the user confirmed.")
     if len(public) > MAX_CHANGES:
         result["more"] = f"{len(public) - MAX_CHANGES} more changes are marked in the marked-up copy"
-    if old_ocr or new_ocr:
-        result["warning"] = (f"read by OCR: {'old pages ' + str(old_ocr) if old_ocr else ''} "
-                             f"{'new pages ' + str(new_ocr) if new_ocr else ''}. Some small wording differences may "
-                             f"be OCR misreadings, not real edits; say so.").replace("  ", " ")
-    if redline:
+        warnings.append(f"Partial result: only the first {MAX_CHANGES} of {len(public)} changes are listed; all are marked in the copy.")
+    result["warnings"] = warnings
+
+    summary = {"counts": counts, "text": _sentence(counts), "key_changes": []}
+    if changes:
+        from .explain import key_changes
+        summary["key_changes"], summary["explanations_unavailable"] = key_changes(cid, changes, explainer)
         result["files_created"] = [redline]
+        result["next_step"] = ("present the summary text and the key changes (each with its change id and page), then the "
+                               "full list if asked; use only these changes and their explanations; mention warnings; the "
+                               "marked-up copy of the new version is in files_created")
+    else:
+        result["message"] = "No differences found"
+        result["next_step"] = "say: No differences found"
+    result["summary"] = summary
     return result

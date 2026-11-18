@@ -13,9 +13,13 @@ INFO = {
     "title": "Document Comparison",
     "status": "ready",
     "description": "Compares two versions clause by clause (or paragraph by paragraph). Plain code finds "
-                   "every addition, removal, modification and move, ignoring headers, page numbers, "
-                   "renumbering and punctuation. The model explains the changes and may only cite ones that "
-                   "were found. Also writes a marked-up copy of the new version.",
+                   "every addition, removal and modification (moved text counts as modified) with its page and "
+                   "box in both versions, the old and new text and a confidence; headers, page numbers, "
+                   "renumbering and punctuation are ignored unless asked, and the result says what was ignored. "
+                   "Returns a summary (counts and 3-5 key changes explained by the model, each explanation "
+                   "checked against the real change), warns about scans and about different languages "
+                   "(compares only if you confirm), says 'No differences found' for identical files, and "
+                   "writes a marked-up copy of the new version.",
     "samples": ["contract_v1.pdf", "contract_v2.pdf", "contract_v2_scanned.pdf"],
     "examples": [
         {"file": "contract_v1.pdf", "also": ["contract_v2.pdf"],
@@ -43,17 +47,28 @@ INFO = {
 PROMPT = ("Comparison: compare files the user uploaded, never copies a tool made. If more than two uploaded "
           "files could be meant and the user did not say which, ask which two. Call compare_documents once, "
           "with the older version as old_file_id (by name, else upload order; say which you treated as "
-          "older), and follow its next_step.")
+          "older). Show the summary text, then the key changes (change id, page, explanation, confidence) and "
+          "anything marked Low confidence or in a warning. If it returns status confirm_language, ask the user "
+          "whether to compare documents in different languages and call again with confirm_language_difference "
+          "true only if they say yes. If the status is no_differences, say 'No differences found'. The result already "
+          "holds the summary and the key changes, so never call summarize_document or check_change_explanations "
+          "for a comparison unless the user asks to explain a change that is not among the key changes.")
 
 TOOLS = {
     "compare_documents": {
         "fn": compare.compare_documents,
-        "description": "Compare two versions of a document. Returns every change found (added, removed, "
-                       "modified, moved) with an id, the old and new wording, a word diff and signals such as "
-                       "changed numbers; ignores headers, page numbers, renumbering and punctuation. Also "
-                       "writes a marked-up copy of the new version. Explain only the changes it returns.",
+        "description": "Compare two versions of a document. Returns a summary (counts and 3-5 key changes with "
+                       "explanations) and every change found (Added, Removed, Modified; moved text is Modified) with "
+                       "an id, page and box in both versions, the old and new text, a word diff, signals such as "
+                       "changed numbers and a confidence; ignores headers, page numbers, renumbering and punctuation "
+                       "unless include_ignored. Different languages need the user's confirmation. Also writes a "
+                       "marked-up copy of the new version. Explain only the changes it returns.",
         "parameters": {"type": "object", "properties": {
             "old_file_id": FILE_ID, "new_file_id": FILE_ID,
+            "include_ignored": {"type": "boolean", "description": "also report headers, footers, page numbers and "
+                                                                  "punctuation-only edits; only if the user asks"},
+            "confirm_language_difference": {"type": "boolean", "description": "true only after the user confirmed "
+                                                                            "comparing documents in different languages"},
         }, "required": ["old_file_id", "new_file_id"]},
     },
     "check_change_explanations": {

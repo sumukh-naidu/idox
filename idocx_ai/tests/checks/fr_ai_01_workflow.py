@@ -18,7 +18,7 @@ import pymupdf  # noqa: E402
 
 from core import pages, store  # noqa: E402
 from core.pdfutil import ToolError  # noqa: E402
-from features.fr_ai_01_workflow import operations as ops, reading  # noqa: E402
+from features.fr_ai_01_workflow import operations as ops, plan, reading  # noqa: E402
 from features.fr_prd_104_cleanup import cleanup  # noqa: E402
 
 INPUT = ROOT / "samples" / "fr_ai_01_workflow"
@@ -130,6 +130,83 @@ check("verify_tasks drops an invented quote and a reformatted deadline",
 v2 = reading.verify_tasks(scan, [{"task": "Clear the storage room", "deadline": "18 October 2026",
                                    "quote": "All teams must clear the storage room by 18 October 2026.", "page": 1}])
 check("verify_tasks works on OCR text", len(v2["verified"]) == 1, v2["rejected"][0]["reason"] if v2["rejected"] else "")
+
+log("planning (fake planner: the model is not used)")
+fa = store.save_file((INPUT / "merge_a.pdf").read_bytes(), "merge_a.pdf", 2, source="upload")["id"]
+fb = store.save_file((INPUT / "merge_b.pdf").read_bytes(), "merge_b.pdf", 2, source="upload")["id"]
+n_files = len(list(store.FILES.glob("*.pdf")))
+def planner_of(*answers):
+    seen = []
+    queue = list(answers)
+    def ask(instruction, files):
+        seen.append(instruction)
+        return queue.pop(0)
+    ask.seen = seen
+    return ask
+MERGE = {"operation": "merge", "files": [fa, fb], "settings": {}, "reason": "Join the two files."}
+COMPRESS = {"operation": "compress", "files": ["@1"], "settings": {}, "reason": "Make the merged file smaller."}
+r = plan.plan_workflow([fa, fb], "Merge these and compress the result", planner_of({"unclear": False, "steps": [MERGE, COMPRESS]}))
+check("a clear instruction gives an ordered plan", r["status"] == "plan" and [s["operation"] for s in r["steps"]] == ["merge", "compress"])
+check("each step has files, settings, a reason and a confidence",
+      all({"files", "settings", "reason", "confidence", "low_confidence"} <= set(s) for s in r["steps"]))
+check("steps named in the instruction are 95% and not low", all(s["confidence"] == 95 and not s["low_confidence"] for s in r["steps"]))
+check("nothing is run: no file was written", len(list(store.FILES.glob("*.pdf"))) == n_files and "Nothing has been run" in r["runs_nothing"])
+r = plan.plan_workflow([fa, fb], "Merge these", planner_of({"unclear": False, "steps": [MERGE, COMPRESS]}))
+check("a step the user did not ask for is 70% and marked low confidence",
+      r["steps"][1]["confidence"] == 70 and r["steps"][1]["low_confidence"] and r["confidence"] == 70 and r["low_confidence"])
+
+BAD_OP = {"operation": "email it", "files": [fa], "settings": {}, "reason": "Send it."}
+p = planner_of({"unclear": False, "steps": [BAD_OP]}, {"unclear": False, "steps": [MERGE]})
+r = plan.plan_workflow([fa, fb], "Merge these", p)
+check("an operation outside the list is sent back once, then the repaired plan is used",
+      r["status"] == "plan" and "not an allowed operation" in p.seen[1], r.get("error", {}).get("problems", ""))
+r = plan.plan_workflow([fa, fb], "Merge these", planner_of(*[{"unclear": False, "steps": [BAD_OP]}] * 2))
+check("a plan that stays invalid returns an error and no steps", r["status"] == "error" and r["steps"] == [] and r["error"]["code"] == "plan_not_valid")
+
+for label, step, expect in [
+    ("a file that was not selected", {**MERGE, "files": [fa, "f_000000000000"]}, "was not selected"),
+    ("a step pointing forward", {**COMPRESS, "files": ["@2"]}, "earlier step"),
+    ("a translation into an unsupported language", {"operation": "translate", "files": [fa], "settings": {"target_language": "Japanese"}, "reason": "x"}, "not supported"),
+    ("the same source and target language", {"operation": "translate", "files": [fa], "settings": {"target_language": "Hindi", "source_language": "Hindi"}, "reason": "x"}, "must differ"),
+    ("a translation with no target", {"operation": "translate", "files": [fa], "settings": {}, "reason": "x"}, "needs the setting 'target_language'"),
+    ("a setting the operation does not have", {**COMPRESS, "files": [fa], "settings": {"colour": "red"}}, "no setting"),
+    ("a merge of a single file", {**MERGE, "files": [fa]}, "needs at least 2"),
+    ("a step with no reason", {**MERGE, "reason": ""}, "no reason"),
+]:
+    r = plan.plan_workflow([fa, fb], "Merge these", planner_of(*[{"unclear": False, "steps": [step]}] * 2))
+    check(f"rejected: {label}", r["status"] == "error" and any(expect in x for x in r["error"]["problems"]), "; ".join(r.get("error", {}).get("problems", [])))
+
+r = plan.plan_workflow([fa], "make it nice", planner_of({"unclear": True, "steps": []}))
+check("an unclear instruction returns an error with 2-3 examples and no steps",
+      r["status"] == "error" and r["steps"] == [] and 2 <= len(r["error"]["examples"]) <= 3 and r["error"]["code"] == "instruction_not_understood")
+r = plan.plan_workflow([fa], "   ", planner_of())
+check("an empty instruction is not understood", r["error"]["code"] == "instruction_not_understood")
+r = plan.plan_workflow([fa], "Compress other_file.pdf", planner_of())
+check("a file named but not selected gets the question 'Which file?', no steps",
+      r["status"] == "question" and r["question"] == "Which file?" and r["steps"] == [])
+r = plan.plan_workflow([fa], "Compress it", planner_of({"unclear": False, "missing_file": "the old contract", "steps": []}))
+check("the model reporting a missing file also gets the question", r["status"] == "question")
+r = plan.plan_workflow([], "Compress it", planner_of())
+check("no file selected: 'Which file?'", r["status"] == "question")
+r = plan.plan_workflow([fa], "merge " * 500, planner_of())
+check("a very long instruction returns an error with the limit", r["error"]["code"] == "instruction_too_long" and r["error"]["limit"] == plan.MAX_INSTRUCTION_CHARS)
+r = plan.plan_workflow([fa] * 50, "Compress them", planner_of())
+check("50 files returns an error with the limit", r["error"]["code"] == "too_many_files" and r["error"]["limit"] == plan.MAX_FILES)
+
+r = plan.plan_workflow([fa], "Split this into pages 1-4 and 5-12, then translate it to Japanese.", planner_of())
+check("translating into an unsupported language names the supported languages and plans nothing",
+      r["error"]["code"] == "unsupported_language" and r["steps"] == [] and "Hindi" in r["error"]["message"] and r["error"]["supported"] == plan.LANGUAGES)
+r = plan.plan_workflow([fa], "Translate this to Hindi", planner_of({"unclear": False, "steps": [
+    {"operation": "translate", "files": [fa], "settings": {"target_language": "Hindi"}, "reason": "Translate it."}]}))
+check("a setting the user wrote keeps 95%", r["steps"][0]["confidence"] == 95 and "chosen_by_ai" not in r["steps"][0])
+r = plan.plan_workflow([fa], "Summarise this and make tasks of the deadlines", planner_of({"unclear": False, "steps": [
+    {"operation": "summarise", "files": [fa], "settings": {"type": "key milestone and obligation dates"}, "reason": "Find dates."},
+    {"operation": "create task", "files": ["@1"], "settings": {"title": "Project Deadlines"}, "reason": "Make a task."}]}))
+check("settings the AI chose are listed, at 70% and low confidence",
+      [s["chosen_by_ai"] for s in r["steps"]] == [["type"], ["title"]] and all(s["confidence"] == 70 and s["low_confidence"] for s in r["steps"]))
+r = plan.plan_workflow([fa], "Split this into pages 1-4 and 5-12", planner_of({"unclear": False, "steps": [
+    {"operation": "split", "files": [fa], "settings": {"parts": [{"pages": "1-4"}, {"pages": "5-12"}]}, "reason": "Split."}]}))
+check("page ranges the user wrote count as given", r["steps"][0]["confidence"] == 95, str(r["steps"][0]))
 
 log(f"\n{'ALL PASS' if not failures else f'{failures} FAILURE(S)'}")
 (OUT / "report.txt").write_text("\n".join(report) + "\n")

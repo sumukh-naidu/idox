@@ -27,8 +27,9 @@ def build_proposal(form_file_id: str, source_file_id: str, fields: list[dict], v
         if f.get("fill") == "user only" or f["type"] not in FILLABLE:
             item.update(status="user only", value=None)          # not in private: it cannot be approved
         else:
-            v = values.get(f["name"], {"value": None, "status": "empty"})
-            item.update({k: v[k] for k in ("value", "status", "page", "why", "read_by") if k in v})
+            v = values.get(f["name"], {"value": None, "status": "not_found"})
+            item.update({k: v[k] for k in ("value", "status", "page", "why", "read_by", "confidence",
+                                          "low_confidence", "box", "value_type", "reason") if k in v})
             private[f["name"]] = {"type": f["type"], "options": f.get("options"), "proposed": v.get("value")}
         items.append(item)
     summary = {}

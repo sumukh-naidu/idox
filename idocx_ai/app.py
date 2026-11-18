@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 import pymupdf
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -120,9 +120,9 @@ def download(fid: str):
 
 
 @app.post("/sessions", tags=["chat"], responses={200: {"model": schemas.SessionCreated}})
-def create_session():
+def create_session(x_user_id: str | None = Header(None, description="who is asking, for the run log (C7)")):
     """Start a chat session. Sessions live in memory: a restart of the service ends them."""
-    return {"session_id": store.new_session()}
+    return {"session_id": store.new_session(x_user_id or "unknown")}
 
 
 class Message(BaseModel):

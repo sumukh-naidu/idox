@@ -1,6 +1,6 @@
 """FR-AI-01 AI Document Workflow & Action Automation: tools, prompt, sidebar entry."""
 
-from . import operations, reading
+from . import operations, plan, reading
 
 FILE_ID = {"type": "string", "description": "ID of the PDF, e.g. f_1a2b3c4d5e6f"}
 PAGES = {"type": "string", "description": 'pages as ranges, e.g. "1-3, 7, 9-end"'}
@@ -9,7 +9,12 @@ INFO = {
     "id": "FR-AI-01",
     "title": "Workflow Automation",
     "status": "ready",
-    "description": "Several document operations in one request, each step working on the previous "
+    "description": "Plans a workflow from a plain instruction: an ordered list of steps from a fixed list "
+                   "(merge, split, remove blank pages, remove duplicates, clean, compress, rename, extract, create "
+                   "task, summarise, translate, redact, compare, accessibility, save), each with its files, "
+                   "settings, a reason and a confidence, and nothing run until a person confirms. Unclear "
+                   "instructions get examples, and a file that was not selected gets a question. "
+                   "Several document operations in one request, each step working on the previous "
                    "step's output: merge, split by page ranges, extract, rotate and reorder pages, "
                    "compress, rename. Also summaries and tasks/deadlines read from the document; every "
                    "task must quote the page it comes from or it is dropped.",
@@ -45,12 +50,27 @@ INFO = {
 }
 
 PROMPT = (
+    "Planning: if the user asks for a plan, or what steps you would take, or says not to run anything, call "
+    "plan_workflow once with their instruction and the file ids and show its steps, its confidence and the reason of "
+    "each step; run nothing until they confirm. If it returns a question or an error, show that and its examples as "
+    "they are. "
     "Workflows: do every requested step, in order. Merge in the order the user listed, else upload order; "
     "compress last. For anything about a document's content (summary, tasks, deadlines), call read_document "
     "first and follow its next_step."
 )
 
 TOOLS = {
+    "plan_workflow": {
+        "fn": plan.plan_workflow,
+        "description": "Plan a workflow without running it: turns the user's instruction into an ordered list of steps "
+                       "from a fixed list, each with files, settings, a reason and a confidence. Returns an error with "
+                       "examples if the instruction is unclear, and a question if it names a file that was not "
+                       "selected. Read-only; nothing is changed.",
+        "parameters": {"type": "object", "properties": {
+            "file_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs of the selected files"},
+            "instruction": {"type": "string", "description": "the user's instruction, in their words"},
+        }, "required": ["file_ids", "instruction"]},
+    },
     "merge_pdfs": {
         "fn": operations.merge_pdfs,
         "description": "Write a NEW PDF joining several PDFs in the order given. Reports which page range "

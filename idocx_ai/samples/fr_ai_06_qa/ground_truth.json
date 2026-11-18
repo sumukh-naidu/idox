@@ -1,0 +1,38 @@
+{
+  "service_report.pdf": {
+    "facts": [
+      {
+        "question": "What is the contract number?",
+        "answer": "SR-2026-0457",
+        "page": 1
+      },
+      {
+        "question": "How many support tickets were closed in October?",
+        "answer": "412",
+        "page": 2
+      },
+      {
+        "question": "What was the customer satisfaction score?",
+        "answer": "94%",
+        "page": 2
+      },
+      {
+        "question": "Who must approve a change to the service levels?",
+        "answer": "Joint Review Board",
+        "page": 3
+      },
+      {
+        "question": "When is the next review meeting?",
+        "answer": "12 December 2026",
+        "page": 3
+      }
+    ],
+    "not_in_document": [
+      "What is the penalty for missing the response target?",
+      "Who is the CEO of ACME Test Ltd?",
+      "How many tickets were closed in November?",
+      "What is the support phone number?",
+      "What is the monthly fee for the service?"
+    ]
+  }
+}

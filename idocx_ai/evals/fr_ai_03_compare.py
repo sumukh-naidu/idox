@@ -47,8 +47,9 @@ for ex in INFO["examples"]:
             plan.append(ev["tool"])
             if ev["tool"] == "compare_documents":
                 compared = ev["args"]
-        elif ev["type"] == "tool_finished" and ev["ok"] and ev["tool"] == "check_change_explanations":
-            explained = ev["result"]
+        elif ev["type"] == "tool_finished" and ev["ok"] and ev["tool"] == "compare_documents":
+            # the key changes now come back inside the comparison, already checked against the real changes
+            explained = {"verified": (ev["result"].get("summary") or {}).get("key_changes", [])}
         elif ev["type"] == "tool_finished" and not ev["ok"]:
             log(f"  tool error: {ev['tool']}: {ev['error']}")
         elif ev["type"] == "file_created":
@@ -68,8 +69,8 @@ for ex in INFO["examples"]:
         v = {x["change_id"]: x["significance"] for x in (explained or {}).get("verified", [])}
         material = {x["where"].split("(")[1].rstrip(")").split(")")[0] for x in (explained or {}).get("verified", [])
                     if x["significance"] == "material"}
-        ok = order_ok and len(v) == len(truth["changes"]) and {"Payment", "Liability"} <= material
-        detail = f"{len(v)} explanations verified; material: {sorted(material)}"
+        ok = order_ok and 3 <= len(v) <= 5 and {"Payment", "Liability"} <= material
+        detail = f"{len(v)} key changes verified; material: {sorted(material)}"
     elif "scanned" in newer:
         ok = order_ok and "ocr" in low and "45" in reply
         detail = "older file first, OCR caveat given, payment change reported"

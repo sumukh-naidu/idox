@@ -2,7 +2,7 @@
 
 from core import proposals
 
-from . import extract, fill, forms
+from . import extract, fill, forms, templates
 
 proposals.register_applier("form_fill", fill.apply_form_fill)
 
@@ -12,8 +12,12 @@ INFO = {
     "id": "FR-AI-02",
     "title": "Extraction & Form Filling",
     "status": "ready",
-    "description": "Extracts fields (names, dates, amounts, IDs) and tables from a document, each value checked "
-                   "against the source text; text layer, OCR for scans, the vision model when OCR fails. Fills "
+    "description": "Extracts fields (names, dates, amounts, IDs) and tables from a document, or fills a template "
+                   "(KYC Form, Vendor Voucher, Loan Application). Every value comes with a confidence (0-100, "
+                   "below 85 is Low confidence), its kind (date, amount, name, ID), the page and box where it was "
+                   "found, and is checked against the source text; a missing field is 'Not found'; two different "
+                   "values for one field are a Conflict. Every page is read; scans by OCR with the OCR confidence, "
+                   "the vision model when OCR fails. Fills "
                    "fillable PDF forms after you review and edit the values; signatures and declarations are left "
                    "to you, and every filled field is read back to verify.",
     "samples": ["policy_schedule.pdf", "invoice.pdf", "invoice_scanned.pdf", "application_form.pdf",
@@ -45,7 +49,10 @@ INFO = {
     ],
 }
 
-PROMPT = ("Extraction: call extract_information with the fields the user wants (include_tables for line items). "
+PROMPT = ("Extraction: call extract_information with the fields the user wants, or with a template (KYC Form, Vendor "
+          "Voucher, Loan Application) if they name one (include_tables for line items). Show every value with its "
+          "confidence and page; say 'Not found' for a missing one, flag Low confidence and Conflict values, and show "
+          "any warning (such as a wrong template) as it is. "
           "Form filling: call prepare_form_fill directly, once, with the source document and the fillable form; only "
           "the user fills it, from the review card. Follow each tool's next_step; never supply a value a tool left empty.")
 
@@ -70,13 +77,16 @@ TOOLS = {
     },
     "extract_information": {
         "fn": extract.extract_information,
-        "description": "Extract named fields (and optionally tables) from a document. Each value comes with its "
-                       "status: found (with page and quote), unverified (and why), or empty. Read-only.",
+        "description": "Extract named fields, or a template's fields, (and optionally tables) from a document. Each value "
+                       "has a status (found, check, unverified, conflict, not_found), a confidence 0-100, its kind, the "
+                       "page and box, and the quote. Reads every page. Read-only.",
         "parameters": {"type": "object", "properties": {
             "file_id": FILE_ID,
             "fields": {"type": "array", "items": {"type": "string"},
-                       "description": 'what to extract, e.g. ["invoice number", "invoice date", "total amount"]'},
+                       "description": 'what to extract, e.g. ["invoice number", "invoice date", "total amount"]; '
+                                      'leave out when a template is named'},
+            "template": {"type": "string", "enum": templates.NAMES, "description": "a form template to fill"},
             "include_tables": {"type": "boolean"},
-        }, "required": ["file_id", "fields"]},
+        }, "required": ["file_id"]},
     },
 }

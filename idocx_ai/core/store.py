@@ -65,9 +65,9 @@ def get_file(fid: str) -> tuple[dict, Path]:
     return meta, FILES / f"{fid}.{meta.get('ext', 'pdf')}"
 
 
-def new_session() -> str:
+def new_session(user: str = "unknown") -> str:
     sid = f"s_{uuid.uuid4().hex[:12]}"
-    SESSIONS[sid] = {"id": sid, "messages": [], "files": [], "created": time.time()}
+    SESSIONS[sid] = {"id": sid, "messages": [], "files": [], "created": time.time(), "user": user[:100]}
     return sid
 
 

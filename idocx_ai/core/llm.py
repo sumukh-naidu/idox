@@ -14,11 +14,26 @@ LLAMA = os.environ.get("LLAMA_ENDPOINT", "http://localhost:8080")
 _lock = threading.Lock()
 
 
+# While the agent runs a tool, the model calls the tool itself makes are added here, so usage (C6) counts them.
+TOOL_USAGE: dict | None = None
+
+
 def chat(messages: list[dict], timeout: int = 600, **options) -> dict:
     body = json.dumps({"messages": messages, **options}).encode()
     req = urllib.request.Request(f"{LLAMA}/v1/chat/completions", body, {"Content-Type": "application/json"})
     with _lock, urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+        resp = json.load(r)
+    record_usage(resp)
+    return resp
+
+
+def record_usage(resp: dict) -> None:
+    """Add one response's usage to the running tool's total, if a tool is running (see TOOL_USAGE)."""
+    if TOOL_USAGE is not None:
+        u = resp.get("usage") or {}
+        TOOL_USAGE["model_calls"] += 1
+        TOOL_USAGE["prompt_tokens"] += u.get("prompt_tokens", 0)
+        TOOL_USAGE["completion_tokens"] += u.get("completion_tokens", 0)
 
 
 def ask_about_image(prompt: str, png: bytes, max_tokens: int = 150) -> str:
